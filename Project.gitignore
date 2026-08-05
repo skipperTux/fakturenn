@@ -1,0 +1,32 @@
+# Ansible
+.cache/
+secrets.yml
+vault.yml
+
+# Claude
+.claude/worktrees/
+.claude/projects/
+.claude/settings.local.json
+
+# Defensive secret catch-alls. Committed SOPS ciphertext (`*.enc.*`) is never matched.
+*.secrets.env
+*.secrets.json
+client_secret*.txt
+
+# Portainer
+vault.env
+nexus-secrets.json
+
+# SonarQube
+.sonarqube/
+.sonarvars
+
+# SOPS
+# The VS Code SOPS extension writes the plaintext it opens for editing to a
+# sibling file prefixed `.decrypted~`. It is removed when the tab closes, but
+# never let one reach a commit.
+.decrypted~*
+
+# User appsettings
+**/appsettings.User*.json
+**/appsettings.user*.json

@@ -1,0 +1,30 @@
+[
+    {
+        "Uri": "https://raw.githubusercontent.com/alexkaratarakis/gitattributes/master/Common.gitattributes",
+        "Header": "Common"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/alexkaratarakis/gitattributes/master/CSharp.gitattributes",
+        "Header": "C# (CSharp)"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/gitattributes/gitattributes/master/Markdown.gitattributes",
+        "Header": "Markdown"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/gitattributes/gitattributes/master/community/sql.gitattributes",
+        "Header": "SQL"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/gitattributes/gitattributes/master/Global/VisualStudio.gitattributes",
+        "Header": "Visual Studio"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/gitattributes/gitattributes/master/Global/VisualStudioCode.gitattributes",
+        "Header": "Visual Studio Code"
+    },
+    {
+        "Uri": "Project.gitattributes",
+        "Header": "Project"
+    }
+]

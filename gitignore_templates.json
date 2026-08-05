@@ -1,0 +1,30 @@
+[
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/Global/Agents.gitignore",
+        "Header": "Agents"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/Global/Ansible.gitignore",
+        "Header": "Ansible"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/Global/Backup.gitignore",
+        "Header": "Backup"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/Global/Kate.gitignore",
+        "Header": "Kate"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/VisualStudio.gitignore",
+        "Header": "Visual Studio"
+    },
+    {
+        "Uri": "https://raw.githubusercontent.com/github/gitignore/main/Global/VisualStudioCode.gitignore",
+        "Header": "Visual Studio Code"
+    },
+    {
+        "Uri": "Project.gitignore",
+        "Header": "Project"
+    }
+]

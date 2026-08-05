@@ -1,0 +1,7 @@
+# SQL scripts
+
+*.sql text eol=lf
+*.csv text eol=crlf
+
+# Bumpversion
+.bumpversion.cfg text eol=lf
