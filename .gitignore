@@ -580,6 +580,11 @@ vault.yml
 *.secrets.json
 client_secret*.txt
 
+# Playwright
+playwright-report/
+playwright/.cache/
+.playwright/
+
 # Portainer
 vault.env
 nexus-secrets.json
