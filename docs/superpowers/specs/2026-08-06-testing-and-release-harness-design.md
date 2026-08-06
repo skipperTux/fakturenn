@@ -45,13 +45,14 @@ The `TEST-STRATEGY.md` release gate — independent verification of at least one
 ## 5. Decisions
 
 | Decision | Choice | Reason |
-|---|---|---|
+| --- | --- | --- |
 | Target framework | `net10.0` | LTS; SPEC names no version; matches the installed SDK |
 | Solution format | `Fakturenn.slnx` | XML solution format, supported by the .NET 10 CLI |
 | Layout strategy | Seam + convention rules | Scaffold only what the harness needs; architecture rules match `Fakturenn.Modules.*` by convention, so future modules inherit enforcement without editing tests |
 | Test framework | xUnit v3 (`xunit.v3`) on Microsoft.Testing.Platform | Mandated by SPEC §10 |
 | Assertions | AwesomeAssertions | FluentAssertions v8 is commercially licensed; incompatible with AGPL-3.0-or-later |
-| Architecture tests | ArchUnitNET | Expresses assembly-level and namespace-level dependency rules; all six rules are assembly-scoped |
+| Architecture tests | ArchUnitNET via `TngTech.ArchUnitNET.xUnitV3` | Type-level dependency analysis, xUnit v3 support, and `Slices().Should().BeFreeOfCycles()` for the cycle rule |
+| Design principles | TDD where a test can come first; SOLID, KISS, YAGNI | Restated in `CLAUDE.md` so later epics inherit them |
 | Mocking | NSubstitute | Mandated by SPEC §10, and only where interaction is the behaviour under test |
 | Integration infra | Testcontainers.PostgreSql | Mandated by SPEC §10 |
 | UI | Microsoft.Playwright | Mandated by SPEC §10 |
@@ -111,7 +112,7 @@ tests/
 Mapping from `SPEC-v0.1.md` §10 to concrete projects:
 
 | §10 clause | Project | Delivered this cycle |
-|---|---|---|
+| --- | --- | --- |
 | real domain objects first | `Fakturenn.UnitTests` | Money and VAT-grouping value objects in `SharedKernel`, tested through their real public API |
 | fakes/nullables second | `Fakturenn.UnitTests` | `Fakes/` folder with `FakeClock`, `FakeIdGenerator`, `NullDocumentStore` — the pattern later epics copy |
 | NSubstitute for interaction | `Fakturenn.UnitTests` | NSubstitute referenced plus one genuine interaction assertion, so the boundary between fake and mock is demonstrated |
@@ -154,7 +155,7 @@ The corpus lives at `tests/Fakturenn.ComplianceTests/corpus/`, versioned by prof
 ### 10.1 `ci.yml` — on push and pull request
 
 | Job | Content |
-|---|---|
+| --- | --- |
 | `format` | `dotnet format --verify-no-changes` |
 | `build-test` | Build with warnings as errors; unit and architecture tests; coverage collected and reported |
 | `integration` | Testcontainers PostgreSQL tests on `ubuntu-latest` |

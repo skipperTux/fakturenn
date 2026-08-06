@@ -22,13 +22,24 @@
 - `InvariantGlobalization` must be `false`; German formatting and localization depend on ICU data.
 - Commit messages follow Conventional Commits.
 - Each task ends green: `dotnet build` clean and `dotnet test` passing before the commit.
+- TDD where a test can meaningfully come first; SOLID, KISS and YAGNI throughout. See **Design principles** below.
 
 ## Deviations from the spec, decided while planning
 
-Two decisions in the spec were revised for correctness. Both are noted here rather than silently applied:
+One decision in the spec is revised, noted here rather than silently applied:
 
-1. **Architecture tests use BCL reflection, not ArchUnitNET.** All six rules are assembly-reference-level checks, which `Assembly.GetReferencedAssemblies()` answers directly. ArchUnitNET's xUnit adapter targets xUnit v2, and SPEC §10 mandates xUnit v3, so pulling it in risks a runner mismatch for no gain. The rule engine is written as a pure function over a reference graph, which also makes it possible to prove the rules *fail* on a synthetic violation — see Task 6.
-2. **`NullDocumentStore` is dropped from the fakes set.** `MODULE-OWNERSHIP.md` assigns document-store contracts to the Documents module, which this cycle does not scaffold. Defining that contract here would pre-empt E11. The fakes set is `FakeClock` and `FakeIdGenerator`; the exemplar infrastructure adapter (Task 4) demonstrates the NSubstitute boundary instead.
+1. **`NullDocumentStore` is dropped from the fakes set.** `MODULE-OWNERSHIP.md` assigns document-store contracts to the Documents module, which this cycle does not scaffold. Defining that contract here would pre-empt E11. The fakes set is `FakeClock` and `FakeIdGenerator`; the exemplar infrastructure adapter (Task 4) demonstrates the NSubstitute boundary instead.
+
+Architecture tests use **ArchUnitNET** via [`TngTech.ArchUnitNET.xUnitV3`](https://www.nuget.org/packages/TngTech.ArchUnitNET.xUnitV3/0.13.3), which supports xUnit v3 directly — latest 0.13.3. Its type-level dependency analysis is finer-grained than assembly references, and `Slices().Should().BeFreeOfCycles()` handles the cycle rule without hand-rolled graph traversal.
+
+## Design principles
+
+Applied throughout, and restated in `CLAUDE.md` so later epics inherit them:
+
+- **TDD where a test can meaningfully come first.** Write the failing test, make it pass, refactor. Not everything qualifies — a `.csproj` property, a workflow file or a `.resx` entry has no sensible unit test. For those, the plan substitutes an explicit verification step with a command and an expected result. What is never acceptable is writing implementation code that *could* have been driven by a test and skipping the test.
+- **SOLID**, in the places it pays: interfaces stay narrow and consumer-defined (`IFileSystem` exposes one method, not a file-system API); infrastructure depends on module-owned abstractions, never the reverse; each type has one reason to change.
+- **KISS.** No abstraction without a second caller. No configurability that nothing configures.
+- **YAGNI.** Build the harness, not the product. If a type only exists to be useful in E09, it belongs in E09.
 
 ## File Structure
 
@@ -174,6 +185,26 @@ the build, not the review:
 Rules 2 and 3 name assemblies that do not exist yet. They are vacuously true
 today and become binding the moment those assemblies appear. Do not delete a
 rule because it currently matches nothing.
+
+## Design principles
+
+- **TDD where a test can meaningfully come first.** Write the failing test, see
+  it fail for the right reason, make it pass, refactor. Not everything
+  qualifies: a `.csproj` property, a CI workflow or a `.resx` entry has no
+  sensible unit test — verify those with an explicit command and a stated
+  expected result instead. What is never acceptable is writing code that
+  *could* have been driven by a test and skipping the test.
+- **SOLID**, where it pays. Interfaces are narrow and defined by the consumer,
+  not the implementer. Infrastructure depends on module-owned abstractions,
+  never the reverse. A type should have one reason to change.
+- **KISS.** No abstraction without a second caller. No configurability that
+  nothing configures. No interface with one implementation and no test double.
+- **YAGNI.** Build what the current epic needs. If a type only becomes useful
+  in a later epic, it belongs in that epic. Deleting speculative code later
+  costs more than adding it when it is actually needed.
+
+These are aids, not rules to satisfy for their own sake. If applying one makes
+the code harder to read, say so rather than contorting the design around it.
 
 ## Testing
 
@@ -1220,7 +1251,7 @@ Creates the assemblies whose *names* the architecture rules in Task 6 match on. 
 **Files:**
 
 - Create: `src/Fakturenn.Modules.Invoices.Contracts/Fakturenn.Modules.Invoices.Contracts.csproj`, `src/Fakturenn.Modules.Invoices.Contracts/InvoiceId.cs`
-- Create: `src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj`
+- Create: `src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj`, `src/Fakturenn.Modules.Invoices/InvoicesModule.cs`
 - Create: `tests/Fakturenn.UnitTests/Modules/InvoiceIdTests.cs`
 
 **Interfaces:**
@@ -1228,6 +1259,7 @@ Creates the assemblies whose *names* the architecture rules in Task 6 match on. 
 - Consumes: `Fakturenn.SharedKernel` (Task 2, 3)
 - Produces:
   - `Fakturenn.Modules.Invoices.Contracts.InvoiceId` — `readonly record struct`, ctor `InvoiceId(Guid value)`, property `Guid Value`, `static InvoiceId New(IIdGenerator generator)`
+  - `Fakturenn.Modules.Invoices.InvoicesModule` — `static class`, assembly marker consumed by Task 6
 
 - [ ] **Step 1: Create both projects**
 
@@ -1241,6 +1273,21 @@ dotnet add src/Fakturenn.Modules.Invoices.Contracts reference src/Fakturenn.Shar
 dotnet add src/Fakturenn.Modules.Invoices reference src/Fakturenn.Modules.Invoices.Contracts
 dotnet add src/Fakturenn.Modules.Invoices reference src/Fakturenn.SharedKernel
 dotnet add tests/Fakturenn.UnitTests reference src/Fakturenn.Modules.Invoices
+```
+
+- [ ] **Step 1a: Add the assembly marker**
+
+`src/Fakturenn.Modules.Invoices/InvoicesModule.cs`:
+
+```csharp
+namespace Fakturenn.Modules.Invoices;
+
+/// <summary>
+/// Assembly marker. Gives the architecture tests and, later, dependency
+/// injection a stable public handle on this assembly without exporting a type
+/// that exists for no other reason.
+/// </summary>
+public static class InvoicesModule;
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -1337,27 +1384,27 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 6: Architecture tests with ArchUnitNET
 
-### Task 6: Architecture tests
+The six rules from `TEST-STRATEGY.md`, expressed as conventions over assembly-name patterns so modules added by later epics inherit enforcement without editing this project. Rules are proven to bite in Step 8 by introducing a real violation and watching the suite fail — a rule that has never been seen to fail is not evidence of anything.
 
-The rule engine is a pure function over a reference graph, so the rules can be proven to *fail* on a synthetic violation without committing a real one. A rule that has never been seen to fail is not evidence of anything.
+TDD applies loosely here: the rules are written before they can pass in one case (Step 8's deliberate violation), but the primary failing-first signal is the compile error, since the rule *is* the assertion.
 
 **Files:**
 
 - Create: `tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj`
-- Create: `tests/Fakturenn.ArchitectureTests/ReferenceGraph.cs`
-- Create: `tests/Fakturenn.ArchitectureTests/ReferenceRules.cs`
-- Create: `tests/Fakturenn.ArchitectureTests/SolutionReferenceGraph.cs`
-- Create: `tests/Fakturenn.ArchitectureTests/ReferenceRulesTests.cs`
-- Create: `tests/Fakturenn.ArchitectureTests/SolutionArchitectureTests.cs`
+- Create: `tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs`
+- Create: `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`
+- Create: `tests/Fakturenn.ArchitectureTests/TechnologyContainmentTests.cs`
 
 **Interfaces:**
 
 - Consumes: every `src/` assembly, by project reference
 - Produces:
-  - `ReferenceGraph` — `sealed record ReferenceGraph(IReadOnlyDictionary<string, IReadOnlyList<string>> References)`, property `IEnumerable<string> Assemblies`
-  - `ReferenceRules` — `static IReadOnlyList<string> OnlyMatchingMayReference(ReferenceGraph graph, Func<string, bool> isRestrictedReference, Func<string, bool> isPermittedAssembly)`, `static IReadOnlyList<string> MustNotReference(ReferenceGraph graph, Func<string, bool> isSubject, Func<string, bool> isForbidden)`, `static IReadOnlyList<string> FindCycles(ReferenceGraph graph, Func<string, bool> isInScope)`
-  - `SolutionReferenceGraph` — `static ReferenceGraph Load()`
+  - `FakturennArchitecture.Loaded` — `static readonly ArchUnitNET.Domain.Architecture`
+  - `FakturennArchitecture.Modules` — `static readonly IObjectProvider<IType>`, matching `Fakturenn.Modules.*` including `.Contracts`
+  - `FakturennArchitecture.ModuleImplementations` — `static readonly IObjectProvider<IType>`, matching `Fakturenn.Modules.*` excluding `.Contracts`
+  - `FakturennArchitecture.Infrastructure` — `static readonly IObjectProvider<IType>`, matching `Fakturenn.Infrastructure.*`
 
 - [ ] **Step 1: Create the project and reference every source assembly**
 
@@ -1366,399 +1413,255 @@ dotnet new xunit3 --output tests/Fakturenn.ArchitectureTests --name Fakturenn.Ar
 rm --force tests/Fakturenn.ArchitectureTests/UnitTest1.cs
 dotnet sln Fakturenn.slnx add tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj
 dotnet add tests/Fakturenn.ArchitectureTests package AwesomeAssertions
+dotnet add tests/Fakturenn.ArchitectureTests package TngTech.ArchUnitNET.xUnitV3
 dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.SharedKernel
 dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.Infrastructure.Storage
 dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.Modules.Invoices
 dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.Modules.Invoices.Contracts
 ```
 
+`TngTech.ArchUnitNET.xUnitV3` brings `TngTech.ArchUnitNET` transitively and supplies the `.Check(Architecture)` extension that reports failures as xUnit v3 assertion failures.
+
 Apply the same Microsoft.Testing.Platform properties as Task 2 Step 6.
 
-- [ ] **Step 2: Write the failing tests for the rule engine**
+- [ ] **Step 2: Write the shared architecture and the object providers**
 
-`tests/Fakturenn.ArchitectureTests/ReferenceRulesTests.cs`:
+`tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs`:
 
 ```csharp
-using AwesomeAssertions;
+using ArchUnitNET.Domain;
+using ArchUnitNET.Fluent;
+using ArchUnitNET.Loader;
+using static ArchUnitNET.Fluent.ArchRuleDefinition;
 
 namespace Fakturenn.ArchitectureTests;
 
 /// <summary>
-/// Proves the rule engine reports violations. Without these, a rule that
-/// silently matches nothing would look identical to a rule that passes.
+/// Loaded once per run because building the type graph is the expensive part.
+/// The providers below match on assembly-name patterns rather than a list of
+/// assemblies, so a module added by a later epic is governed the moment it
+/// exists and needs no new rule.
 /// </summary>
-public sealed class ReferenceRulesTests
+public static class FakturennArchitecture
 {
-    private static ReferenceGraph GraphOf(params (string Assembly, string[] References)[] entries) =>
-        new(entries.ToDictionary(
-            entry => entry.Assembly,
-            entry => (IReadOnlyList<string>)entry.References));
+    public static readonly Architecture Loaded = new ArchLoader()
+        .LoadAssemblies(
+            typeof(SharedKernel.Money).Assembly,
+            typeof(Infrastructure.Storage.FilesystemBlobWriter).Assembly,
+            typeof(Modules.Invoices.Contracts.InvoiceId).Assembly,
+            typeof(Modules.Invoices.InvoicesModule).Assembly)
+        .Build();
 
-    [Fact]
-    public void OnlyMatchingMayReference_reports_a_forbidden_reference()
-    {
-        ReferenceGraph graph = GraphOf(
-            ("Fakturenn.Web", ["MudBlazor"]),
-            ("Fakturenn.Modules.Invoices", ["MudBlazor"]));
+    /// <summary>Every module assembly, contracts included.</summary>
+    public static readonly IObjectProvider<IType> Modules =
+        Types().That().ResideInAssembly(@"^Fakturenn\.Modules\..*$", useRegularExpressions: true)
+            .As("module assemblies");
 
-        IReadOnlyList<string> violations = ReferenceRules.OnlyMatchingMayReference(
-            graph,
-            isRestrictedReference: name => name == "MudBlazor",
-            isPermittedAssembly: name => name == "Fakturenn.Web");
+    /// <summary>Module implementation assemblies, contracts excluded.</summary>
+    public static readonly IObjectProvider<IType> ModuleImplementations =
+        Types().That().ResideInAssembly(@"^Fakturenn\.Modules\.(?!.*\.Contracts$).*$", useRegularExpressions: true)
+            .As("module implementation assemblies");
 
-        violations.Should().ContainSingle()
-            .Which.Should().Contain("Fakturenn.Modules.Invoices").And.Contain("MudBlazor");
-    }
-
-    [Fact]
-    public void OnlyMatchingMayReference_passes_when_only_permitted_assemblies_reference_it()
-    {
-        ReferenceGraph graph = GraphOf(
-            ("Fakturenn.Web", ["MudBlazor"]),
-            ("Fakturenn.Modules.Invoices", ["Fakturenn.SharedKernel"]));
-
-        ReferenceRules.OnlyMatchingMayReference(
-            graph,
-            isRestrictedReference: name => name == "MudBlazor",
-            isPermittedAssembly: name => name == "Fakturenn.Web").Should().BeEmpty();
-    }
-
-    [Fact]
-    public void MustNotReference_reports_a_module_reaching_into_infrastructure()
-    {
-        ReferenceGraph graph = GraphOf(
-            ("Fakturenn.Modules.Invoices", ["Fakturenn.Infrastructure.Storage"]));
-
-        IReadOnlyList<string> violations = ReferenceRules.MustNotReference(
-            graph,
-            isSubject: name => name.StartsWith("Fakturenn.Modules.", StringComparison.Ordinal),
-            isForbidden: name => name.StartsWith("Fakturenn.Infrastructure.", StringComparison.Ordinal));
-
-        violations.Should().ContainSingle();
-    }
-
-    [Fact]
-    public void FindCycles_reports_a_two_assembly_cycle()
-    {
-        ReferenceGraph graph = GraphOf(
-            ("Fakturenn.Modules.A", ["Fakturenn.Modules.B"]),
-            ("Fakturenn.Modules.B", ["Fakturenn.Modules.A"]));
-
-        ReferenceRules.FindCycles(graph, isInScope: name => name.StartsWith("Fakturenn.Modules.", StringComparison.Ordinal))
-            .Should().NotBeEmpty();
-    }
-
-    [Fact]
-    public void FindCycles_passes_on_an_acyclic_graph()
-    {
-        ReferenceGraph graph = GraphOf(
-            ("Fakturenn.Modules.A", ["Fakturenn.Modules.B.Contracts"]),
-            ("Fakturenn.Modules.B", ["Fakturenn.Modules.B.Contracts"]),
-            ("Fakturenn.Modules.B.Contracts", []));
-
-        ReferenceRules.FindCycles(graph, isInScope: name => name.StartsWith("Fakturenn.Modules.", StringComparison.Ordinal))
-            .Should().BeEmpty();
-    }
+    public static readonly IObjectProvider<IType> Infrastructure =
+        Types().That().ResideInAssembly(@"^Fakturenn\.Infrastructure\..*$", useRegularExpressions: true)
+            .As("infrastructure assemblies");
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+`typeof(...).Assembly` is used instead of a directory scan so that a missing project reference is a compile error rather than a silently smaller architecture that passes every rule by having nothing to check.
 
-Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: build failure — `The type or namespace name 'ReferenceGraph' could not be found`.
+Each new module assembly is added here as one more `typeof(...).Assembly` line. That is the only per-module edit this project ever needs; the rules themselves stay untouched.
 
-- [ ] **Step 4: Implement the reference graph**
+- [ ] **Step 3: Write the anti-vacuity guard**
 
-`tests/Fakturenn.ArchitectureTests/ReferenceGraph.cs`:
-
-```csharp
-namespace Fakturenn.ArchitectureTests;
-
-/// <summary>Assembly simple name to the simple names it references.</summary>
-public sealed record ReferenceGraph(IReadOnlyDictionary<string, IReadOnlyList<string>> References)
-{
-    public IEnumerable<string> Assemblies => References.Keys;
-
-    public IReadOnlyList<string> ReferencesOf(string assembly) =>
-        References.TryGetValue(assembly, out IReadOnlyList<string>? referenced) ? referenced : [];
-}
-```
-
-- [ ] **Step 5: Implement the rule engine**
-
-`tests/Fakturenn.ArchitectureTests/ReferenceRules.cs`:
+Add to `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`:
 
 ```csharp
-namespace Fakturenn.ArchitectureTests;
-
-public static class ReferenceRules
-{
-    /// <summary>
-    /// Every assembly that references something restricted must be permitted to.
-    /// </summary>
-    public static IReadOnlyList<string> OnlyMatchingMayReference(
-        ReferenceGraph graph,
-        Func<string, bool> isRestrictedReference,
-        Func<string, bool> isPermittedAssembly) =>
-        [
-            .. from assembly in graph.Assemblies
-               where !isPermittedAssembly(assembly)
-               from referenced in graph.ReferencesOf(assembly)
-               where isRestrictedReference(referenced)
-               select $"{assembly} references {referenced}"
-        ];
-
-    /// <summary>Subject assemblies must not reference forbidden assemblies.</summary>
-    public static IReadOnlyList<string> MustNotReference(
-        ReferenceGraph graph,
-        Func<string, bool> isSubject,
-        Func<string, bool> isForbidden) =>
-        [
-            .. from assembly in graph.Assemblies
-               where isSubject(assembly)
-               from referenced in graph.ReferencesOf(assembly)
-               where isForbidden(referenced)
-               select $"{assembly} references {referenced}"
-        ];
-
-    /// <summary>Returns one description per cycle found among in-scope assemblies.</summary>
-    public static IReadOnlyList<string> FindCycles(ReferenceGraph graph, Func<string, bool> isInScope)
-    {
-        List<string> cycles = [];
-        HashSet<string> settled = [];
-
-        foreach (string assembly in graph.Assemblies.Where(isInScope))
-        {
-            Walk(assembly, [], []);
-        }
-
-        return cycles;
-
-        void Walk(string assembly, List<string> path, HashSet<string> onPath)
-        {
-            if (onPath.Contains(assembly))
-            {
-                cycles.Add(string.Join(" -> ", [.. path, assembly]));
-                return;
-            }
-
-            if (!settled.Add(assembly))
-            {
-                return;
-            }
-
-            path.Add(assembly);
-            onPath.Add(assembly);
-
-            foreach (string referenced in graph.ReferencesOf(assembly).Where(isInScope))
-            {
-                Walk(referenced, path, onPath);
-            }
-
-            path.RemoveAt(path.Count - 1);
-            onPath.Remove(assembly);
-        }
-    }
-}
-```
-
-- [ ] **Step 6: Run the rule-engine tests to verify they pass**
-
-Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: PASS, 5 tests.
-
-- [ ] **Step 7: Implement the solution graph loader**
-
-`tests/Fakturenn.ArchitectureTests/SolutionReferenceGraph.cs`:
-
-```csharp
-using System.Reflection;
-
-namespace Fakturenn.ArchitectureTests;
-
-public static class SolutionReferenceGraph
-{
-    private const string ProductPrefix = "Fakturenn.";
-
-    /// <summary>
-    /// Builds the reference graph from the assemblies next to the test binary.
-    /// Only assemblies the compiler actually kept a reference to appear, which
-    /// is what the rules care about: a declared but unused reference is not a
-    /// dependency.
-    /// </summary>
-    public static ReferenceGraph Load()
-    {
-        Dictionary<string, IReadOnlyList<string>> references = [];
-
-        foreach (string path in Directory.EnumerateFiles(AppContext.BaseDirectory, $"{ProductPrefix}*.dll"))
-        {
-            Assembly assembly;
-            try
-            {
-                assembly = Assembly.LoadFrom(path);
-            }
-            catch (BadImageFormatException)
-            {
-                continue;
-            }
-
-            string name = assembly.GetName().Name!;
-            if (name.EndsWith("Tests", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            references[name] = [.. assembly.GetReferencedAssemblies().Select(reference => reference.Name!)];
-        }
-
-        return new ReferenceGraph(references);
-    }
-}
-```
-
-- [ ] **Step 8: Write the failing solution rule tests**
-
-`tests/Fakturenn.ArchitectureTests/SolutionArchitectureTests.cs`:
-
-```csharp
+using ArchUnitNET.Domain;
+using ArchUnitNET.xUnitV3;
 using AwesomeAssertions;
+using static ArchUnitNET.Fluent.ArchRuleDefinition;
 
 namespace Fakturenn.ArchitectureTests;
 
-/// <summary>
-/// The six rules from docs/testing/TEST-STRATEGY.md, matched by convention on
-/// assembly names so modules added by later epics inherit enforcement.
-/// </summary>
-public sealed class SolutionArchitectureTests
+public sealed class ModuleBoundaryTests
 {
-    private static readonly ReferenceGraph Graph = SolutionReferenceGraph.Load();
-
-    private static bool IsModule(string name) =>
-        name.StartsWith("Fakturenn.Modules.", StringComparison.Ordinal)
-        && !name.EndsWith(".Contracts", StringComparison.Ordinal);
-
-    private static bool IsAnyModuleAssembly(string name) =>
-        name.StartsWith("Fakturenn.Modules.", StringComparison.Ordinal);
-
-    private static bool IsInfrastructure(string name) =>
-        name.StartsWith("Fakturenn.Infrastructure.", StringComparison.Ordinal);
-
     [Fact]
-    public void The_graph_is_not_empty()
+    public void The_architecture_contains_the_assemblies_the_rules_govern()
     {
         // Without this, every rule below would pass vacuously if assembly
         // loading broke, and the suite would go green while enforcing nothing.
-        Graph.Assemblies.Should().Contain("Fakturenn.SharedKernel");
-        Graph.Assemblies.Should().Contain("Fakturenn.Modules.Invoices");
-    }
+        IEnumerable<string> assemblies = FakturennArchitecture.Loaded.Assemblies
+            .Select(assembly => assembly.Name.Split(',')[0]);
 
-    [Fact]
-    public void Only_the_web_assembly_references_MudBlazor()
-    {
-        ReferenceRules.OnlyMatchingMayReference(
-            Graph,
-            isRestrictedReference: name => name.StartsWith("MudBlazor", StringComparison.Ordinal),
-            isPermittedAssembly: name => name == "Fakturenn.Web").Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Only_mail_infrastructure_references_MimeKit_or_MailKit()
-    {
-        ReferenceRules.OnlyMatchingMayReference(
-            Graph,
-            isRestrictedReference: name =>
-                name.StartsWith("MimeKit", StringComparison.Ordinal)
-                || name.StartsWith("MailKit", StringComparison.Ordinal),
-            isPermittedAssembly: name =>
-                name.StartsWith("Fakturenn.Infrastructure.Mail", StringComparison.Ordinal)).Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Only_document_infrastructure_references_PdfSharp_or_MigraDoc()
-    {
-        ReferenceRules.OnlyMatchingMayReference(
-            Graph,
-            isRestrictedReference: name =>
-                name.StartsWith("PdfSharp", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("MigraDoc", StringComparison.OrdinalIgnoreCase),
-            isPermittedAssembly: name =>
-                name.StartsWith("Fakturenn.Infrastructure.Documents", StringComparison.Ordinal)).Should().BeEmpty();
-    }
-
-    [Fact]
-    public void No_module_references_infrastructure()
-    {
-        // Infrastructure implements module-owned interfaces, never the reverse.
-        // This is also what keeps E-Invoice-EU adapter types out of the domain.
-        ReferenceRules.MustNotReference(Graph, IsAnyModuleAssembly, IsInfrastructure).Should().BeEmpty();
-    }
-
-    [Fact]
-    public void No_module_references_another_modules_implementation_assembly()
-    {
-        IReadOnlyList<string> violations = ReferenceRules.MustNotReference(
-            Graph,
-            isSubject: IsAnyModuleAssembly,
-            isForbidden: IsModule);
-
-        // A module referencing itself is not a violation; the graph never
-        // contains self-references, so any hit here is a genuine cross-module reach.
-        violations.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void There_are_no_cycles_between_module_assemblies()
-    {
-        ReferenceRules.FindCycles(Graph, IsAnyModuleAssembly).Should().BeEmpty();
+        assemblies.Should().Contain([
+            "Fakturenn.SharedKernel",
+            "Fakturenn.Infrastructure.Storage",
+            "Fakturenn.Modules.Invoices",
+            "Fakturenn.Modules.Invoices.Contracts",
+        ]);
     }
 }
 ```
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [ ] **Step 4: Run it to verify it fails**
 
 Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: PASS, 12 tests.
+Expected: build failure — `The type or namespace name 'FakturennArchitecture' could not be found`, until Step 2's file compiles; then PASS for this one test.
 
-- [ ] **Step 10: Prove the rules bite**
+- [ ] **Step 5: Write the module boundary rules**
 
-Temporarily add a forbidden reference and confirm the suite fails:
+Append to `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`:
+
+```csharp
+    [Fact]
+    public void No_module_depends_on_infrastructure()
+    {
+        // Infrastructure implements module-owned interfaces, never the reverse.
+        // This is also what keeps E-Invoice-EU adapter types out of the domain.
+        Types().That().Are(FakturennArchitecture.Modules)
+            .Should().NotDependOnAny(FakturennArchitecture.Infrastructure)
+            .Because("MODULE-OWNERSHIP.md fixes the direction UI -> slices -> module contracts -> infrastructure")
+            .Check(FakturennArchitecture.Loaded);
+    }
+
+    [Fact]
+    public void No_module_depends_on_another_modules_implementation_assembly()
+    {
+        Types().That().Are(FakturennArchitecture.Modules)
+            .Should().NotDependOnAny(FakturennArchitecture.ModuleImplementations)
+            .Because("cross-module access goes through Fakturenn.Modules.<Name>.Contracts, never the owner's entities")
+            .Check(FakturennArchitecture.Loaded);
+    }
+
+    [Fact]
+    public void There_are_no_dependency_cycles_between_modules()
+    {
+        SliceRuleDefinition.Slices()
+            .Matching("Fakturenn.Modules.(*)")
+            .Should().BeFreeOfCycles()
+            .Check(FakturennArchitecture.Loaded);
+    }
+```
+
+Add `using ArchUnitNET.Fluent;` for `SliceRuleDefinition`.
+
+The second rule is expressed as "no module depends on any module implementation assembly". A type depending on its own assembly is not a dependency ArchUnitNET reports across the slice boundary, so this reads as the cross-module rule it is. If the rule proves too coarse once a second module exists, narrow it then — not before, per YAGNI.
+
+- [ ] **Step 6: Write the technology containment rules**
+
+`tests/Fakturenn.ArchitectureTests/TechnologyContainmentTests.cs`:
+
+```csharp
+using ArchUnitNET.Domain;
+using ArchUnitNET.xUnitV3;
+using static ArchUnitNET.Fluent.ArchRuleDefinition;
+
+namespace Fakturenn.ArchitectureTests;
+
+/// <summary>
+/// Keeps each third-party technology inside the one layer allowed to know about
+/// it. The Mail and Documents rules name assemblies that do not exist yet: they
+/// are vacuously true today and become binding the moment E11 or E14 creates
+/// them. Do not delete a rule because it currently matches nothing.
+/// </summary>
+public sealed class TechnologyContainmentTests
+{
+    [Fact]
+    public void Only_the_web_assembly_depends_on_MudBlazor()
+    {
+        Types().That().DoNotResideInAssembly("Fakturenn.Web")
+            .Should().NotDependOnAny(
+                Types().That().ResideInAssembly(@"^MudBlazor.*$", useRegularExpressions: true))
+            .Because("MudBlazor is a UI concern and must not leak into modules or infrastructure")
+            .Check(FakturennArchitecture.Loaded);
+    }
+
+    [Fact]
+    public void Only_mail_infrastructure_depends_on_MimeKit_or_MailKit()
+    {
+        Types().That().DoNotResideInAssembly(
+                @"^Fakturenn\.Infrastructure\.Mail.*$", useRegularExpressions: true)
+            .Should().NotDependOnAny(
+                Types().That().ResideInAssembly(@"^(MimeKit|MailKit).*$", useRegularExpressions: true))
+            .Because("MIME composition and signing belong behind the Mail module's contracts")
+            .Check(FakturennArchitecture.Loaded);
+    }
+
+    [Fact]
+    public void Only_document_infrastructure_depends_on_PdfSharp_or_MigraDoc()
+    {
+        Types().That().DoNotResideInAssembly(
+                @"^Fakturenn\.Infrastructure\.Documents.*$", useRegularExpressions: true)
+            .Should().NotDependOnAny(
+                Types().That().ResideInAssembly(@"^(PdfSharp|MigraDoc).*$", useRegularExpressions: true))
+            .Because("rendering belongs behind the Documents module's rendering contracts")
+            .Check(FakturennArchitecture.Loaded);
+    }
+}
+```
+
+- [ ] **Step 7: Run the tests to verify they pass**
+
+Run: `dotnet test tests/Fakturenn.ArchitectureTests`
+Expected: PASS, 7 tests.
+
+If a rule fails with "no types found matching", the regular expression did not match any loaded assembly. Confirm against the anti-vacuity test's assembly list before changing the pattern.
+
+- [ ] **Step 8: Prove the rules bite**
+
+A rule that has never failed is not evidence. Introduce a real violation and confirm the suite catches it:
 
 ```bash
 dotnet add src/Fakturenn.Modules.Invoices reference src/Fakturenn.Infrastructure.Storage
+```
+
+Add to `src/Fakturenn.Modules.Invoices/InvoicesModule.cs`, temporarily:
+
+```csharp
+    public static readonly Type Violation = typeof(Infrastructure.Storage.FilesystemBlobWriter);
+```
+
+A project reference alone is not enough: ArchUnitNET analyses type dependencies, and the compiler records nothing for an unused reference.
+
+```bash
 dotnet test tests/Fakturenn.ArchitectureTests
 ```
 
-Expected: FAIL on `No_module_references_infrastructure`.
+Expected: FAIL on `No_module_depends_on_infrastructure`.
 
-Then revert:
+Revert both changes:
 
 ```bash
 dotnet remove src/Fakturenn.Modules.Invoices reference src/Fakturenn.Infrastructure.Storage
-dotnet test tests/Fakturenn.ArchitectureTests
 ```
 
-Expected: PASS, 12 tests. Confirm `git status --short` shows no change to the csproj.
-
-- [ ] **Step 11: Commit**
+Remove the `Violation` field, then:
 
 ```bash
-git add tests/Fakturenn.ArchitectureTests Fakturenn.slnx
-git commit --message "test: enforce the six architecture rules by convention
+dotnet test tests/Fakturenn.ArchitectureTests
+git status --short
+```
+
+Expected: PASS, 7 tests, and `git status --short` shows no change to `src/Fakturenn.Modules.Invoices`.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add tests/Fakturenn.ArchitectureTests src/Fakturenn.Modules.Invoices Fakturenn.slnx Directory.Packages.props
+git commit --message "test: enforce the six architecture rules with ArchUnitNET
 
 Rules match on assembly-name patterns rather than a hand-maintained list, so
 modules added by later epics inherit enforcement without editing this project.
-Rules for MimeKit/MailKit and PDFsharp/MigraDoc are vacuously true today and
+The MimeKit/MailKit and PDFsharp/MigraDoc rules are vacuously true today and
 become binding when E11 and E14 create those assemblies.
 
-The rule engine is a pure function over a reference graph, so ReferenceRulesTests
-proves it reports violations. A non-emptiness test guards against every rule
-passing vacuously if assembly loading breaks.
+An anti-vacuity test asserts the loaded architecture actually contains the
+assemblies the rules govern, so a loading failure cannot turn the whole suite
+green while enforcing nothing.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
-
----
-
 ### Task 7: Blazor host with localization and health endpoints
 
 **Files:**
@@ -3581,13 +3484,13 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ## Self-review
 
-**Spec coverage.** Every section of the design document maps to at least one task: §6 build order → Tasks 1 and 15; §7 scaffold → Task 2; §8 test architecture → Tasks 2, 3, 4, 6, 9, 10, 11; §8.1 rules → Task 6; §8.2 corpus → Task 10; §9 runnable shell → Tasks 7, 8, 12; §10.1 CI → Task 13; §10.2 CodeQL and Dependabot → Task 13; §10.3 release → Task 14; §11 testing the design → Task 6 Step 10, Task 10 Step 2, Task 9, Task 12 Step 5.
+**Spec coverage.** Every section of the design document maps to at least one task: §6 build order → Tasks 1 and 15; §7 scaffold → Task 2; §8 test architecture → Tasks 2, 3, 4, 6, 9, 10, 11; §8.1 rules → Task 6; §8.2 corpus → Task 10; §9 runnable shell → Tasks 7, 8, 12; §10.1 CI → Task 13; §10.2 CodeQL and Dependabot → Task 13; §10.3 release → Task 14; §11 testing the design → Task 6 Step 8, Task 10 Step 2, Task 9, Task 12 Step 5.
 
 **Known gaps, stated rather than hidden.**
 
-- The design named ArchUnitNET; the plan uses BCL reflection. Reasoned above.
 - The design named `NullDocumentStore`; the plan drops it. Reasoned above.
 - `docs/operations/RELEASE-CHECKLIST-v0.1.md` was not in the design's file list. It is the concrete form of design §4's "documented manual checklist that fails closed", so it is an addition, not a change of scope.
 - The SHA-256 constant in Task 4 Step 2 is explicitly marked as needing replacement, with the command that produces the real value in Step 3. This is the one deliberate fill-in in the plan, because fabricating a digest would be worse than requiring one command.
+- Task 6's rules are enforced at type-dependency level by ArchUnitNET. A module could still declare an unused project reference to infrastructure without failing a rule, because the compiler records no type dependency for it. That is acceptable: an unused reference is not a dependency, and the moment anything uses it the rule fires.
 
-**Type consistency.** `Money`, `Percentage`, `IClock`, `IIdGenerator`, `FakeClock`, `FakeIdGenerator`, `IFileSystem`, `StoredBlob`, `FilesystemBlobWriter`, `InvoiceId`, `ReferenceGraph`, `ReferenceRules`, `SolutionReferenceGraph`, `InvoicesDbContext`, `FakturennWebApplication`, `SharedResource`, `WebAppFixture`, `PostgresFixture`, `XmlNormalizer`, `XmlComparison` and `NormalizingXmlComparer` are each defined in exactly one task and used with the same signature everywhere later.
+**Type consistency.** `Money`, `Percentage`, `IClock`, `IIdGenerator`, `FakeClock`, `FakeIdGenerator`, `IFileSystem`, `StoredBlob`, `FilesystemBlobWriter`, `InvoiceId`, `InvoicesModule`, `FakturennArchitecture`, `InvoicesDbContext`, `FakturennWebApplication`, `SharedResource`, `WebAppFixture`, `PostgresFixture`, `XmlNormalizer`, `XmlComparison` and `NormalizingXmlComparer` are each defined in exactly one task and used with the same signature everywhere later.
