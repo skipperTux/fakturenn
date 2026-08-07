@@ -81,9 +81,8 @@ jobs:
   ui:
     name: UI tests
     runs-on: ubuntu-latest
-    # The suite itself is a few seconds; the budget mostly covers installing the
-    # Playwright CLI and downloading + installing Chromium plus its OS dependencies
-    # on a bare runner.
+    # The suite itself is a few seconds; the budget mostly covers playwright.ps1
+    # downloading + installing Chromium plus its OS dependencies on a bare runner.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -92,21 +91,22 @@ jobs:
           global-json-file: global.json
       - name: Build UI tests
         run: dotnet build tests/Fakturenn.UiTests --configuration Release
-      - name: Install Playwright CLI
-        run: dotnet tool install --global Microsoft.Playwright.CLI
       - name: Install browsers
-        # Microsoft.Playwright.CLI as a global tool, not playwright.ps1: this
-        # repository has no pwsh, and the CLI tool is the form verified to work in
-        # this project's own environment (see carry-forward.md, Task 11). Global
-        # tools install to $HOME/.dotnet/tools, which is not guaranteed to be on
-        # PATH in a fresh step, so it is invoked by full path. --with-deps installs
-        # the OS packages Chromium needs (fonts, libgtk, etc.); a bare ubuntu-latest
-        # runner has none of them, and --with-deps needs root, which the runner user
-        # has via passwordless sudo. ubuntu-latest is an officially supported
-        # Playwright OS -- unlike the Fedora host this workflow was authored and
-        # verified on, where --with-deps could not be exercised (no non-interactive
-        # sudo, unsupported OS), so this flag is chosen but unverified locally.
-        run: '"$HOME/.dotnet/tools/playwright" -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install --with-deps chromium'
+        # playwright.ps1, not the Microsoft.Playwright.CLI global tool: the build
+        # step above already generates this script, pinned to the exact
+        # Microsoft.Playwright package version this project references (see
+        # Directory.Packages.props), so no extra NuGet download or -p indirection
+        # is needed. This needs pwsh, which ubuntu-latest ships preinstalled (this
+        # workflow runs there, not on the Fedora dev host it was authored on, which
+        # has no pwsh -- carry-forward.md documents the global-tool form as the
+        # verified alternative for developers on that host). --with-deps installs
+        # the OS packages Chromium needs (fonts, libgtk, etc.); a bare runner has
+        # none of them, and --with-deps needs root, which the runner user has via
+        # passwordless sudo. ubuntu-latest is an officially supported Playwright OS
+        # -- unlike the Fedora host, where --with-deps could not be exercised (no
+        # non-interactive sudo, unsupported OS), so this flag is chosen but
+        # unverified locally.
+        run: pwsh tests/Fakturenn.UiTests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
       - name: UI tests
         run: dotnet test --project tests/Fakturenn.UiTests --configuration Release --no-build
 

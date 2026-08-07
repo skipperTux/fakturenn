@@ -11,7 +11,7 @@ public sealed class FilesystemBlobWriterTests
 
     // "fakturenn" hashed with SHA-256, verified independently with:
     //   printf 'fakturenn' | sha256sum
-    private const string _expectedHash =
+    private const string ExpectedHash =
         "b605d3e7799125932e02a9ff56104d77e576a79d865f46a8b14bc5262ca9505f";
 
     [Fact]
@@ -21,7 +21,7 @@ public sealed class FilesystemBlobWriterTests
 
         StoredBlob blob = await writer.WriteAsync("invoices/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
-        blob.Sha256.Should().Be(_expectedHash);
+        blob.Sha256.Should().Be(ExpectedHash);
         blob.SizeInBytes.Should().Be(_content.Length);
     }
 
