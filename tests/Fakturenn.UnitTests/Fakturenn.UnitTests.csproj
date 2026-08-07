@@ -18,11 +18,13 @@
 
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="NSubstitute" />
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
+    <ProjectReference Include="../../src/Fakturenn.Infrastructure.Storage/Fakturenn.Infrastructure.Storage.csproj" />
   </ItemGroup>
 
 </Project>
