@@ -7,11 +7,11 @@ namespace Fakturenn.UnitTests.Infrastructure;
 
 public sealed class FilesystemBlobWriterTests
 {
-    private static readonly byte[] Content = Encoding.UTF8.GetBytes("fakturenn");
+    private static readonly byte[] _content = Encoding.UTF8.GetBytes("fakturenn");
 
     // "fakturenn" hashed with SHA-256, verified independently with:
     //   printf 'fakturenn' | sha256sum
-    private const string ExpectedHash =
+    private const string _expectedHash =
         "b605d3e7799125932e02a9ff56104d77e576a79d865f46a8b14bc5262ca9505f";
 
     [Fact]
@@ -19,10 +19,10 @@ public sealed class FilesystemBlobWriterTests
     {
         var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
 
-        StoredBlob blob = await writer.WriteAsync("invoices/invoice.pdf", Content, TestContext.Current.CancellationToken);
+        StoredBlob blob = await writer.WriteAsync("invoices/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
-        blob.Sha256.Should().Be(ExpectedHash);
-        blob.SizeInBytes.Should().Be(Content.Length);
+        blob.Sha256.Should().Be(_expectedHash);
+        blob.SizeInBytes.Should().Be(_content.Length);
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class FilesystemBlobWriterTests
     {
         var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
 
-        StoredBlob blob = await writer.WriteAsync("invoices/invoice.pdf", Content, TestContext.Current.CancellationToken);
+        StoredBlob blob = await writer.WriteAsync("invoices/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
         blob.Path.Should().Be(Path.Combine("/srv/fakturenn", "invoices/invoice.pdf"));
     }
@@ -44,7 +44,7 @@ public sealed class FilesystemBlobWriterTests
         IFileSystem fileSystem = Substitute.For<IFileSystem>();
         var writer = new FilesystemBlobWriter(fileSystem, "/srv/fakturenn");
 
-        await writer.WriteAsync("invoices/invoice.pdf", Content, TestContext.Current.CancellationToken);
+        await writer.WriteAsync("invoices/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
         await fileSystem.Received(1).WriteAsync(
             Path.Combine("/srv/fakturenn", "invoices/invoice.pdf"),
@@ -57,7 +57,7 @@ public sealed class FilesystemBlobWriterTests
     {
         var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
 
-        Func<Task> write = () => writer.WriteAsync("../../etc/passwd", Content, TestContext.Current.CancellationToken);
+        Func<Task> write = () => writer.WriteAsync("../../etc/passwd", _content, TestContext.Current.CancellationToken);
 
         await write.Should().ThrowAsync<ArgumentException>();
     }
@@ -70,7 +70,7 @@ public sealed class FilesystemBlobWriterTests
         var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
 
         Func<Task> write = () => writer.WriteAsync(
-            "../fakturenn-archive/invoice.pdf", Content, TestContext.Current.CancellationToken);
+            "../fakturenn-archive/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
         await write.Should().ThrowAsync<ArgumentException>();
     }
@@ -84,7 +84,7 @@ public sealed class FilesystemBlobWriterTests
         var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
 
         Func<Task> write = () => writer.WriteAsync(
-            "/srv/fakturennsibling/invoice.pdf", Content, TestContext.Current.CancellationToken);
+            "/srv/fakturennsibling/invoice.pdf", _content, TestContext.Current.CancellationToken);
 
         await write.Should().ThrowAsync<ArgumentException>();
     }

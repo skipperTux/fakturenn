@@ -48,7 +48,7 @@ public static partial class DatabaseMigrator
     /// blackholed address so the wall-clock budget is spent retrying rather than
     /// blocked inside one hung connect (Npgsql's own default is 15s).
     /// </summary>
-    private const int DefaultConnectTimeoutSeconds = 5;
+    private const int _defaultConnectTimeoutSeconds = 5;
 
     // public Methods
     public static async Task<int> RunAsync(
@@ -135,7 +135,7 @@ public static partial class DatabaseMigrator
         if (!builder.Keys.Contains(nameof(NpgsqlConnectionStringBuilder.Timeout)))
 #pragma warning restore CA1841
         {
-            builder.Timeout = DefaultConnectTimeoutSeconds;
+            builder.Timeout = _defaultConnectTimeoutSeconds;
         }
 
         return builder.ConnectionString;

@@ -1,0 +1,37 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze C#
+    runs-on: ubuntu-latest
+    # CodeQL's own build + analyze pass typically finishes in a few minutes for a
+    # solution this size; the budget is a bound against a hung analysis, not an
+    # estimate of the common case.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+      - name: Build
+        # Deliberately NOT -p:ContinuousIntegrationBuild=true. It rewrites the
+        # compile-time [CallerFilePath] absolute path that
+        # ModuleBoundaryTests.RepositoryRoot resolves the repository through (see
+        # ci.yml), and the loader-omission test fails on File.Exists as a result.
+        run: dotnet build --configuration Release
+      - uses: github/codeql-action/analyze@v3

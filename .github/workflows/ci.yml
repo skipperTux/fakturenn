@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Deliberately NOT setting ContinuousIntegrationBuild, DeterministicSourcePaths or
+  # enabling SourceLink anywhere in this workflow. ModuleBoundaryTests.RepositoryRoot
+  # (Fakturenn.ArchitectureTests) resolves the repository root through
+  # [CallerFilePath], a compile-time absolute path baked into the assembly. Any of
+  # those settings rewrites that path to /_/tests/... on the build agent, and the
+  # loader-omission test then fails on File.Exists. Do not add
+  # ContinuousIntegrationBuild=true "by reflex" to a build or publish step below --
+  # it silently breaks that test.
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    # Formatting a solution this size takes seconds once restored; the bulk of the
+    # budget below covers a cold NuGet restore on a fresh runner.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes --verbosity diagnostic
+
+  build-test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    # Restore + Release build + three in-process suites (unit 26, architecture 8,
+    # compliance 10). All three run in low single-digit seconds once built; the
+    # budget is dominated by a cold restore and build on a fresh runner.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+      - name: Unit tests
+        run: dotnet test --project tests/Fakturenn.UnitTests --configuration Release --no-build
+      - name: Architecture tests
+        run: dotnet test --project tests/Fakturenn.ArchitectureTests --configuration Release --no-build
+      - name: Compliance tests
+        run: dotnet test --project tests/Fakturenn.ComplianceTests --configuration Release --no-build
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    # Testcontainers starts three postgres:17-alpine containers across the suite.
+    # The suite itself runs in ~25s once images are warm; the budget covers a cold
+    # image pull plus restore/build on a fresh runner.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Integration tests
+        run: dotnet test --project tests/Fakturenn.IntegrationTests --configuration Release
+
+  ui:
+    name: UI tests
+    runs-on: ubuntu-latest
+    # The suite itself is a few seconds; the budget mostly covers installing the
+    # Playwright CLI and downloading + installing Chromium plus its OS dependencies
+    # on a bare runner.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build UI tests
+        run: dotnet build tests/Fakturenn.UiTests --configuration Release
+      - name: Install Playwright CLI
+        run: dotnet tool install --global Microsoft.Playwright.CLI
+      - name: Install browsers
+        # Microsoft.Playwright.CLI as a global tool, not playwright.ps1: this
+        # repository has no pwsh, and the CLI tool is the form verified to work in
+        # this project's own environment (see carry-forward.md, Task 11). Global
+        # tools install to $HOME/.dotnet/tools, which is not guaranteed to be on
+        # PATH in a fresh step, so it is invoked by full path. --with-deps installs
+        # the OS packages Chromium needs (fonts, libgtk, etc.); a bare ubuntu-latest
+        # runner has none of them, and --with-deps needs root, which the runner user
+        # has via passwordless sudo. ubuntu-latest is an officially supported
+        # Playwright OS -- unlike the Fedora host this workflow was authored and
+        # verified on, where --with-deps could not be exercised (no non-interactive
+        # sudo, unsupported OS), so this flag is chosen but unverified locally.
+        run: '"$HOME/.dotnet/tools/playwright" -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install --with-deps chromium'
+      - name: UI tests
+        run: dotnet test --project tests/Fakturenn.UiTests --configuration Release --no-build
+
+  compose-smoke:
+    name: Compose smoke test
+    runs-on: ubuntu-latest
+    # Dominated by the container image build (a few seconds locally, longer on a
+    # cold runner with no NuGet/base-image cache) and the readiness poll's own
+    # 120s budget; the rest of the sequence (compose up, migrate, teardown) is fast.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build image
+        # Restricted to linux-x64 (the runner's own RID) instead of the project's
+        # default multi-arch set (linux-x64;linux-arm64, see Fakturenn.Web.csproj).
+        # Publishing the full RID list produces an OCI image INDEX, and pushing an
+        # index into the local Docker image store requires the containerd image
+        # store to be enabled -- confirmed failing locally (error CONTAINER1020)
+        # against a Docker-API-compatible daemon without it, and not something this
+        # workflow can assume is on for ubuntu-latest. A single-RID image loads into
+        # any Docker store and is all the smoke test needs.
+        run: dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
+      - name: Start stack
+        run: docker compose up --detach
+      - name: Apply migrations
+        # --profile is required: without it Compose reports the migrate service as
+        # missing, because it is profile-gated and not part of the default 'up'.
+        run: docker compose --profile migrate run --rm migrate
+      - name: Wait for readiness
+        run: timeout 120 bash -c 'until curl --silent --fail http://localhost:8080/health; do sleep 3; done'
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop stack
+        if: always()
+        run: docker compose down --volumes

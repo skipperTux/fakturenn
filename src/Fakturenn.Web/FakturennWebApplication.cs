@@ -11,7 +11,7 @@ namespace Fakturenn.Web;
 
 public static class FakturennWebApplication
 {
-    private static readonly string[] SupportedCultures = ["en", "de"];
+    private static readonly string[] _supportedCultures = ["en", "de"];
 
     /// <summary>
     /// Builds the application without starting it, so tests can host it on a
@@ -30,9 +30,9 @@ public static class FakturennWebApplication
 
         builder.Services.Configure<RequestLocalizationOptions>(options =>
         {
-            options.SetDefaultCulture(SupportedCultures[0]);
-            options.AddSupportedCultures(SupportedCultures);
-            options.AddSupportedUICultures(SupportedCultures);
+            options.SetDefaultCulture(_supportedCultures[0]);
+            options.AddSupportedCultures(_supportedCultures);
+            options.AddSupportedUICultures(_supportedCultures);
         });
 
         // The liveness probe must not depend on PostgreSQL: a database outage
