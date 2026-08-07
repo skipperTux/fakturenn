@@ -4,3 +4,10 @@
 # for test code only, rather than project-wide.
 [*.cs]
 dotnet_diagnostic.CA1707.severity = none
+
+# Tests deliberately declare collaborators as their interface type (e.g.
+# `IClock clock = new FakeClock(...)`) to exercise the abstraction that
+# production code depends on, not the fake's concrete surface. CA1859
+# recommends the opposite for performance, which does not apply to test
+# code; disabled here, for test code only, rather than project-wide.
+dotnet_diagnostic.CA1859.severity = none
