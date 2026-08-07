@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Fakturenn.Infrastructure.Storage/Fakturenn.Infrastructure.Storage.csproj" />
+    <Project Path="src/Fakturenn.Modules.Invoices.Contracts/Fakturenn.Modules.Invoices.Contracts.csproj" />
+    <Project Path="src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj" />
     <Project Path="src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
   </Folder>
   <Folder Name="/tests/">
