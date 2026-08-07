@@ -29,13 +29,31 @@ public sealed class FakeIdGeneratorTests
     }
 
     [Fact]
-    public void The_real_generator_produces_distinct_sortable_version_seven_ids()
+    public void The_real_generator_produces_no_duplicates_across_a_large_batch()
     {
+        // Batch document creation depends on this. 74 random bits after the
+        // timestamp make a same-millisecond collision vanishingly unlikely.
         IIdGenerator generator = new GuidV7IdGenerator();
 
-        Guid[] ids = [generator.NewId(), generator.NewId(), generator.NewId()];
+        Guid[] ids = [.. Enumerable.Range(0, 10_000).Select(_ => generator.NewId())];
 
         ids.Should().OnlyHaveUniqueItems();
-        ids.Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public void The_real_generator_produces_ids_that_sort_by_creation_time()
+    {
+        // Version 7 timestamps have millisecond resolution, so the calls are
+        // spaced. Order within a single millisecond is unspecified by RFC 9562
+        // and is not asserted here.
+        IIdGenerator generator = new GuidV7IdGenerator();
+
+        Guid first = generator.NewId();
+        Thread.Sleep(5);
+        Guid second = generator.NewId();
+        Thread.Sleep(5);
+        Guid third = generator.NewId();
+
+        new[] { first, second, third }.Should().BeInAscendingOrder();
     }
 }
