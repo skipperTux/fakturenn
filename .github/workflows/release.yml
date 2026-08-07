@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege by default. Only the publish job needs to write; the
+# verification jobs below only ever read the checked-out tag.
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Deliberately NOT setting ContinuousIntegrationBuild, DeterministicSourcePaths or
+  # enabling SourceLink anywhere in this workflow. ModuleBoundaryTests.RepositoryRoot
+  # (Fakturenn.ArchitectureTests) resolves the repository root through
+  # [CallerFilePath], a compile-time absolute path baked into the assembly. Any of
+  # those settings rewrites that path to /_/tests/... on the build agent, and the
+  # loader-omission test then fails on File.Exists. See ci.yml for the same note.
+
+jobs:
+  # A tag can be pushed from any ref, not only a commit that already went through
+  # ci.yml on main. These four jobs mirror ci.yml's format/build-test/integration/ui
+  # jobs verbatim so the tagged commit is re-verified independently of whatever
+  # happened on main, rather than trusting that the tag points at a green commit.
+  # (compose-smoke is intentionally not repeated here: the publish job below performs
+  # a real multi-arch registry push, a stronger check than a local single-RID load.)
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes --verbosity diagnostic
+
+  build-test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+      - name: Unit tests
+        run: dotnet test --project tests/Fakturenn.UnitTests --configuration Release --no-build
+      - name: Architecture tests
+        run: dotnet test --project tests/Fakturenn.ArchitectureTests --configuration Release --no-build
+      - name: Compliance tests
+        run: dotnet test --project tests/Fakturenn.ComplianceTests --configuration Release --no-build
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Integration tests
+        run: dotnet test --project tests/Fakturenn.IntegrationTests --configuration Release
+
+  ui:
+    name: UI tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build UI tests
+        run: dotnet build tests/Fakturenn.UiTests --configuration Release
+      - name: Install browsers
+        run: pwsh tests/Fakturenn.UiTests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - name: UI tests
+        run: dotnet test --project tests/Fakturenn.UiTests --configuration Release --no-build
+
+  publish:
+    name: Publish image and release
+    runs-on: ubuntu-latest
+    needs: [format, build-test, integration, ui]
+    # The only job that writes anything. Scoped narrowly: packages:write to push
+    # the image to GHCR, contents:write for the GitHub Release the last step creates.
+    permissions:
+      contents: write
+      packages: write
+    # Dominated by the multi-architecture registry push (cold linux-x64 and
+    # linux-arm64 base-image pulls plus two layer pushes, no cache on a fresh
+    # runner) and the SBOM tool install. This is the widest-variance job in either
+    # workflow, hence the most generous budget, matching codeql.yml's analyze job.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Derive version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish multi-architecture image
+        # This is the only place multi-arch is exercised. compose-smoke (ci.yml)
+        # pins linux-x64 because a multi-arch local load fails CONTAINER1020
+        # without the containerd image store; pushing to a registry instead of
+        # loading locally sidesteps that, because a registry natively accepts an
+        # OCI image index. Unverified without a remote registry to push to.
+        run: |
+          dotnet publish src/Fakturenn.Web \
+            --configuration Release \
+            /t:PublishContainer \
+            -p:ContainerRegistry=ghcr.io \
+            -p:ContainerRepository=${{ github.repository_owner }}/fakturenn \
+            -p:ContainerImageTags='"${{ steps.version.outputs.value }};latest"' \
+            -p:Version=${{ steps.version.outputs.value }}
+
+      - name: Generate SBOM
+        run: |
+          dotnet tool install --global CycloneDX
+          dotnet CycloneDX Fakturenn.slnx --out ./artifacts --json
+          mv ./artifacts/bom.json ./artifacts/fakturenn-${{ steps.version.outputs.value }}-sbom.json
+
+      - name: Checksum artifacts
+        working-directory: ./artifacts
+        run: sha256sum -- * > SHA256SUMS
+
+      - name: Extract the changelog section
+        run: |
+          awk '/^## \[${{ steps.version.outputs.value }}\]/{flag=1; next} /^## \[/{flag=0} flag' \
+            CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section for ${{ steps.version.outputs.value }}." >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Human verification: see [docs/operations/RELEASE-CHECKLIST-v0.1.md](docs/operations/RELEASE-CHECKLIST-v0.1.md)."
+          } >> release-notes.md
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --prerelease \
+            ./artifacts/*
