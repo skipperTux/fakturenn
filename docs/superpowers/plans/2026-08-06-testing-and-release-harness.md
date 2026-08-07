@@ -2649,6 +2649,41 @@ public sealed class NormalizingXmlComparerTests
 }
 ```
 
+> **Added in fix round 1.** Code review found that the original eight tests never exercised
+> mixed content (text alongside child elements) or a namespace-only difference, even though
+> the review independently reproduced that the shipped comparer already handled the latter
+> correctly by accident (via `XName` equality), with nothing pinning that behaviour down. Two
+> tests were added, bringing the suite to ten:
+>
+> ```csharp
+>     [Fact]
+>     public void Text_alongside_child_elements_is_not_ignored()
+>     {
+>         const string expected = "<Note>Please pay by <Date>2026-09-01</Date> thanks</Note>";
+>         const string actual = "<Note>Kindly pay by <Date>2026-09-01</Date> thanks</Note>";
+>
+>         NormalizingXmlComparer.Compare(expected, actual).IsMatch.Should().BeFalse();
+>     }
+>
+>     [Fact]
+>     public void Documents_differing_only_by_namespace_are_reported_as_different()
+>     {
+>         // CII and UBL differ precisely here. A comparer that ignored the namespace
+>         // would report a UBL invoice as matching its CII golden file.
+>         const string cii = "<Invoice xmlns=\"urn:cen.eu:en16931:2017:cii\"><Total>952.00</Total></Invoice>";
+>         const string ubl = "<Invoice xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:Invoice-2\"><Total>952.00</Total></Invoice>";
+>
+>         NormalizingXmlComparer.Compare(cii, ubl).IsMatch.Should().BeFalse();
+>     }
+> ```
+>
+> `Text_alongside_child_elements_is_not_ignored` failed against the original Step 4/6 code
+> below (9 succeeded, 1 failed — the original normalizer discarded an element's own text the
+> moment it had any child element, so both differently-worded `<Note>` documents normalized to
+> the same shape and compared equal). `Documents_differing_only_by_namespace_are_reported_as_different`
+> already passed unmodified, confirming the namespace behaviour was correct but previously
+> unpinned.
+
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `dotnet test tests/Fakturenn.ComplianceTests`
@@ -2666,7 +2701,11 @@ namespace Fakturenn.ComplianceTests;
 /// <summary>
 /// Removes differences that carry no semantics: comments, insignificant
 /// whitespace, and attribute order. Element order is preserved, because
-/// EN 16931 syntax bindings define ordered sequences.
+/// EN 16931 syntax bindings define ordered sequences; namespace URIs are
+/// preserved too, because the element's <see cref="XName"/> carries them,
+/// and CII versus UBL invoices differ precisely there. An element's own text
+/// is preserved and collapsed even when it also has child elements (mixed
+/// content), so text is compared rather than silently discarded.
 /// </summary>
 public static class XmlNormalizer
 {
@@ -2675,23 +2714,30 @@ public static class XmlNormalizer
         var normalized = new XElement(element.Name);
 
         foreach (XAttribute attribute in element.Attributes()
-                     .Where(attribute => !attribute.IsNamespaceDeclaration)
-                     .OrderBy(attribute => attribute.Name.ToString(), StringComparer.Ordinal))
+                     .Where(attribute => !attribute.IsNamespaceDeclaration))
         {
             normalized.SetAttributeValue(attribute.Name, attribute.Value.Trim());
         }
 
-        XElement[] children = [.. element.Elements()];
-
-        if (children.Length == 0)
+        foreach (XNode node in element.Nodes())
         {
-            normalized.Value = CollapseWhitespace(element.Value);
-            return normalized;
-        }
+            switch (node)
+            {
+                case XElement child:
+                    normalized.Add(Normalize(child));
+                    break;
+                case XText text:
+                    string collapsed = CollapseWhitespace(text.Value);
+                    if (collapsed.Length > 0)
+                    {
+                        normalized.Add(new XText(collapsed));
+                    }
 
-        foreach (XElement child in children)
-        {
-            normalized.Add(Normalize(child));
+                    break;
+                default:
+                    // Comments, processing instructions and the like carry no semantics.
+                    break;
+            }
         }
 
         return normalized;
@@ -2701,6 +2747,18 @@ public static class XmlNormalizer
         string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }
 ```
+
+> **Corrected in fix round 1 — this was the mixed-content defect, not a syntax nit.** The
+> original draft above (shown historically for the record) special-cased leaf elements: it
+> only set `.Value` when the element had zero child elements, so any element with children
+> silently dropped its own text — `<Note>Please pay by <Date>...</Date> thanks</Note>` and a
+> `<Note>` with entirely different wording either side of `<Date>` normalized identically and
+> compared equal. The corrected version above walks `element.Nodes()` uniformly instead of
+> special-casing the leaf case: child elements recurse, direct text nodes are collapsed and
+> kept (dropped only if collapsing leaves them empty), and comments/other node kinds are
+> dropped. This also removed the `OrderBy` on attributes (fix round 1, item 3 below) since
+> `CompareAttributes` already looks attributes up by name — sorting them bought nothing and
+> review confirmed removing it fails no test.
 
 - [ ] **Step 5: Implement the comparison result**
 
@@ -2744,18 +2802,16 @@ public static class NormalizingXmlComparer
 
         CompareAttributes(expected, actual, path, differences);
 
+        string expectedText = OwnText(expected);
+        string actualText = OwnText(actual);
+
+        if (expectedText != actualText)
+        {
+            differences.Add($"{path}: expected value '{expectedText}' but found '{actualText}'");
+        }
+
         XElement[] expectedChildren = [.. expected.Elements()];
         XElement[] actualChildren = [.. actual.Elements()];
-
-        if (expectedChildren.Length == 0 && actualChildren.Length == 0)
-        {
-            if (expected.Value != actual.Value)
-            {
-                differences.Add($"{path}: expected value '{expected.Value}' but found '{actual.Value}'");
-            }
-
-            return;
-        }
 
         if (expectedChildren.Length != actualChildren.Length)
         {
@@ -2797,8 +2853,26 @@ public static class NormalizingXmlComparer
             differences.Add($"{path}: unexpected attribute '{attribute.Name}'");
         }
     }
+
+    /// <summary>
+    /// The element's own text, excluding text owned by descendant elements. Unlike
+    /// <see cref="XElement.Value"/>, which concatenates all descendant text, this
+    /// only looks at the element's direct <see cref="XText"/> children — the text
+    /// interleaved with its child elements (mixed content).
+    /// </summary>
+    private static string OwnText(XElement element) =>
+        string.Concat(element.Nodes().OfType<XText>().Select(text => text.Value));
 }
 ```
+
+> **Corrected in fix round 1.** The original draft above (shown historically) only compared
+> `expected.Value != actual.Value` inside the `expectedChildren.Length == 0 &&
+> actualChildren.Length == 0` branch, so text was never compared once an element had any child
+> element — the same defect described under Step 4. The fix moves the text comparison out of
+> that branch so it runs unconditionally, and introduces `OwnText`, because `XElement.Value`
+> recurses into descendant elements' text and would double-count it; `OwnText` reads only the
+> element's own direct `XText` children, which after normalization are already collapsed and
+> non-empty.
 
 - [ ] **Step 7: Write the corpus README**
 
@@ -2827,6 +2901,14 @@ Golden files for electronic-invoice output, compared with
 - Files are compared after normalization: comments, insignificant whitespace
   and attribute order are ignored. Element order is significant, because
   EN 16931 syntax bindings define ordered sequences.
+- Namespace differences are detected, not ignored — an element's namespace URI
+  is part of its identity to the comparer. CII and UBL golden files therefore
+  must live under distinct paths (see Layout above) and are never
+  interchangeable, even when their local element names coincide.
+- A malformed golden file does not surface as a comparison failure. Parsing
+  happens before normalization, so a syntax error in a `.expected.xml` file
+  throws `System.Xml.XmlException` (with line and position) out of
+  `NormalizingXmlComparer.Compare`, rather than being reported as a mismatch.
 
 ## Status
 
@@ -2839,10 +2921,15 @@ XRechnung CII, XRechnung UBL if supported, multiple tax cases, references,
 allowances and charges, corrections, service periods, and rounding edges.
 ```
 
+> **Extended in fix round 1** with the namespace and malformed-file bullets above, so a future
+> contributor learns both facts from the corpus README itself rather than having to rediscover
+> them from the comparer's source.
+
 - [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `dotnet test tests/Fakturenn.ComplianceTests`
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests (8 original plus the two added in fix round 1 — see the note under
+Step 2).
 
 - [ ] **Step 9: Commit**
 

@@ -20,6 +20,14 @@ Golden files for electronic-invoice output, compared with
 - Files are compared after normalization: comments, insignificant whitespace
   and attribute order are ignored. Element order is significant, because
   EN 16931 syntax bindings define ordered sequences.
+- Namespace differences are detected, not ignored — an element's namespace URI
+  is part of its identity to the comparer. CII and UBL golden files therefore
+  must live under distinct paths (see Layout above) and are never
+  interchangeable, even when their local element names coincide.
+- A malformed golden file does not surface as a comparison failure. Parsing
+  happens before normalization, so a syntax error in a `.expected.xml` file
+  throws `System.Xml.XmlException` (with line and position) out of
+  `NormalizingXmlComparer.Compare`, rather than being reported as a mismatch.
 
 ## Status
 

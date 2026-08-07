@@ -25,18 +25,16 @@ public static class NormalizingXmlComparer
 
         CompareAttributes(expected, actual, path, differences);
 
+        string expectedText = OwnText(expected);
+        string actualText = OwnText(actual);
+
+        if (expectedText != actualText)
+        {
+            differences.Add($"{path}: expected value '{expectedText}' but found '{actualText}'");
+        }
+
         XElement[] expectedChildren = [.. expected.Elements()];
         XElement[] actualChildren = [.. actual.Elements()];
-
-        if (expectedChildren.Length == 0 && actualChildren.Length == 0)
-        {
-            if (expected.Value != actual.Value)
-            {
-                differences.Add($"{path}: expected value '{expected.Value}' but found '{actual.Value}'");
-            }
-
-            return;
-        }
 
         if (expectedChildren.Length != actualChildren.Length)
         {
@@ -78,4 +76,13 @@ public static class NormalizingXmlComparer
             differences.Add($"{path}: unexpected attribute '{attribute.Name}'");
         }
     }
+
+    /// <summary>
+    /// The element's own text, excluding text owned by descendant elements. Unlike
+    /// <see cref="XElement.Value"/>, which concatenates all descendant text, this
+    /// only looks at the element's direct <see cref="XText"/> children — the text
+    /// interleaved with its child elements (mixed content).
+    /// </summary>
+    private static string OwnText(XElement element) =>
+        string.Concat(element.Nodes().OfType<XText>().Select(text => text.Value));
 }

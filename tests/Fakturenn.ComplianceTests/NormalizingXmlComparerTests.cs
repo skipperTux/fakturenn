@@ -85,4 +85,24 @@ public sealed class NormalizingXmlComparerTests
 
         NormalizingXmlComparer.Compare(expected, actual).IsMatch.Should().BeFalse();
     }
+
+    [Fact]
+    public void Text_alongside_child_elements_is_not_ignored()
+    {
+        const string expected = "<Note>Please pay by <Date>2026-09-01</Date> thanks</Note>";
+        const string actual = "<Note>Kindly pay by <Date>2026-09-01</Date> thanks</Note>";
+
+        NormalizingXmlComparer.Compare(expected, actual).IsMatch.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Documents_differing_only_by_namespace_are_reported_as_different()
+    {
+        // CII and UBL differ precisely here. A comparer that ignored the namespace
+        // would report a UBL invoice as matching its CII golden file.
+        const string cii = "<Invoice xmlns=\"urn:cen.eu:en16931:2017:cii\"><Total>952.00</Total></Invoice>";
+        const string ubl = "<Invoice xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:Invoice-2\"><Total>952.00</Total></Invoice>";
+
+        NormalizingXmlComparer.Compare(cii, ubl).IsMatch.Should().BeFalse();
+    }
 }
