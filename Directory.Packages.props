@@ -18,6 +18,7 @@
       range (10.0.10 and 10.0.4 respectively), producing an MSB3277 assembly version conflict warning.
     -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Playwright" Version="1.61.0" />
     <PackageVersion Include="MudBlazor" Version="9.8.0" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />

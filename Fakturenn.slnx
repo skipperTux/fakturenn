@@ -10,6 +10,7 @@
     <Project Path="tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj" />
     <Project Path="tests/Fakturenn.ComplianceTests/Fakturenn.ComplianceTests.csproj" />
     <Project Path="tests/Fakturenn.IntegrationTests/Fakturenn.IntegrationTests.csproj" />
+    <Project Path="tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj" />
     <Project Path="tests/Fakturenn.UnitTests/Fakturenn.UnitTests.csproj" />
   </Folder>
 </Solution>
