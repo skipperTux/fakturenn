@@ -1,0 +1,7 @@
+# EF Core's migration codegen always emits block-scoped namespaces, and it
+# regenerates these files' exact shape on every 'dotnet ef migrations add'.
+# Overriding the generator's output style would only produce needless diffs
+# against the tool's own format, so this generated-only folder is exempt from
+# the repository's file-scoped-namespace rule instead.
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:none

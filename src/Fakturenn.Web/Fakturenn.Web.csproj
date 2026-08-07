@@ -12,4 +12,8 @@
     <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -2190,20 +2190,36 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 The migration creates the `invoices` schema and nothing else. Inventing invoice tables here would pre-empt E09; the point is to prove that a module owns its migrations and that they apply from clean.
 
+**This task also implements database resiliency**, per the owner rulings recorded in `carry-forward.md` ("Owner rulings on health, resiliency and external assets"), which post-date the original brief text above. Self-healing lives in exactly two of the three places those rulings name (the third, orchestrator waits, is Compose/Kubernetes configuration, out of scope for this task):
+
+1. **The EF Core execution strategy.** The runtime `InvoicesDbContext`, registered in `FakturennWebApplication.Build`, uses `UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(maxRetryCount, maxRetryDelay, errorCodesToAdd: null))`. This masks transient failures (a brief network blip, a PostgreSQL failover) once the application is already serving traffic. It never touches the health checks, which per Task 7 must still answer fast and never retry internally.
+2. **The `--migrate` entrypoint's own retry loop** (`DatabaseMigrator.RunAsync`). A Kubernetes migration Job has no ordering guarantee against the database, so this loop retries a *connection* failure up to `Database:MaxRetries` times, sleeping `Database:RetryDelaySeconds` between attempts, and exits non-zero only once that budget is exhausted. It distinguishes a connection failure (`NpgsqlException`, not yet connected) from a genuine migration failure (`PostgresException`, the server responded with an error) by exception type — `PostgresException` derives from `NpgsqlException`, so the `catch` clauses are ordered specific-before-general. A migration failure is never retried.
+
+Both knobs are new configuration: a `Database` section in `appsettings.json` (`MaxRetries: 5`, `RetryDelaySeconds: 5`), bound to a `Fakturenn.Web.DatabaseOptions` options type rather than read as magic strings at each use site. Defaults were chosen to bound a Kubernetes migration Job's worst-case wait to roughly a minute or two while still riding out a database pod that is merely slow to start; see `task-8-report.md` for the reasoning and the measured wall-clock evidence.
+
+**A deliberate deviation from the interfaces below:** the `--migrate` entrypoint constructs its own `InvoicesDbContext` directly, with a plain (non-retrying) `UseNpgsql(connectionString)`, instead of resolving the DI-registered, retry-enabled context. `MigrateAsync` runs under whatever execution strategy its context carries; reusing the retry-enabled runtime context here would nest EF's internal per-command retry inside `DatabaseMigrator`'s own outer retry loop, multiplying `MaxRetries * MaxRetries` worth of waiting into a surprisingly long and hard-to-reason-about total. Keeping the migration context retry-free makes `DatabaseMigrator`'s loop the sole retry mechanism during migration, with an easily stated worst-case bound (see the report).
+
 **Files:**
 
 - Create: `src/Fakturenn.Modules.Invoices/Persistence/InvoicesDbContext.cs`
 - Create: `src/Fakturenn.Modules.Invoices/Persistence/InvoicesDbContextFactory.cs`
 - Create: `src/Fakturenn.Modules.Invoices/Persistence/Migrations/` (generated)
+- Create: `src/Fakturenn.Modules.Invoices/Persistence/Migrations/.editorconfig` (EF's migration codegen always emits block-scoped namespaces; this folder is exempted from the repo's file-scoped-namespace rule rather than hand-editing generated output)
+- Create: `src/Fakturenn.Web/DatabaseOptions.cs`
+- Create: `src/Fakturenn.Web/DatabaseMigrator.cs`
 - Modify: `src/Fakturenn.Web/FakturennWebApplication.cs`
 - Modify: `src/Fakturenn.Web/Program.cs`
+- Modify: `src/Fakturenn.Web/appsettings.json` (adds the `Database` section)
+- Modify: `Directory.Packages.props` (adds a central pin for `Microsoft.EntityFrameworkCore.Relational`, needed because `Npgsql.EntityFrameworkCore.PostgreSQL`'s floating dependency range otherwise resolves to different versions in `Fakturenn.Web` and `Fakturenn.Modules.Invoices`, producing an MSB3277 conflict warning)
 
 **Interfaces:**
 
 - Consumes: `Fakturenn.Modules.Invoices` (Task 5), `Fakturenn.Web.FakturennWebApplication` (Task 7)
 - Produces:
   - `Fakturenn.Modules.Invoices.Persistence.InvoicesDbContext` — `sealed`, ctor `InvoicesDbContext(DbContextOptions<InvoicesDbContext> options)`, const `string SchemaName = "invoices"`
-  - `Fakturenn.Web.Program` — supports `--migrate`, which applies migrations and exits with code 0
+  - `Fakturenn.Web.DatabaseOptions` — binds the `Database` section; `int MaxRetries`, `int RetryDelaySeconds`
+  - `Fakturenn.Web.DatabaseMigrator` — `static Task<int> RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken = default)`
+  - `Fakturenn.Web.Program` — supports `--migrate`, which applies migrations and exits with code 0 on success, non-zero only once the connection-retry budget is exhausted or a genuine migration error occurs
 
 - [ ] **Step 1: Add the packages**
 
@@ -2284,51 +2300,41 @@ Open the generated migration under `src/Fakturenn.Modules.Invoices/Persistence/M
 
 If EF omitted it because the model has no entities, add that call to `Up` and add the matching `migrationBuilder.DropSchema(name: "invoices");` note is **not** required — leave `Down` empty, because dropping a schema that later epics populate is destructive.
 
-- [ ] **Step 6: Register the context and the migration entrypoint**
+- [ ] **Step 6: Bind `Database`, register the retrying context, and write the migration entrypoint**
 
-In `FakturennWebApplication.Build`, after `AddHealthChecks`, add:
+This step supersedes the brief's original text above: it now also wires up the two self-healing knobs required by the owner rulings.
 
-```csharp
-        builder.Services.AddDbContext<InvoicesDbContext>(options =>
-            options.UseNpgsql(builder.Configuration.GetConnectionString("Fakturenn")));
-```
+Add `src/Fakturenn.Web/DatabaseOptions.cs`, binding the `Database` configuration section (`SectionName = "Database"`, `int MaxRetries = 5`, `int RetryDelaySeconds = 5`).
 
-with `using Fakturenn.Modules.Invoices.Persistence;` and `using Microsoft.EntityFrameworkCore;` at the top.
-
-Replace `src/Fakturenn.Web/Program.cs` with:
+In `FakturennWebApplication.Build`, after the health checks block, bind the section with `builder.Services.Configure<DatabaseOptions>(...)` and register the runtime context with the execution strategy:
 
 ```csharp
-using Fakturenn.Modules.Invoices.Persistence;
-using Fakturenn.Web;
-using Microsoft.EntityFrameworkCore;
-
-WebApplication app = FakturennWebApplication.Build(args);
-
-// Migrations never run as a side effect of serving traffic. DEPLOYMENT-BASELINE.md
-// requires an explicit migration Job, and auto-migrating on startup races when
-// more than one replica starts at once.
-if (args.Contains("--migrate"))
-{
-    await using AsyncServiceScope scope = app.Services.CreateAsyncScope();
-    InvoicesDbContext database = scope.ServiceProvider.GetRequiredService<InvoicesDbContext>();
-    await database.Database.MigrateAsync();
-
-    return;
-}
-
-await app.RunAsync();
+builder.Services.AddDbContext<InvoicesDbContext>(options =>
+    options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+        databaseOptions.MaxRetries,
+        TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
+        errorCodesToAdd: null)));
 ```
 
-- [ ] **Step 7: Verify the architecture tests still pass**
+Add `src/Fakturenn.Web/DatabaseMigrator.cs`: a static `RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken)` that loops up to `MaxRetries` times, calling `context.Database.MigrateAsync()` inside `await using`. It catches `PostgresException` first (a genuine, non-retryable migration error — return 1 immediately) and `NpgsqlException` second (a connection failure — log, sleep `RetryDelaySeconds`, and retry, unless the budget is exhausted). Use `[LoggerMessage]` source-generated logging methods, not the `ILogger` extension methods directly — CA1848/CA1873 make the latter build errors under this repo's `TreatWarningsAsErrors`.
 
-Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: PASS, 12 tests. The Invoices module now references EF Core and Npgsql, which no rule forbids; it must still not reference `Fakturenn.Infrastructure.*`.
+Replace `src/Fakturenn.Web/Program.cs`'s `--migrate` branch with code that resolves `DatabaseOptions` and an `ILogger` from `app.Services`, builds a **plain, non-retrying** `InvoicesDbContext` directly (`new DbContextOptionsBuilder<InvoicesDbContext>().UseNpgsql(connectionString).Options`, deliberately bypassing the DI-registered retrying context — see the deviation note above), and calls `DatabaseMigrator.RunAsync`, setting `Environment.ExitCode` to its result before returning.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Verify the architecture and unit tests still pass**
+
+Run: `dotnet test --project tests/Fakturenn.ArchitectureTests` and `dotnet test --project tests/Fakturenn.UnitTests`.
+Expected: PASS, 8 architecture tests and 26 unit tests (both counts unchanged from Task 7 — this task adds no new test project). The Invoices module now references EF Core and Npgsql, which no rule forbids; it must still not reference `Fakturenn.Infrastructure.*`.
+
+- [ ] **Step 8: Verify the resiliency behaviour by measurement**
+
+No automated test exercises `--migrate` yet (Task 9 adds the Testcontainers coverage). Prove it by hand instead: run `--migrate` against an unreachable database and confirm it retries `MaxRetries` times, logs each attempt, and exits non-zero after a wall-clock duration consistent with `(MaxRetries - 1) * RetryDelaySeconds` plus per-attempt connection overhead; run it against a real, self-started PostgreSQL container and confirm exit 0, the `invoices` schema, and the `__EFMigrationsHistory` row, then run it again to confirm idempotency; and confirm `/alive` still returns 200 and `/health` still returns 503 against an unreachable database (the Task 7 behaviour must not regress now that a real `InvoicesDbContext` registration exists). See `task-8-report.md` for the pasted output of all three.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/Fakturenn.Modules.Invoices src/Fakturenn.Web Directory.Packages.props
-git commit --message "feat: add module-owned persistence and an explicit migration entrypoint
+git add src/Fakturenn.Modules.Invoices src/Fakturenn.Web Directory.Packages.props \
+  docs/superpowers/plans/2026-08-06-testing-and-release-harness.md
+git commit --message "feat: add module-owned persistence, migration entrypoint, and DB resiliency
 
 The Invoices module owns its DbContext and its migrations, per
 MODULE-OWNERSHIP.md. The initial migration creates the invoices schema and
@@ -2337,6 +2343,14 @@ nothing else; inventing tables here would pre-empt E09.
 Migrations run only via 'dotnet run --project src/Fakturenn.Web -- --migrate'.
 DEPLOYMENT-BASELINE.md requires an explicit migration Job, and auto-migrating
 on startup races when multiple replicas start together.
+
+Adds the resiliency the owner required after the brief was written: EF Core's
+retry-on-failure execution strategy for transient failures during normal
+operation, and a --migrate retry loop that waits out a database that is not
+accepting connections yet rather than crash-looping, distinguishing that from
+a genuine migration failure (never retried) by exception type. Both are
+driven by a new Database:MaxRetries / Database:RetryDelaySeconds
+configuration section.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```

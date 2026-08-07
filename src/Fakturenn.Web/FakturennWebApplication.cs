@@ -1,6 +1,8 @@
 using System.Globalization;
+using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MudBlazor.Services;
 using Serilog;
@@ -62,6 +64,23 @@ public static class FakturennWebApplication
                 tags: ["ready"],
                 timeout: TimeSpan.FromSeconds(3));
         }
+
+        builder.Services.Configure<DatabaseOptions>(
+            builder.Configuration.GetSection(DatabaseOptions.SectionName));
+        DatabaseOptions databaseOptions =
+            builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()
+                ?? new DatabaseOptions();
+
+        // EnableRetryOnFailure covers transient failures during normal operation, once the
+        // application is already serving traffic (e.g. a brief network blip, a PostgreSQL
+        // failover). It is deliberately NOT used by the "--migrate" entrypoint's own
+        // DbContext -- see DatabaseMigrator's remarks for why nesting the two would multiply
+        // the total wait.
+        builder.Services.AddDbContext<InvoicesDbContext>(options =>
+            options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+                databaseOptions.MaxRetries,
+                TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
+                errorCodesToAdd: null)));
 
         WebApplication app = builder.Build();
 
