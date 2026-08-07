@@ -19,15 +19,23 @@ public sealed class FilesystemBlobWriter(IFileSystem fileSystem, string rootPath
 
     private string ResolveWithinRoot(string relativePath)
     {
-        string combined = Path.Combine(rootPath, relativePath);
         string normalizedRoot = Path.GetFullPath(rootPath);
+        string fullPath = Path.GetFullPath(Path.Combine(normalizedRoot, relativePath));
 
-        if (!Path.GetFullPath(combined).StartsWith(normalizedRoot, StringComparison.Ordinal))
+        // The separator matters: a bare prefix comparison would also accept a
+        // sibling directory such as "/srv/fakturenn-archive" for the root
+        // "/srv/fakturenn".
+        bool insideRoot =
+            fullPath.Equals(normalizedRoot, StringComparison.Ordinal)
+            || fullPath.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+        if (!insideRoot)
         {
             throw new ArgumentException(
                 $"'{relativePath}' resolves outside the storage root.", nameof(relativePath));
         }
 
-        return combined;
+        return fullPath;
     }
 }

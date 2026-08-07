@@ -1051,6 +1051,12 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 Demonstrates where NSubstitute is legitimate: the behaviour under test is *that a collaborator was called*, which no fake can assert as directly. The adapter also produces the SHA-256 hash that `WALKING-SKELETON.md` requires of every artifact.
 
+`ResolveWithinRoot` is a lexical check only — it normalises and compares
+path strings, and does not resolve symlinks. A symlink planted inside the
+storage root that points outside it (e.g. `rootPath/escape -> /etc`) would
+still pass the guard, because the symlink's target is never inspected. This
+is a known, accepted limitation of this approach and is not fixed here.
+
 **Files:**
 
 - Create: `src/Fakturenn.Infrastructure.Storage/Fakturenn.Infrastructure.Storage.csproj`, `IFileSystem.cs`, `PhysicalFileSystem.cs`, `StoredBlob.cs`, `FilesystemBlobWriter.cs`
@@ -1094,7 +1100,7 @@ public sealed class FilesystemBlobWriterTests
     // "fakturenn" hashed with SHA-256, verified independently with:
     //   printf 'fakturenn' | sha256sum
     private const string ExpectedHash =
-        "0f6f0b0e50e33b0dcbd0e2ec8a7cf3b0c2cbcd6c5aa5eb9bd2b3d95c07d8b4c1";
+        "b605d3e7799125932e02a9ff56104d77e576a79d865f46a8b14bc5262ca9505f";
 
     [Fact]
     public async Task Writing_a_blob_reports_its_sha256_hash()
@@ -1143,15 +1149,48 @@ public sealed class FilesystemBlobWriterTests
 
         await write.Should().ThrowAsync<ArgumentException>();
     }
+
+    [Fact]
+    public async Task A_sibling_directory_sharing_the_roots_name_prefix_is_rejected()
+    {
+        // A bare prefix comparison would accept "/srv/fakturenn-archive" for the
+        // root "/srv/fakturenn", because the string starts the same way.
+        var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
+
+        Func<Task> write = () => writer.WriteAsync(
+            "../fakturenn-archive/invoice.pdf", Content, TestContext.Current.CancellationToken);
+
+        await write.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task An_absolute_path_sharing_the_roots_name_prefix_is_rejected()
+    {
+        // Path.Combine discards its first argument when the second is rooted,
+        // so an absolute path must be rejected on its resolved value, not on
+        // the assumption that Combine kept the root.
+        var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
+
+        Func<Task> write = () => writer.WriteAsync(
+            "/srv/fakturennsibling/invoice.pdf", Content, TestContext.Current.CancellationToken);
+
+        await write.Should().ThrowAsync<ArgumentException>();
+    }
 }
 ```
 
-Note on the hash constant: the value above is a placeholder for the real digest and **must be replaced**. Before running the tests, compute it with `printf 'fakturenn' | sha256sum` and paste the actual value. Do not adjust the implementation to match a wrong constant.
+Note on the hash constant: the value above is the real SHA-256 digest of the
+UTF-8 bytes of `"fakturenn"`, so nobody has to re-derive it. It was computed
+with `printf 'fakturenn' | sha256sum` (Step 3); an earlier draft of this plan
+carried a placeholder value here, which has since been corrected. Do not
+adjust the implementation to match a different constant than this one.
 
-- [ ] **Step 3: Replace the hash constant with the real digest**
+- [ ] **Step 3: Verify the hash constant**
 
 Run: `printf 'fakturenn' | sha256sum`
-Copy the 64-character hex value into `ExpectedHash`.
+Confirm the 64-character hex value matches `ExpectedHash` above. This step
+documents where the constant came from; it is not something to re-derive by
+hand each time.
 
 - [ ] **Step 4: Run the tests to verify they fail**
 
@@ -1232,16 +1271,24 @@ public sealed class FilesystemBlobWriter(IFileSystem fileSystem, string rootPath
 
     private string ResolveWithinRoot(string relativePath)
     {
-        string combined = Path.Combine(rootPath, relativePath);
         string normalizedRoot = Path.GetFullPath(rootPath);
+        string fullPath = Path.GetFullPath(Path.Combine(normalizedRoot, relativePath));
 
-        if (!Path.GetFullPath(combined).StartsWith(normalizedRoot, StringComparison.Ordinal))
+        // The separator matters: a bare prefix comparison would also accept a
+        // sibling directory such as "/srv/fakturenn-archive" for the root
+        // "/srv/fakturenn".
+        bool insideRoot =
+            fullPath.Equals(normalizedRoot, StringComparison.Ordinal)
+            || fullPath.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+        if (!insideRoot)
         {
             throw new ArgumentException(
                 $"'{relativePath}' resolves outside the storage root.", nameof(relativePath));
         }
 
-        return combined;
+        return fullPath;
     }
 }
 ```
@@ -1249,7 +1296,7 @@ public sealed class FilesystemBlobWriter(IFileSystem fileSystem, string rootPath
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `dotnet test tests/Fakturenn.UnitTests`
-Expected: PASS, 20 tests.
+Expected: PASS, 24 tests.
 
 - [ ] **Step 7: Commit**
 

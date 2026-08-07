@@ -61,4 +61,31 @@ public sealed class FilesystemBlobWriterTests
 
         await write.Should().ThrowAsync<ArgumentException>();
     }
+
+    [Fact]
+    public async Task A_sibling_directory_sharing_the_roots_name_prefix_is_rejected()
+    {
+        // A bare prefix comparison would accept "/srv/fakturenn-archive" for the
+        // root "/srv/fakturenn", because the string starts the same way.
+        var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
+
+        Func<Task> write = () => writer.WriteAsync(
+            "../fakturenn-archive/invoice.pdf", Content, TestContext.Current.CancellationToken);
+
+        await write.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task An_absolute_path_sharing_the_roots_name_prefix_is_rejected()
+    {
+        // Path.Combine discards its first argument when the second is rooted,
+        // so an absolute path must be rejected on its resolved value, not on
+        // the assumption that Combine kept the root.
+        var writer = new FilesystemBlobWriter(Substitute.For<IFileSystem>(), "/srv/fakturenn");
+
+        Func<Task> write = () => writer.WriteAsync(
+            "/srv/fakturennsibling/invoice.pdf", Content, TestContext.Current.CancellationToken);
+
+        await write.Should().ThrowAsync<ArgumentException>();
+    }
 }
