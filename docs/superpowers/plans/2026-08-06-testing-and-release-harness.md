@@ -1515,6 +1515,11 @@ namespace Fakturenn.ArchitectureTests;
 /// </summary>
 public static class FakturennArchitecture
 {
+    // Every src/ assembly needs a line here. There is no compiler error for a forgotten one --
+    // it silently exempts that assembly from every rule below, because a type that was never
+    // loaded cannot appear as a rule violation. ModuleBoundaryTests.
+    // The_loader_omits_no_assembly_declared_under_src_in_the_solution cross-checks this list
+    // against Fakturenn.slnx's /src/ folder specifically to catch that mistake.
     public static readonly Architecture Loaded = new ArchLoader()
         .LoadAssemblies(
             typeof(SharedKernel.Money).Assembly,
@@ -1525,16 +1530,25 @@ public static class FakturennArchitecture
 
     /// <summary>Every module assembly, contracts included.</summary>
     public static readonly IObjectProvider<IType> Modules =
-        Types().That().ResideInAssembly(@"^Fakturenn\.Modules\..*$", useRegularExpressions: true)
+        Types().That().ResideInAssemblyMatching(@"^Fakturenn\.Modules\..*$")
             .As("module assemblies");
 
     /// <summary>Module implementation assemblies, contracts excluded.</summary>
+    /// <remarks>
+    /// <c>ResideInAssemblyMatching</c> matches against the assembly's full CLR name
+    /// (e.g. "Fakturenn.Modules.Invoices.Contracts, Version=..., Culture=..., PublicKeyToken=...."),
+    /// not the short name. The lookahead therefore terminates on <c>(,|$)</c> -- the comma that
+    /// starts the version metadata in a loaded assembly's full name, OR true end of string --
+    /// rather than on a bare <c>$</c>: anchoring on <c>$</c> alone would look for ".Contracts"
+    /// immediately before the version metadata, never find it, and match every module assembly
+    /// including its own contracts.
+    /// </remarks>
     public static readonly IObjectProvider<IType> ModuleImplementations =
-        Types().That().ResideInAssembly(@"^Fakturenn\.Modules\.(?!.*\.Contracts$).*$", useRegularExpressions: true)
+        Types().That().ResideInAssemblyMatching(@"^Fakturenn\.Modules\.(?!.*\.Contracts(,|$)).*$")
             .As("module implementation assemblies");
 
     public static readonly IObjectProvider<IType> Infrastructure =
-        Types().That().ResideInAssembly(@"^Fakturenn\.Infrastructure\..*$", useRegularExpressions: true)
+        Types().That().ResideInAssemblyMatching(@"^Fakturenn\.Infrastructure\..*$")
             .As("infrastructure assemblies");
 }
 ```
@@ -1543,11 +1557,23 @@ public static class FakturennArchitecture
 
 Each new module assembly is added here as one more `typeof(...).Assembly` line. That is the only per-module edit this project ever needs; the rules themselves stay untouched.
 
+> **Corrected against the installed package (0.13.3), fix round 1.** The original draft above used
+> `ResideInAssembly(pattern, useRegularExpressions: true)`. That overload does not exist on this
+> version of ArchUnitNET; the regex-matching method is the separate `ResideInAssemblyMatching(string
+> pattern)`, with no boolean parameter. The `ModuleImplementations` lookahead also originally
+> anchored on a bare `$`, which never matched because `ResideInAssemblyMatching` compares against
+> the assembly's *full* CLR name (including `, Version=..., Culture=..., PublicKeyToken=...`), not
+> the short name — so the pattern matched every module assembly, Contracts included. Both are fixed
+> above; see `task-6-report.md` (original report and its fix-round-1 addendum) for the full
+> empirical evidence.
+
 - [ ] **Step 3: Write the anti-vacuity guard**
 
 Add to `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`:
 
 ```csharp
+using System.Runtime.CompilerServices;
+using System.Xml.Linq;
 using ArchUnitNET.Domain;
 using ArchUnitNET.xUnitV3;
 using AwesomeAssertions;
@@ -1557,6 +1583,7 @@ namespace Fakturenn.ArchitectureTests;
 
 public sealed class ModuleBoundaryTests
 {
+    // public Methods
     [Fact]
     public void The_architecture_contains_the_assemblies_the_rules_govern()
     {
@@ -1571,14 +1598,66 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
         ]);
+
+        // The assembly list alone is not enough: a typo in any of FakturennArchitecture's regexes
+        // would silently turn Modules, ModuleImplementations or Infrastructure into an empty
+        // object provider, and every rule that depends on it (4, 5, 6) would then pass vacuously
+        // with the suite green. Assert each provider actually resolves to at least one real type.
+        FakturennArchitecture.Modules.GetObjects(FakturennArchitecture.Loaded)
+            .Should().NotBeEmpty("the Modules provider's regex must match at least one loaded type");
+        FakturennArchitecture.ModuleImplementations.GetObjects(FakturennArchitecture.Loaded)
+            .Should().NotBeEmpty("the ModuleImplementations provider's regex must match at least one loaded type");
+        FakturennArchitecture.Infrastructure.GetObjects(FakturennArchitecture.Loaded)
+            .Should().NotBeEmpty("the Infrastructure provider's regex must match at least one loaded type");
     }
+
+    [Fact]
+    public void The_loader_omits_no_assembly_declared_under_src_in_the_solution()
+    {
+        // The_architecture_contains_the_assemblies_the_rules_govern only knows TODAY's four
+        // assembly names, so it cannot notice a FUTURE assembly missing from LoadAssemblies -- and
+        // that one hard-coded list is what the whole "match by name pattern" convention rests on.
+        // Cross-check it against an independent source of truth instead: Fakturenn.slnx's /src/
+        // folder, which every project must already be listed under to build at all.
+        string solutionPath = Path.Combine(RepositoryRoot(), "Fakturenn.slnx");
+        File.Exists(solutionPath).Should().BeTrue($"the solution file must exist at {solutionPath}");
+
+        XDocument solution = XDocument.Load(solutionPath);
+        IEnumerable<string> expectedAssemblyNames = solution.Descendants("Folder")
+            .Where(folder => (string?)folder.Attribute("Name") == "/src/")
+            .Descendants("Project")
+            .Select(project => Path.GetFileNameWithoutExtension((string)project.Attribute("Path")!));
+
+        IEnumerable<string> loadedAssemblyNames = FakturennArchitecture.Loaded.Assemblies
+            .Select(assembly => assembly.Name);
+
+        loadedAssemblyNames.Should().BeEquivalentTo(
+            expectedAssemblyNames,
+            "every project under Fakturenn.slnx's /src/ folder needs a matching typeof(...).Assembly "
+                + "line in FakturennArchitecture.Loaded, or the architecture rules silently stop "
+                + "governing it");
+    }
+
+    // ... module boundary rules go here (Step 5) ...
+
+    // private Methods
+    private static string RepositoryRoot([CallerFilePath] string sourceFilePath = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFilePath)!, "..", ".."));
 }
 ```
 
 - [ ] **Step 4: Run it to verify it fails**
 
 Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: build failure — `The type or namespace name 'FakturennArchitecture' could not be found`, until Step 2's file compiles; then PASS for this one test.
+Expected: build failure — `The type or namespace name 'FakturennArchitecture' could not be found`, until Step 2's file compiles; then PASS for both facts above.
+
+> **Added in fix round 1.** The first cut of this guard asserted only
+> `Loaded.Assemblies`, which protects against a broken loader but not against a
+> silently *empty* object provider (a typo in one of `FakturennArchitecture`'s
+> regexes) or a *forgotten* `typeof(...).Assembly` line for a future module. The
+> `NotBeEmpty` assertions above close the first gap; the second `[Fact]` closes
+> the second by deriving the expected assembly set from the repository itself
+> rather than trusting a hand-maintained list to stay in sync.
 
 - [ ] **Step 5: Write the module boundary rules**
 
@@ -1599,10 +1678,37 @@ Append to `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`:
     [Fact]
     public void No_module_depends_on_another_modules_implementation_assembly()
     {
-        Types().That().Are(FakturennArchitecture.Modules)
-            .Should().NotDependOnAny(FakturennArchitecture.ModuleImplementations)
-            .Because("cross-module access goes through Fakturenn.Modules.<Name>.Contracts, never the owner's entities")
-            .Check(FakturennArchitecture.Loaded);
+        // NOT expressed as
+        // Types().That().Are(Modules).Should().NotDependOnAny(ModuleImplementations).Check(...):
+        // ArchUnitNET 0.13.3 records a type's access to its own field -- any constructor that
+        // assigns `this._field = value`, or a static field initializer -- as a dependency from
+        // that type to itself. Because Modules and ModuleImplementations overlap for every
+        // implementation assembly, that self-reference reads as a violation of this rule for any
+        // class with a field initializer, i.e. almost every non-trivial class. Verified
+        // empirically (task-6-report.md): a plain `sealed class C { public C(int v) { _v = v; } }`
+        // fails the fluent rule with "C does depend on C", even though C never references another
+        // module. The check below walks the same Dependencies collection ArchUnitNET's own
+        // NotDependOnAny uses, but compares module names (stripping a trailing ".Contracts")
+        // rather than raw type identity, so a dependency within one module -- including on itself
+        // -- is correctly not a violation, while a genuine dependency on another module's
+        // implementation still is. Re-verified in fix round 1 against a genuine second module
+        // built for that purpose: it caught a cross-module implementation dependency and did not
+        // false-positive on a self- or own-module-.Contracts reference.
+        IReadOnlyCollection<IType> modules =
+            FakturennArchitecture.Modules.GetObjects(FakturennArchitecture.Loaded).ToList();
+        IReadOnlyCollection<IType> moduleImplementations =
+            FakturennArchitecture.ModuleImplementations.GetObjects(FakturennArchitecture.Loaded).ToList();
+
+        List<string> violations = modules
+            .SelectMany(origin => origin.Dependencies)
+            .Where(dependency => moduleImplementations.Contains(dependency.Target))
+            .Where(dependency => ModuleNameOf(dependency.Origin) != ModuleNameOf(dependency.Target))
+            .Select(dependency => $"{dependency.Origin.FullName} -> {dependency.Target.FullName}")
+            .Distinct()
+            .ToList();
+
+        violations.Should().BeEmpty(
+            "cross-module access goes through Fakturenn.Modules.<Name>.Contracts, never the owner's entities");
     }
 
     [Fact]
@@ -1613,11 +1719,36 @@ Append to `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`:
             .Should().BeFreeOfCycles()
             .Check(FakturennArchitecture.Loaded);
     }
+
+    // private Methods (in addition to RepositoryRoot from Step 3)
+    /// <summary>
+    /// Strips a trailing ".Contracts" from a module implementation assembly's short name.
+    /// </summary>
+    /// <remarks>
+    /// Safe only because every caller pre-filters its input to types drawn from
+    /// FakturennArchitecture.Loaded's Modules/ModuleImplementations providers.
+    /// <c>IType.Assembly.Name</c> returns the short assembly name for a type belonging to a
+    /// LOADED assembly, but falls back to the full CLR name (with
+    /// ", Version=..., Culture=..., PublicKeyToken=...") for a type ArchUnitNET only knows about
+    /// as an unloaded dependency target -- verified empirically against MimeKit and
+    /// System.Private.CoreLib types. A future reorder that calls this on an unfiltered or
+    /// unloaded type would silently stop matching the ".Contracts" suffix.
+    /// </remarks>
+    private static string ModuleNameOf(IType type) =>
+        type.Assembly.Name.EndsWith(".Contracts", StringComparison.Ordinal)
+            ? type.Assembly.Name[..^".Contracts".Length]
+            : type.Assembly.Name;
 ```
 
-Add `using ArchUnitNET.Fluent;` for `SliceRuleDefinition`.
+Add `using ArchUnitNET.Fluent.Slices;` for `SliceRuleDefinition` — **not** `using ArchUnitNET.Fluent;` as originally drafted; that namespace does not contain the type in the installed package (0.13.3) and produces `CS0103`.
 
-The second rule is expressed as "no module depends on any module implementation assembly". A type depending on its own assembly is not a dependency ArchUnitNET reports across the slice boundary, so this reads as the cross-module rule it is. If the rule proves too coarse once a second module exists, narrow it then — not before, per YAGNI.
+> **Rewritten in fix round 1.** The original draft's second rule —
+> `Types().That().Are(Modules).Should().NotDependOnAny(ModuleImplementations).Check(...)` — read
+> naturally but is unsound against the installed package (see the code comment above and
+> `task-6-report.md`'s two addenda for the full empirical trail, including an independent
+> reproduction with a genuine second module). Do not revert to that form even though it is shorter
+> and closer to the other rules' style: it fails on ordinary domain code the moment the Invoices
+> module gains real content, not just on the intended cross-module violation.
 
 - [ ] **Step 6: Write the technology containment rules**
 
@@ -1633,17 +1764,34 @@ namespace Fakturenn.ArchitectureTests;
 /// <summary>
 /// Keeps each third-party technology inside the one layer allowed to know about
 /// it. The Mail and Documents rules name assemblies that do not exist yet: they
-/// are vacuously true today and become binding the moment E11 or E14 creates
-/// them. Do not delete a rule because it currently matches nothing.
+/// are demonstrated vacuously true today (see task-6-report.md's fix-round-1
+/// addendum, which deliberately made Fakturenn.Modules.Invoices depend on
+/// MimeKit and watched Only_mail_infrastructure_depends_on_MimeKit_or_MailKit
+/// fail) and become binding the moment E11 or E14 creates those assemblies. Do
+/// not delete a rule because it currently matches nothing.
 /// </summary>
 public sealed class TechnologyContainmentTests
 {
     [Fact]
     public void Only_the_web_assembly_depends_on_MudBlazor()
     {
-        Types().That().DoNotResideInAssembly("Fakturenn.Web")
-            .Should().NotDependOnAny(
-                Types().That().ResideInAssembly(@"^MudBlazor.*$", useRegularExpressions: true))
+        // DoNotResideInAssemblyMatching, not the exact-name DoNotResideInAssembly: the exact
+        // overload compares against the assembly's full CLR name (including Version=...,
+        // Culture=..., PublicKeyToken=...) and so would never match "Fakturenn.Web" literally,
+        // even once that assembly exists.
+        //
+        // NotDependOnAnyTypesThat().ResideInAssemblyMatching(...), not
+        // NotDependOnAny(Types().That().ResideInAssemblyMatching(...)): the latter first
+        // materializes the target set by calling GetObjects() against the LOADED architecture,
+        // which can only ever contain types from assemblies passed to LoadAssemblies. MudBlazor,
+        // MimeKit, MailKit, PDFsharp and MigraDoc are never loaded, so that target set is always
+        // empty and NotDependOnAny(<empty>) passes unconditionally -- dead, not vacuous, and it
+        // would stay dead forever, even after Fakturenn.Web starts referencing MudBlazor.
+        // NotDependOnAnyTypesThat() instead evaluates the predicate against each dependency's
+        // TARGET type directly, resolved from the referencing assembly's own metadata, and is not
+        // limited to what LoadAssemblies loaded.
+        Types().That().DoNotResideInAssemblyMatching(@"^Fakturenn\.Web(,.*)?$")
+            .Should().NotDependOnAnyTypesThat().ResideInAssemblyMatching(@"^MudBlazor.*$")
             .Because("MudBlazor is a UI concern and must not leak into modules or infrastructure")
             .Check(FakturennArchitecture.Loaded);
     }
@@ -1651,10 +1799,8 @@ public sealed class TechnologyContainmentTests
     [Fact]
     public void Only_mail_infrastructure_depends_on_MimeKit_or_MailKit()
     {
-        Types().That().DoNotResideInAssembly(
-                @"^Fakturenn\.Infrastructure\.Mail.*$", useRegularExpressions: true)
-            .Should().NotDependOnAny(
-                Types().That().ResideInAssembly(@"^(MimeKit|MailKit).*$", useRegularExpressions: true))
+        Types().That().DoNotResideInAssemblyMatching(@"^Fakturenn\.Infrastructure\.Mail.*$")
+            .Should().NotDependOnAnyTypesThat().ResideInAssemblyMatching(@"^(MimeKit|MailKit).*$")
             .Because("MIME composition and signing belong behind the Mail module's contracts")
             .Check(FakturennArchitecture.Loaded);
     }
@@ -1662,20 +1808,35 @@ public sealed class TechnologyContainmentTests
     [Fact]
     public void Only_document_infrastructure_depends_on_PdfSharp_or_MigraDoc()
     {
-        Types().That().DoNotResideInAssembly(
-                @"^Fakturenn\.Infrastructure\.Documents.*$", useRegularExpressions: true)
-            .Should().NotDependOnAny(
-                Types().That().ResideInAssembly(@"^(PdfSharp|MigraDoc).*$", useRegularExpressions: true))
+        Types().That().DoNotResideInAssemblyMatching(@"^Fakturenn\.Infrastructure\.Documents.*$")
+            .Should().NotDependOnAnyTypesThat().ResideInAssemblyMatching(@"^(PdfSharp|MigraDoc).*$")
             .Because("rendering belongs behind the Documents module's rendering contracts")
             .Check(FakturennArchitecture.Loaded);
     }
 }
 ```
 
+> **Rewritten in fix round 1 — this was the critical defect, not a syntax nit.** The original
+> draft used `Should().NotDependOnAny(Types().That().ResideInAssemblyMatching(pattern))`
+> (once the `ResideInAssembly`/`useRegularExpressions` syntax fix from Step 2 is applied). That
+> compiles and passes, but it is **dead, not vacuously true**: `NotDependOnAny(<provider>)`
+> materializes its target provider by calling `GetObjects()` against the *loaded* architecture, and
+> MudBlazor/MimeKit/MailKit/PDFsharp/MigraDoc are never passed to `LoadAssemblies` (and must not
+> be — loading them pulls in hundreds of their own internal types as spurious sources; one
+> verification run measured 332 false violations after adding them). The target set therefore
+> always resolves to zero types and the rule passes unconditionally, forever — not just before
+> `Fakturenn.Web`/E11/E14 exist, but after, too. Proven with a real `MimeMessage`-using assembly
+> loaded exactly as this file loads assemblies: the `NotDependOnAny` form passed (0 target types
+> resolved); the `NotDependOnAnyTypesThat()` form correctly failed (see task-6-report.md's
+> fix-round-1 addendum for the full command output). `NotDependOnAnyTypesThat()` evaluates the
+> predicate against each dependency's target type directly rather than pre-resolving a target set,
+> so it reaches types in assemblies that were never loaded. Re-verify this every time one of these
+> three rules is touched — the difference between the two forms is easy to lose in a future edit.
+
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `dotnet test tests/Fakturenn.ArchitectureTests`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests (7 plus the loader-omission guard added to Step 3 in fix round 1).
 
 If a rule fails with "no types found matching", the regular expression did not match any loaded assembly. Confirm against the anti-vacuity test's assembly list before changing the pattern.
 
@@ -1714,7 +1875,18 @@ dotnet test tests/Fakturenn.ArchitectureTests
 git status --short
 ```
 
-Expected: PASS, 7 tests, and `git status --short` shows no change to `src/Fakturenn.Modules.Invoices`.
+Expected: PASS, 8 tests, and `git status --short` shows no change to `src/Fakturenn.Modules.Invoices`.
+
+> **Step 8 alone was not sufficient, and fix round 1 added a second deliberate violation for that
+> reason.** Introducing only the infrastructure-dependency violation above exercises rule 4 and
+> never exercises rules 1, 2 or 3 — which is exactly how the `NotDependOnAny` defect described in
+> Step 6 shipped undetected. Repeat the same technique against
+> `Only_mail_infrastructure_depends_on_MimeKit_or_MailKit`: `dotnet add src/Fakturenn.Modules.Invoices
+> package MimeKit`, add `public static readonly Type Violation = typeof(MimeKit.MimeMessage);` to
+> `InvoicesModule.cs`, run the suite and confirm that specific fact fails, then revert the package
+> reference (both the `.csproj` `PackageReference` and its `Directory.Packages.props`
+> `PackageVersion` entry) and the code change, and confirm with `git status --short`. See
+> `task-6-report.md`'s fix-round-1 addendum for the exact commands and real output.
 
 - [ ] **Step 9: Commit**
 

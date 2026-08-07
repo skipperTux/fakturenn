@@ -13,6 +13,11 @@ namespace Fakturenn.ArchitectureTests;
 /// </summary>
 public static class FakturennArchitecture
 {
+    // Every src/ assembly needs a line here. There is no compiler error for a forgotten one --
+    // it silently exempts that assembly from every rule below, because a type that was never
+    // loaded cannot appear as a rule violation. ModuleBoundaryTests.
+    // The_loader_omits_no_assembly_declared_under_src_in_the_solution cross-checks this list
+    // against Fakturenn.slnx's /src/ folder specifically to catch that mistake.
     public static readonly Architecture Loaded = new ArchLoader()
         .LoadAssemblies(
             typeof(SharedKernel.Money).Assembly,
@@ -30,13 +35,15 @@ public static class FakturennArchitecture
     /// <remarks>
     /// <c>ResideInAssemblyMatching</c> matches against the assembly's full CLR name
     /// (e.g. "Fakturenn.Modules.Invoices.Contracts, Version=..., Culture=..., PublicKeyToken=...."),
-    /// not the short name. The lookahead therefore terminates on the comma that follows the
-    /// short name rather than on <c>$</c> (end of string): anchoring on <c>$</c> would look for
+    /// not the short name. The lookahead therefore terminates on <c>(,|$)</c> -- the comma that
+    /// starts the version metadata in a loaded assembly's full name, OR true end of string, so the
+    /// exclusion still works if a dependency target's name is ever reported without the metadata
+    /// suffix -- rather than on a bare <c>$</c>: anchoring on <c>$</c> alone would look for
     /// ".Contracts" immediately before the version metadata, never find it, and match every
     /// module assembly including its own contracts.
     /// </remarks>
     public static readonly IObjectProvider<IType> ModuleImplementations =
-        Types().That().ResideInAssemblyMatching(@"^Fakturenn\.Modules\.(?!.*\.Contracts,).*$")
+        Types().That().ResideInAssemblyMatching(@"^Fakturenn\.Modules\.(?!.*\.Contracts(,|$)).*$")
             .As("module implementation assemblies");
 
     public static readonly IObjectProvider<IType> Infrastructure =
