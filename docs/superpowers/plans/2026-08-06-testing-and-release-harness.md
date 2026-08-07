@@ -2192,12 +2192,17 @@ The migration creates the `invoices` schema and nothing else. Inventing invoice 
 
 **This task also implements database resiliency**, per the owner rulings recorded in `carry-forward.md` ("Owner rulings on health, resiliency and external assets"), which post-date the original brief text above. Self-healing lives in exactly two of the three places those rulings name (the third, orchestrator waits, is Compose/Kubernetes configuration, out of scope for this task):
 
-1. **The EF Core execution strategy.** The runtime `InvoicesDbContext`, registered in `FakturennWebApplication.Build`, uses `UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(maxRetryCount, maxRetryDelay, errorCodesToAdd: null))`. This masks transient failures (a brief network blip, a PostgreSQL failover) once the application is already serving traffic. It never touches the health checks, which per Task 7 must still answer fast and never retry internally.
-2. **The `--migrate` entrypoint's own retry loop** (`DatabaseMigrator.RunAsync`). A Kubernetes migration Job has no ordering guarantee against the database, so this loop retries a *connection* failure up to `Database:MaxRetries` times, sleeping `Database:RetryDelaySeconds` between attempts, and exits non-zero only once that budget is exhausted. It distinguishes a connection failure (`NpgsqlException`, not yet connected) from a genuine migration failure (`PostgresException`, the server responded with an error) by exception type — `PostgresException` derives from `NpgsqlException`, so the `catch` clauses are ordered specific-before-general. A migration failure is never retried.
+1. **The EF Core execution strategy.** The runtime `InvoicesDbContext`, registered in `FakturennWebApplication.Build`, uses `UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(maxRetryCount, maxRetryDelay, errorCodesToAdd: null))`. This masks transient failures (a brief network blip, a PostgreSQL failover) once the application is already serving traffic. It never touches the health checks, which per Task 7 must still answer fast and never retry internally. Governed by `Database:MaxRetries`, which is scoped **only** to this mechanism.
+2. **The `--migrate` entrypoint's own retry loop** (`DatabaseMigrator.RunAsync`). A Kubernetes migration Job has no ordering guarantee against the database, so this loop retries a *connection* failure until a total wall-clock budget (`Database:StartupTimeoutSeconds`) is exhausted, sleeping `Database:RetryDelaySeconds` between attempts. It distinguishes a connection failure (`NpgsqlException`, not yet connected) from a genuine migration failure (`PostgresException`, the server responded with an error) by exception type — `PostgresException` derives from `NpgsqlException`, so the `catch` clauses are ordered specific-before-general. A migration failure is never retried.
 
-Both knobs are new configuration: a `Database` section in `appsettings.json` (`MaxRetries: 5`, `RetryDelaySeconds: 5`), bound to a `Fakturenn.Web.DatabaseOptions` options type rather than read as magic strings at each use site. Defaults were chosen to bound a Kubernetes migration Job's worst-case wait to roughly a minute or two while still riding out a database pod that is merely slow to start; see `task-8-report.md` for the reasoning and the measured wall-clock evidence.
+**The `--migrate` budget is a wall-clock timeout, not a retry count — this was a mid-task spec amendment.** The first implementation bounded `--migrate` with a `MaxRetries` count shared with the EF execution strategy, and the worst-case-wait analysis that requirement demanded exposed why that was wrong: a retry count's real duration depends entirely on *how* the database is unavailable. A refused connection (nothing listening on the port) fails instantly, so N retries cost roughly `N * RetryDelaySeconds`; a blackholed address (packets silently dropped, the scenario a booting-but-not-yet-listening PostgreSQL container actually produces) instead burns Npgsql's connect timeout (15s by default) on every attempt, costing roughly `N * (15s + RetryDelaySeconds)` — up to 5x longer for exactly the failure mode this feature exists to ride out. A count-based budget therefore gives an operator no way to predict the real wait from the config alone. Replaced with a single `StartupTimeoutSeconds` wall-clock deadline, computed once at entry from a monotonic `Stopwatch` (not wall-clock time, so a clock adjustment cannot shorten or extend it), which gives the same guaranteed bound regardless of failure mode. Two further details close the gap between the configured and the effective budget:
 
-**A deliberate deviation from the interfaces below:** the `--migrate` entrypoint constructs its own `InvoicesDbContext` directly, with a plain (non-retrying) `UseNpgsql(connectionString)`, instead of resolving the DI-registered, retry-enabled context. `MigrateAsync` runs under whatever execution strategy its context carries; reusing the retry-enabled runtime context here would nest EF's internal per-command retry inside `DatabaseMigrator`'s own outer retry loop, multiplying `MaxRetries * MaxRetries` worth of waiting into a surprisingly long and hard-to-reason-about total. Keeping the migration context retry-free makes `DatabaseMigrator`'s loop the sole retry mechanism during migration, with an easily stated worst-case bound (see the report).
+- **One final attempt is always allowed.** The loop checks the deadline *after* each failed attempt, not before deciding whether to try again; a little remaining budget still earns one more attempt (with the sleep capped to whatever remains) rather than being skipped, which would make the effective budget silently shorter than configured.
+- **The per-attempt connect timeout is capped.** `DatabaseMigrator.ApplyDefaultConnectTimeout` sets Npgsql's `Timeout` keyword to 5s on the migration connection string when the operator has not already set one explicitly, so a single hung connect against a blackholed address cannot consume most of a short startup budget. Detecting "not already set" cannot use `NpgsqlConnectionStringBuilder.ContainsKey` — it eagerly initializes every keyword to its default and so always returns `true` — the builder's `Keys` collection, which only lists keywords actually present in the parsed string, does the job correctly.
+
+`Database:MaxRetries` and `Database:StartupTimeoutSeconds` are deliberately separate properties on `Fakturenn.Web.DatabaseOptions` with a code comment warning against unifying them again: two self-healing mechanisms, two different lifetimes (per-operation retry once serving traffic, versus a one-shot startup budget for a batch job). See `task-8-report.md` for the chosen defaults, the reasoning, and the measured wall-clock evidence for both database-unavailability failure modes.
+
+**A deliberate deviation from the interfaces below:** the `--migrate` entrypoint constructs its own `InvoicesDbContext` directly, with a plain (non-retrying) `UseNpgsql(connectionString)`, instead of resolving the DI-registered, retry-enabled context. `MigrateAsync` runs under whatever execution strategy its context carries; reusing the retry-enabled runtime context here would nest EF's internal per-command retry inside `DatabaseMigrator`'s own outer retry loop, turning one wall-clock startup budget into two independently enforced ones. Keeping the migration context retry-free makes `DatabaseMigrator`'s loop the sole retry mechanism during migration, with an easily stated and now failure-mode-independent worst-case bound (see the report).
 
 **Files:**
 
@@ -2217,9 +2222,9 @@ Both knobs are new configuration: a `Database` section in `appsettings.json` (`M
 - Consumes: `Fakturenn.Modules.Invoices` (Task 5), `Fakturenn.Web.FakturennWebApplication` (Task 7)
 - Produces:
   - `Fakturenn.Modules.Invoices.Persistence.InvoicesDbContext` — `sealed`, ctor `InvoicesDbContext(DbContextOptions<InvoicesDbContext> options)`, const `string SchemaName = "invoices"`
-  - `Fakturenn.Web.DatabaseOptions` — binds the `Database` section; `int MaxRetries`, `int RetryDelaySeconds`
-  - `Fakturenn.Web.DatabaseMigrator` — `static Task<int> RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken = default)`
-  - `Fakturenn.Web.Program` — supports `--migrate`, which applies migrations and exits with code 0 on success, non-zero only once the connection-retry budget is exhausted or a genuine migration error occurs
+  - `Fakturenn.Web.DatabaseOptions` — binds the `Database` section; `int StartupTimeoutSeconds` (`--migrate`'s wall-clock budget), `int RetryDelaySeconds` (shared), `int MaxRetries` (runtime execution strategy only — does not apply to `--migrate`)
+  - `Fakturenn.Web.DatabaseMigrator` — `static Task<int> RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken = default)`; `static string ApplyDefaultConnectTimeout(string? connectionString)`
+  - `Fakturenn.Web.Program` — supports `--migrate`, which applies migrations and exits with code 0 on success, non-zero only once the `StartupTimeoutSeconds` budget is exhausted or a genuine migration error occurs
 
 - [ ] **Step 1: Add the packages**
 
@@ -2302,9 +2307,9 @@ If EF omitted it because the model has no entities, add that call to `Up` and ad
 
 - [ ] **Step 6: Bind `Database`, register the retrying context, and write the migration entrypoint**
 
-This step supersedes the brief's original text above: it now also wires up the two self-healing knobs required by the owner rulings.
+This step supersedes the brief's original text above: it now also wires up the two self-healing mechanisms required by the owner rulings, in their final (post-amendment) shape.
 
-Add `src/Fakturenn.Web/DatabaseOptions.cs`, binding the `Database` configuration section (`SectionName = "Database"`, `int MaxRetries = 5`, `int RetryDelaySeconds = 5`).
+Add `src/Fakturenn.Web/DatabaseOptions.cs`, binding the `Database` configuration section: `SectionName = "Database"`, `int StartupTimeoutSeconds = 120` (the `--migrate` entrypoint's total wall-clock budget), `int RetryDelaySeconds = 5` (sleep between `--migrate` attempts, and the execution strategy's `maxRetryDelay` cap), `int MaxRetries = 5` (the runtime execution strategy's retry count **only** — a doc comment on the property says explicitly that it does not apply to `--migrate`).
 
 In `FakturennWebApplication.Build`, after the health checks block, bind the section with `builder.Services.Configure<DatabaseOptions>(...)` and register the runtime context with the execution strategy:
 
@@ -2316,9 +2321,11 @@ builder.Services.AddDbContext<InvoicesDbContext>(options =>
         errorCodesToAdd: null)));
 ```
 
-Add `src/Fakturenn.Web/DatabaseMigrator.cs`: a static `RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken)` that loops up to `MaxRetries` times, calling `context.Database.MigrateAsync()` inside `await using`. It catches `PostgresException` first (a genuine, non-retryable migration error — return 1 immediately) and `NpgsqlException` second (a connection failure — log, sleep `RetryDelaySeconds`, and retry, unless the budget is exhausted). Use `[LoggerMessage]` source-generated logging methods, not the `ILogger` extension methods directly — CA1848/CA1873 make the latter build errors under this repo's `TreatWarningsAsErrors`.
+Add `src/Fakturenn.Web/DatabaseMigrator.cs`: a static `RunAsync(Func<InvoicesDbContext> createContext, DatabaseOptions options, ILogger logger, CancellationToken cancellationToken)` that starts a `Stopwatch`, computes a `budget = TimeSpan.FromSeconds(options.StartupTimeoutSeconds)`, and loops calling `context.Database.MigrateAsync()` inside `await using` until either it succeeds or `budget - stopwatch.Elapsed <= TimeSpan.Zero`. It catches `PostgresException` first (a genuine, non-retryable migration error — return 1 immediately) and `NpgsqlException` second (a connection failure). On a connection failure, the deadline check happens *after* the failed attempt, not before deciding whether to retry, so a small amount of remaining budget still earns one more attempt rather than being silently skipped; the sleep before that attempt is `min(RetryDelaySeconds, remaining)`, never past the deadline. Log the remaining budget on every attempt (`"{RemainingSeconds:F1}s of {StartupTimeoutSeconds}s remaining"`), not just an attempt count — an operator needs to know whether to wait or intervene. Use `[LoggerMessage]` source-generated logging methods, not the `ILogger` extension methods directly — CA1848/CA1873 make the latter build errors under this repo's `TreatWarningsAsErrors`.
 
-Replace `src/Fakturenn.Web/Program.cs`'s `--migrate` branch with code that resolves `DatabaseOptions` and an `ILogger` from `app.Services`, builds a **plain, non-retrying** `InvoicesDbContext` directly (`new DbContextOptionsBuilder<InvoicesDbContext>().UseNpgsql(connectionString).Options`, deliberately bypassing the DI-registered retrying context — see the deviation note above), and calls `DatabaseMigrator.RunAsync`, setting `Environment.ExitCode` to its result before returning.
+Also add `DatabaseMigrator.ApplyDefaultConnectTimeout(string? connectionString)`: builds an `NpgsqlConnectionStringBuilder` and sets `Timeout = 5` unless the operator's connection string already specifies one. **Detecting "already specifies one" cannot use `ContainsKey`** — `NpgsqlConnectionStringBuilder` eagerly initializes every keyword to its default on construction, so `ContainsKey("Timeout")` returns `true` unconditionally, verified empirically against both an unset and an explicitly-set connection string. Use `builder.Keys.Contains("Timeout")` instead, which only lists keywords the parser actually found in the input string (suppress CA1841's generic "prefer ContainsKey" advice locally with a comment explaining why it does not hold for this type). Without this cap, a single connect attempt against a blackholed address can burn Npgsql's 15s default before the loop's own deadline check ever gets a turn.
+
+Replace `src/Fakturenn.Web/Program.cs`'s `--migrate` branch with code that resolves `DatabaseOptions` and an `ILogger` from `app.Services`, calls `DatabaseMigrator.ApplyDefaultConnectTimeout` on the configured connection string, builds a **plain, non-retrying** `InvoicesDbContext` directly from the capped connection string (`new DbContextOptionsBuilder<InvoicesDbContext>().UseNpgsql(migrationConnectionString).Options`, deliberately bypassing the DI-registered retrying context — see the deviation note above), and calls `DatabaseMigrator.RunAsync`, setting `Environment.ExitCode` to its result before returning.
 
 - [ ] **Step 7: Verify the architecture and unit tests still pass**
 
@@ -2327,30 +2334,43 @@ Expected: PASS, 8 architecture tests and 26 unit tests (both counts unchanged fr
 
 - [ ] **Step 8: Verify the resiliency behaviour by measurement**
 
-No automated test exercises `--migrate` yet (Task 9 adds the Testcontainers coverage). Prove it by hand instead: run `--migrate` against an unreachable database and confirm it retries `MaxRetries` times, logs each attempt, and exits non-zero after a wall-clock duration consistent with `(MaxRetries - 1) * RetryDelaySeconds` plus per-attempt connection overhead; run it against a real, self-started PostgreSQL container and confirm exit 0, the `invoices` schema, and the `__EFMigrationsHistory` row, then run it again to confirm idempotency; and confirm `/alive` still returns 200 and `/health` still returns 503 against an unreachable database (the Task 7 behaviour must not regress now that a real `InvoicesDbContext` registration exists). See `task-8-report.md` for the pasted output of all three.
+No automated test exercises `--migrate` yet (Task 9 adds the Testcontainers coverage). Prove it by hand instead, overriding `Database__StartupTimeoutSeconds` to a small value (e.g. 15) so the runs are fast:
+
+- Against a **refused** connection (a local port nothing is listening on): confirm several attempts, each logging remaining budget, and a non-zero exit at approximately the configured timeout.
+- Against a **blackholed** address (a non-routable address such as `192.0.2.1`, TEST-NET-1, where connects hang instead of refusing): confirm the SAME behaviour — non-zero exit at approximately the same wall-clock time as the refused case, not roughly 15s longer per attempt. This convergence, not either number alone, is the property that matters: it is what makes the budget predictable from configuration regardless of how the database happens to be unavailable.
+- Against a real, self-started PostgreSQL container (default `StartupTimeoutSeconds`): confirm exit 0, the `invoices` schema, and the `__EFMigrationsHistory` row; run it again to confirm idempotency.
+
+See `task-8-report.md` for the pasted output and measured elapsed times.
 
 - [ ] **Step 9: Commit**
+
+The implementation went through one mid-task revision: the first pass bounded `--migrate` with a retry count (`MaxRetries`) shared with the EF execution strategy, and the worst-case-wait analysis that revision's own requirements demanded is what surfaced the failure-mode-dependent budget problem described above. That work was committed, then superseded by a second commit implementing the wall-clock `StartupTimeoutSeconds` model — both commits stay in history rather than being squashed, since the first was correct against the requirement as written at the time.
 
 ```bash
 git add src/Fakturenn.Modules.Invoices src/Fakturenn.Web Directory.Packages.props \
   docs/superpowers/plans/2026-08-06-testing-and-release-harness.md
-git commit --message "feat: add module-owned persistence, migration entrypoint, and DB resiliency
+git commit --message "fix: bound --migrate by wall-clock timeout, not a retry count
 
-The Invoices module owns its DbContext and its migrations, per
-MODULE-OWNERSHIP.md. The initial migration creates the invoices schema and
-nothing else; inventing tables here would pre-empt E09.
+A retry count's real duration depends on how the database is unavailable: a
+refused connection fails instantly (N retries cost N * RetryDelaySeconds),
+while a blackholed address burns Npgsql's ~15s connect timeout on every
+attempt (N retries cost roughly N * (15s + RetryDelaySeconds)) -- up to 5x
+longer for exactly the failure mode this feature exists to ride out, a
+PostgreSQL container that is booting and not yet accepting connections.
 
-Migrations run only via 'dotnet run --project src/Fakturenn.Web -- --migrate'.
-DEPLOYMENT-BASELINE.md requires an explicit migration Job, and auto-migrating
-on startup races when multiple replicas start together.
+Replace Database:MaxRetries with Database:StartupTimeoutSeconds for the
+--migrate entrypoint: a single wall-clock deadline, measured from a monotonic
+Stopwatch, that gives the same bound regardless of failure mode. Always allow
+one final attempt when a little budget remains rather than silently
+shortening the configured window, log remaining budget (not just an attempt
+count) on every retry, and cap the per-attempt connect timeout to 5s when the
+operator has not set one explicitly so a single hung connect cannot consume
+the whole budget.
 
-Adds the resiliency the owner required after the brief was written: EF Core's
-retry-on-failure execution strategy for transient failures during normal
-operation, and a --migrate retry loop that waits out a database that is not
-accepting connections yet rather than crash-looping, distinguishing that from
-a genuine migration failure (never retried) by exception type. Both are
-driven by a new Database:MaxRetries / Database:RetryDelaySeconds
-configuration section.
+MaxRetries survives, scoped only to the runtime EnableRetryOnFailure
+execution strategy (unaffected by this change) -- kept as a separate
+property from StartupTimeoutSeconds with a doc comment warning against
+unifying the two again.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```

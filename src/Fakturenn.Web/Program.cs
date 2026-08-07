@@ -19,11 +19,17 @@ if (args.Contains("--migrate"))
     // A dedicated, non-retrying context: the runtime InvoicesDbContext registered in
     // FakturennWebApplication.Build has EnableRetryOnFailure for requirement B, and
     // DatabaseMigrator.RunAsync retries around whatever context it is given. Reusing
-    // the retrying context here would nest both, multiplying MaxRetries * MaxRetries
-    // into a surprisingly long total wait -- see DatabaseMigrator's remarks.
+    // the retrying context here would nest both, turning one wall-clock startup budget
+    // into two independently enforced ones -- see DatabaseMigrator's remarks.
+    //
+    // ApplyDefaultConnectTimeout caps a single connect attempt (Npgsql defaults to 15s)
+    // unless the operator already set one explicitly, so a blackholed address cannot
+    // burn most of a short startup budget inside one hung connect.
+    string migrationConnectionString = DatabaseMigrator.ApplyDefaultConnectTimeout(connectionString);
+
     InvoicesDbContext CreateMigrationContext() =>
         new(new DbContextOptionsBuilder<InvoicesDbContext>()
-            .UseNpgsql(connectionString)
+            .UseNpgsql(migrationConnectionString)
             .Options);
 
     int exitCode = await DatabaseMigrator.RunAsync(CreateMigrationContext, databaseOptions, migrationLogger);
