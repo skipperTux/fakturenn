@@ -1,0 +1,64 @@
+name: fakturenn
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      # Local-development credentials only. Never reuse these values outside a
+      # throwaway reference deployment; production secrets come from files or
+      # secret references, per DEPLOYMENT-BASELINE.md's Kubernetes requirements.
+      POSTGRES_DB: fakturenn
+      POSTGRES_USER: fakturenn
+      POSTGRES_PASSWORD: fakturenn
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=fakturenn --dbname=fakturenn"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Run once before starting the app: docker compose --profile migrate run --rm migrate
+  # DEPLOYMENT-BASELINE.md requires an explicit migration step, so this is not
+  # part of the default 'up'. fakturenn-app intentionally does NOT depend_on this
+  # service: Compose refuses to start a profile-gated dependency implicitly, so a
+  # depends_on here would break a plain 'docker compose up' instead of merely
+  # skipping the migration. Postgres' own healthcheck (below) already gates how
+  # long Compose waits before starting this container; once started, the
+  # "--migrate" entrypoint applies its own Database:StartupTimeoutSeconds budget
+  # (120s default) on top, in case the database accepts TCP connections (making
+  # pg_isready happy) before it is actually ready to run migrations.
+  migrate:
+    image: fakturenn:dev
+    command: ["--migrate"]
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Fakturenn: "Host=postgres;Port=5432;Database=fakturenn;Username=fakturenn;Password=fakturenn"
+
+  fakturenn-app:
+    image: fakturenn:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__Fakturenn: "Host=postgres;Port=5432;Database=fakturenn;Username=fakturenn;Password=fakturenn"
+    ports:
+      - "8080:8080"
+    # No healthcheck here, deliberately. Compose healthchecks are exec-only, but
+    # the chiseled base image ships no shell and no curl -- by design, per
+    # SECURITY-BASELINE.md's minimal runtime surface -- so there is no truthful
+    # in-container command to run. The brief's original "--help" probe would have
+    # started a second copy of the web host and reported "healthy" regardless of
+    # whether the app could actually serve traffic, which is worse than reporting
+    # nothing. Readiness is checked the same way Kubernetes will check it in
+    # production (DEPLOYMENT-BASELINE.md): an HTTP GET against /health and
+    # /alive from outside the container. kubelet's httpGet probes need no shell
+    # either, so this is not a workaround -- it is the same mechanism this
+    # deployment will use everywhere.
+
+volumes:
+  postgres-data:

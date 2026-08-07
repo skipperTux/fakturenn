@@ -6,6 +6,31 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Label="Container">
+    <ContainerRepository>fakturenn</ContainerRepository>
+    <!-- "-extra", not the plain chiseled tag: the plain variant has no ICU and bakes
+         DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true, which overrides this project's own
+         InvariantGlobalization=false (needed for German formatting/localization, see
+         Directory.Build.props) and crashes RequestLocalizationOptions.SetDefaultCulture
+         at startup with CultureNotFoundException. Verified against both tags. -->
+    <ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra</ContainerBaseImage>
+    <ContainerRuntimeIdentifiers>linux-x64;linux-arm64</ContainerRuntimeIdentifiers>
+    <!-- Restore only builds a RID-specific asset graph from RuntimeIdentifiers, not from
+         ContainerRuntimeIdentifiers, so PublishContainer's multi-RID inner builds fail
+         restore (NETSDK1047) without this too. -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+    <ContainerPort>8080</ContainerPort>
+    <!-- No ContainerUser override. The brief's <ContainerUser>$APP_UID</ContainerUser>
+         is stale net8-era guidance: verified on this base image/SDK (10.0.110) that the
+         literal string "$APP_UID" is written unresolved into the image's User field,
+         which fails every container start ("unable to find user $APP_UID: no matching
+         entries in passwd file") because Docker/OCI runtimes do not expand env vars in
+         that field, unlike a Dockerfile's "USER $APP_UID", which Microsoft's own base
+         image build resolves at build time. The chiseled(-extra) base image already ships
+         Config.User=1654 (non-root) by default as of net10, so no override is needed. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
     <PackageReference Include="MudBlazor" />
