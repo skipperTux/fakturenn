@@ -6,6 +6,7 @@
     <Project Path="src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj" />
     <Project Path="tests/Fakturenn.UnitTests/Fakturenn.UnitTests.csproj" />
   </Folder>
 </Solution>
