@@ -1,0 +1,6 @@
+# Test method names follow the project's BDD-style convention (see task
+# brief / CLAUDE.md testing section), which relies on underscores for
+# readability. CA1707 conflicts with that convention; it is disabled here,
+# for test code only, rather than project-wide.
+[*.cs]
+dotnet_diagnostic.CA1707.severity = none
