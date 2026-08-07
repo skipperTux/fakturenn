@@ -35,13 +35,33 @@ public static class FakturennWebApplication
 
         // The liveness probe must not depend on PostgreSQL: a database outage
         // should mark the instance unready, not have Kubernetes restart it.
-        builder.Services.AddHealthChecks()
-            .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
-            .AddNpgSql(
-                connectionStringFactory: _ =>
-                    builder.Configuration.GetConnectionString("Fakturenn") ?? string.Empty,
-                name: "postgres",
+        string? connectionString = builder.Configuration.GetConnectionString("Fakturenn");
+
+        IHealthChecksBuilder healthChecks = builder.Services.AddHealthChecks()
+            .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"]);
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            // Readiness must report, never throw. AddNpgSql's own guard throws on a
+            // null/empty connection string, which would turn "not configured yet"
+            // into an unhandled 500 instead of the 503 a probe expects.
+            healthChecks.AddCheck(
+                "postgres",
+                () => HealthCheckResult.Unhealthy("No connection string is configured for 'Fakturenn'."),
                 tags: ["ready"]);
+        }
+        else
+        {
+            // A short explicit timeout keeps readiness answering well inside a
+            // probe interval even when the database is unreachable rather than
+            // hanging; retrying belongs to the Task 8 migration entrypoint, not
+            // to a probe that must answer fast every time it is called.
+            healthChecks.AddNpgSql(
+                connectionString,
+                name: "postgres",
+                tags: ["ready"],
+                timeout: TimeSpan.FromSeconds(3));
+        }
 
         WebApplication app = builder.Build();
 
