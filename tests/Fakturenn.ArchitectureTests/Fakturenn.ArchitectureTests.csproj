@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Storage\Fakturenn.Infrastructure.Storage.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Invoices.Contracts\Fakturenn.Modules.Invoices.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Web\Fakturenn.Web.csproj" />
   </ItemGroup>
 
 </Project>

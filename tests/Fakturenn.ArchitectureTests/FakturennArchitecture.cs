@@ -23,7 +23,8 @@ public static class FakturennArchitecture
             typeof(SharedKernel.Money).Assembly,
             typeof(Infrastructure.Storage.FilesystemBlobWriter).Assembly,
             typeof(Modules.Invoices.Contracts.InvoiceId).Assembly,
-            typeof(Modules.Invoices.InvoicesModule).Assembly)
+            typeof(Modules.Invoices.InvoicesModule).Assembly,
+            typeof(Web.FakturennWebApplication).Assembly)
         .Build();
 
     /// <summary>Every module assembly, contracts included.</summary>

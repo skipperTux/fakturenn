@@ -4,6 +4,7 @@
     <Project Path="src/Fakturenn.Modules.Invoices.Contracts/Fakturenn.Modules.Invoices.Contracts.csproj" />
     <Project Path="src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj" />
     <Project Path="src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
+    <Project Path="src/Fakturenn.Web/Fakturenn.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj" />
