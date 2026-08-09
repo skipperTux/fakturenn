@@ -29,6 +29,11 @@ Read in this order before making design decisions:
 If the code and the documentation disagree, **say so and stop**. Do not
 silently pick one. The disagreement is the finding.
 
+Before touching the build, the test suites, the architecture tests, or the
+container/CI setup, also read `docs/architecture/IMPLEMENTATION-NOTES.md` —
+verified, topic-organised facts about SDK quirks, analyzer edge cases,
+ArchUnitNET traps, and container behaviour that are easy to silently undo.
+
 ## Canonical terminology
 
 Use these exact terms. Do not introduce synonyms.
