@@ -104,7 +104,86 @@ Testcontainers for real infrastructure. Playwright for critical journeys.
 
 ## Commands
 
-Filled in at the end of the harness cycle, after each command has been run.
+Requires the .NET 10 SDK, Docker (or a Docker-compatible engine), and the
+`Microsoft.Playwright.CLI` global tool for local Playwright browser installs.
+
+```bash
+# Build everything, warnings are errors
+dotnet build --configuration Release
+
+# Every test suite
+dotnet test
+
+# One suite at a time — SDK 10.0.110 rejects a bare directory; use --project
+dotnet test --project tests/Fakturenn.UnitTests           # domain, fakes, NSubstitute boundary — 26 tests
+dotnet test --project tests/Fakturenn.ArchitectureTests   # the six architecture rules — 8 tests
+dotnet test --project tests/Fakturenn.IntegrationTests    # Testcontainers PostgreSQL, needs Docker — 6 tests
+dotnet test --project tests/Fakturenn.ComplianceTests     # golden-file XML comparer — 10 tests
+dotnet test --project tests/Fakturenn.UiTests             # Playwright, needs browsers installed — 4 tests
+
+# Formatting, checked in CI
+dotnet format --verify-no-changes
+
+# Install Playwright browsers once (local host workflow — see note below)
+dotnet tool install --global Microsoft.Playwright.CLI
+playwright -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install chromium
+# CI installs the same browser via `pwsh .../playwright.ps1 install --with-deps chromium`
+# instead, because ubuntu-latest ships pwsh preinstalled and this dev host does not —
+# do not "fix" one workflow to match the other; they are correct for their own host.
+
+# Run the app locally
+dotnet run --project src/Fakturenn.Web --urls http://127.0.0.1:5099
+
+# Apply migrations — never happens automatically
+dotnet run --project src/Fakturenn.Web -- --migrate
+
+# Add a migration to a module (the module owns its migrations)
+dotnet ef migrations add <Name> \
+  --project src/Fakturenn.Modules.<Module> \
+  --output-dir Persistence/Migrations
+# The generated files land in Persistence/Migrations/, which carries its own
+# .editorconfig setting csharp_style_namespace_declarations = file_scoped:none,
+# because the EF generator always emits block-scoped namespaces. Follow that
+# pattern for a new module's migrations rather than hand-editing generated files.
+
+# Reference deployment — pin a single RID locally; a multi-arch index needs a
+# containerd image store this host does not have (CONTAINER1020 without it).
+# The release workflow is the only place multi-arch is actually exercised.
+dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
+  -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
+docker compose up --detach
+docker compose --profile migrate run --rm migrate
+docker compose down --volumes
+
+# Version bump; releases trigger on the resulting tag
+bump-my-version bump pre_number
+```
+
+## Adding a new module
+
+Adding a project under `src/` requires **two** edits, both enforced by
+`tests/Fakturenn.ArchitectureTests`:
+
+1. `dotnet new classlib --output src/Fakturenn.Modules.<Name> --name Fakturenn.Modules.<Name>`
+2. `dotnet new classlib --output src/Fakturenn.Modules.<Name>.Contracts --name Fakturenn.Modules.<Name>.Contracts`
+3. Add both projects to `Fakturenn.slnx` under the `/src/` folder.
+4. Add one `typeof(<a public type in it>).Assembly` line to
+   `FakturennArchitecture.Loaded` in
+   `tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs` for **each** new
+   assembly. There is no compiler error for a forgotten line — it silently
+   exempts that assembly from every architecture rule. Step 3 without step 4
+   fails `The_loader_omits_no_assembly_declared_under_src_in_the_solution`,
+   which cross-checks the loader's assembly list against `Fakturenn.slnx`'s
+   `/src/` folder for exactly this omission.
+5. The containment and boundary rules apply automatically — they match on the
+   `Fakturenn.Modules.*` name pattern. Do not add a rule per module.
+6. If the module gets its own test project, give it a local `.editorconfig`
+   suppressing CA1707 (underscore test names) and CA1859 (concrete-type
+   preference for test collaborators declared by interface) — copy
+   `tests/Fakturenn.UnitTests/.editorconfig`.
+7. If the module gets EF Core migrations, apply the `.editorconfig` pattern
+   from Task 8 (see the migration command above) to its
+   `Persistence/Migrations/` folder.
 
 ## Definition of Done
 

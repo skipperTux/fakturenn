@@ -30,7 +30,7 @@ namespace Fakturenn.Web;
 /// failure mode is in play.
 /// </para>
 /// <para>
-/// The <paramref name="createContext"/> passed in by <c>Program.cs</c> must NOT
+/// The <c>createContext</c> delegate passed in by <c>Program.cs</c> must NOT
 /// have Npgsql's <c>EnableRetryOnFailure</c> enabled. That execution strategy is
 /// registered on the runtime <c>InvoicesDbContext</c> (requirement B) to mask
 /// transient blips once the application is serving traffic; nesting it inside

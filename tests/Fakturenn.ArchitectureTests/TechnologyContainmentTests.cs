@@ -1,4 +1,3 @@
-using ArchUnitNET.Domain;
 using ArchUnitNET.xUnitV3;
 using static ArchUnitNET.Fluent.ArchRuleDefinition;
 

@@ -1,4 +1,3 @@
-using System.Globalization;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;

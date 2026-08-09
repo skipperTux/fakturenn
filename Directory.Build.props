@@ -8,6 +8,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Required for IDE0005 (unused usings) to fire on build; see .editorconfig.
+         GenerateDocumentationFile also turns on CS1591 (missing XML doc comment)
+         under TreatWarningsAsErrors, which would force doc comments onto every
+         public member repo-wide, out of scope here, so it is suppressed. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <!-- German formatting and localization need ICU data. -->
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>

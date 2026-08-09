@@ -14,6 +14,8 @@ This directory is the implementation baseline for Fakturenn v0.1.
 8. `testing/TEST-STRATEGY.md`
 9. `security/SECURITY-BASELINE.md`
 10. `operations/DEPLOYMENT-BASELINE.md`
+11. `operations/RELEASE-CHECKLIST-v0.1.md`
+12. `superpowers/specs/` and `superpowers/plans/`
 
 ## Project status
 
