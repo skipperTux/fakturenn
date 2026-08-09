@@ -33,7 +33,7 @@ jobs:
     # budget below covers a cold NuGet restore on a fresh runner.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -48,7 +48,7 @@ jobs:
     # budget is dominated by a cold restore and build on a fresh runner.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -71,7 +71,7 @@ jobs:
     # image pull plus restore/build on a fresh runner.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -85,7 +85,7 @@ jobs:
     # downloading + installing Chromium plus its OS dependencies on a bare runner.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -118,7 +118,7 @@ jobs:
     # 120s budget; the rest of the sequence (compose up, migrate, teardown) is fast.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
