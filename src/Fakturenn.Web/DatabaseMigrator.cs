@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Fakturenn.Modules.Invoices.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -30,14 +29,28 @@ namespace Fakturenn.Web;
 /// failure mode is in play.
 /// </para>
 /// <para>
-/// The <c>createContext</c> delegate passed in by <c>Program.cs</c> must NOT
+/// Each <c>createContext</c> delegate passed in by <c>Program.cs</c> must NOT
 /// have Npgsql's <c>EnableRetryOnFailure</c> enabled. That execution strategy is
-/// registered on the runtime <c>InvoicesDbContext</c> (requirement B) to mask
-/// transient blips once the application is serving traffic; nesting it inside
-/// this loop as well would retry each attempt internally before this loop even
-/// sees the failure, turning one wall-clock budget into two independently
+/// registered on the runtime, module-owned <c>DbContext</c>s (requirement B) to
+/// mask transient blips once the application is serving traffic; nesting it
+/// inside this loop as well would retry each attempt internally before this loop
+/// even sees the failure, turning one wall-clock budget into two independently
 /// enforced ones. This loop is deliberately the only retry mechanism active
 /// while migrating.
+/// </para>
+/// <para>
+/// <see cref="RunAsync"/> accepts one context factory per module rather than a
+/// single hard-coded one so that a second module with its own <c>DbContext</c>
+/// (e.g. a future <c>Fakturenn.Modules.Payments</c>) is migrated too, instead of
+/// being silently skipped -- the signature previously only knew about
+/// <c>InvoicesDbContext</c>. Contexts are migrated in list order, sharing one
+/// <see cref="DatabaseOptions.StartupTimeoutSeconds"/> budget across the whole
+/// operation rather than resetting it per context: a slow-to-arrive database
+/// affects every module's migration equally, not each one independently, so
+/// giving each context its own fresh budget would let the total wait grow
+/// unboundedly with the number of modules. The first genuine
+/// <see cref="PostgresException"/>, from any context, stops the whole operation
+/// immediately -- it does not attempt the remaining contexts.
 /// </para>
 /// </remarks>
 public static partial class DatabaseMigrator
@@ -51,8 +64,14 @@ public static partial class DatabaseMigrator
     private const int DefaultConnectTimeoutSeconds = 5;
 
     // public Methods
+
+    /// <summary>
+    /// Applies migrations for every context in <paramref name="createContexts"/>, in order,
+    /// against a single shared wall-clock budget (<see cref="DatabaseOptions.StartupTimeoutSeconds"/>
+    /// -- see the class remarks for why the budget is shared rather than per-context).
+    /// </summary>
     public static async Task<int> RunAsync(
-        Func<InvoicesDbContext> createContext,
+        IReadOnlyList<Func<DbContext>> createContexts,
         DatabaseOptions options,
         ILogger logger,
         CancellationToken cancellationToken = default)
@@ -62,56 +81,64 @@ public static partial class DatabaseMigrator
         Stopwatch stopwatch = Stopwatch.StartNew();
         int attempt = 0;
 
-        while (true)
+        foreach (Func<DbContext> createContext in createContexts)
         {
-            attempt++;
-
-            try
+            while (true)
             {
-                await using InvoicesDbContext context = createContext();
-                await context.Database.MigrateAsync(cancellationToken);
+                attempt++;
 
-                LogMigrationsApplied(logger, attempt, stopwatch.Elapsed.TotalSeconds);
-
-                return 0;
-            }
-            catch (PostgresException exception)
-            {
-                // The server answered with an error: the connection succeeded and
-                // PostgreSQL rejected the migration itself. That is never transient --
-                // retrying just delays a failure a human has to fix.
-                LogMigrationFailed(logger, exception, attempt);
-
-                return 1;
-            }
-            catch (NpgsqlException exception)
-            {
-                // Any other NpgsqlException means the connection itself could not be
-                // established (refused, timed out, host unreachable, DNS failure, ...) --
-                // exactly the "database not accepting connections yet" case this loop
-                // exists to ride out.
-                TimeSpan remaining = budget - stopwatch.Elapsed;
-
-                if (remaining <= TimeSpan.Zero)
+                try
                 {
-                    LogStartupTimeoutExhausted(logger, exception, attempt, options.StartupTimeoutSeconds);
+                    await using DbContext context = createContext();
+                    await context.Database.MigrateAsync(cancellationToken);
+
+                    LogMigrationsApplied(logger, context.GetType().Name, attempt, stopwatch.Elapsed.TotalSeconds);
+
+                    break;
+                }
+                catch (PostgresException exception)
+                {
+                    // The server answered with an error: the connection succeeded and
+                    // PostgreSQL rejected the migration itself. That is never transient --
+                    // retrying just delays a failure a human has to fix. It also stops the
+                    // whole operation rather than continuing to the next context: a broken
+                    // migration for one module is a human-fix situation, not a reason to
+                    // leave a later module's migration state ambiguous.
+                    LogMigrationFailed(logger, exception, attempt);
 
                     return 1;
                 }
-
-                LogConnectionAttemptFailed(logger, exception, attempt, remaining.TotalSeconds, options.StartupTimeoutSeconds);
-
-                // Sleep the configured delay, but never past the deadline -- a little
-                // budget left still earns one more attempt rather than being skipped,
-                // which would make the effective budget silently shorter than configured.
-                TimeSpan sleep = retryDelay < remaining ? retryDelay : remaining;
-
-                if (sleep > TimeSpan.Zero)
+                catch (NpgsqlException exception)
                 {
-                    await Task.Delay(sleep, cancellationToken);
+                    // Any other NpgsqlException means the connection itself could not be
+                    // established (refused, timed out, host unreachable, DNS failure, ...) --
+                    // exactly the "database not accepting connections yet" case this loop
+                    // exists to ride out.
+                    TimeSpan remaining = budget - stopwatch.Elapsed;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        LogStartupTimeoutExhausted(logger, exception, attempt, options.StartupTimeoutSeconds);
+
+                        return 1;
+                    }
+
+                    LogConnectionAttemptFailed(logger, exception, attempt, remaining.TotalSeconds, options.StartupTimeoutSeconds);
+
+                    // Sleep the configured delay, but never past the deadline -- a little
+                    // budget left still earns one more attempt rather than being skipped,
+                    // which would make the effective budget silently shorter than configured.
+                    TimeSpan sleep = retryDelay < remaining ? retryDelay : remaining;
+
+                    if (sleep > TimeSpan.Zero)
+                    {
+                        await Task.Delay(sleep, cancellationToken);
+                    }
                 }
             }
         }
+
+        return 0;
     }
 
     /// <summary>
@@ -142,8 +169,8 @@ public static partial class DatabaseMigrator
     }
 
     // private Methods
-    [LoggerMessage(Level = LogLevel.Information, Message = "Migrations applied successfully on attempt {Attempt} after {ElapsedSeconds:F1}s.")]
-    private static partial void LogMigrationsApplied(ILogger logger, int attempt, double elapsedSeconds);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Migrations for {ContextType} applied successfully on attempt {Attempt} after {ElapsedSeconds:F1}s.")]
+    private static partial void LogMigrationsApplied(ILogger logger, string contextType, int attempt, double elapsedSeconds);
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "Migration attempt {Attempt} failed with a database error (not a connection failure). This will not be retried.")]
     private static partial void LogMigrationFailed(ILogger logger, Exception exception, int attempt);

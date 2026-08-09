@@ -66,9 +66,22 @@ the build, not the review:
    reference `Fakturenn.Modules.Y.Contracts`.
 6. No dependency cycles between `Fakturenn.Modules.*` assemblies.
 
-Rules 2 and 3 name assemblies that do not exist yet. They are vacuously true
-today and become binding the moment those assemblies appear. Do not delete a
-rule because it currently matches nothing.
+Rules 2 and 3 are **live and binding now**, not vacuous: their subject
+selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
+"every assembly that is NOT Mail/Documents" — today that is all five loaded
+assemblies. Task 6 proved this by making `Fakturenn.Modules.Invoices` depend
+on real MimeKit and watching the rule fail. When `Fakturenn.Infrastructure.Mail*`
+or `.Documents*` eventually appears, the rule does not newly switch on — it
+gets **narrower**, carving out an exemption for the one assembly now allowed
+to use the library.
+
+Rules 5 and 6 are the ones that are genuinely vacuous today: rule 5 compares
+`ModuleNameOf(origin) != ModuleNameOf(target)`, which cannot be satisfied
+while `Fakturenn.Modules.Invoices` is the only module — there is no second
+module to depend on. Rule 6 needs two modules to have a cycle between; one
+module means one slice, so there is nothing to cycle. Both become binding the
+moment a second `Fakturenn.Modules.*` assembly appears. Do not delete a rule
+because it currently matches nothing.
 
 ## Design principles
 
@@ -101,6 +114,14 @@ Test approach per `SPEC-v0.1.md` §10, in strict order of preference:
    failure". Never as a shortcut for constructing a real object.
 
 Testcontainers for real infrastructure. Playwright for critical journeys.
+
+## CI/CD status
+
+The three workflows under `.github/` (`ci.yml`, `codeql.yml`, `release.yml`)
+are syntactically valid and built from commands verified locally, but this
+repository has no remote yet, so **none of them has ever executed**. The first
+push is their first real run. Do not describe them as known-working, and do
+not assume a green run without watching the Actions tab for that push.
 
 ## Commands
 
@@ -148,7 +169,9 @@ dotnet ef migrations add <Name> \
 
 # Reference deployment — pin a single RID locally; a multi-arch index needs a
 # containerd image store this host does not have (CONTAINER1020 without it).
-# The release workflow is the only place multi-arch is actually exercised.
+# The release workflow (release.yml) is the only place multi-arch is designed
+# to be exercised, via a registry push rather than a local load — see the note
+# on .github/ below, though: that workflow has never actually run.
 dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
   -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
 docker compose up --detach
@@ -161,29 +184,61 @@ bump-my-version bump pre_number
 
 ## Adding a new module
 
-Adding a project under `src/` requires **two** edits, both enforced by
-`tests/Fakturenn.ArchitectureTests`:
+Creating `src/Fakturenn.Modules.<Name>` and `src/Fakturenn.Modules.<Name>.Contracts`
+touches more than two files. Exactly **two** of the edits below are enforced
+by a test; the rest are conventions with no test behind them — get them wrong
+and the build stays green.
 
-1. `dotnet new classlib --output src/Fakturenn.Modules.<Name> --name Fakturenn.Modules.<Name>`
-2. `dotnet new classlib --output src/Fakturenn.Modules.<Name>.Contracts --name Fakturenn.Modules.<Name>.Contracts`
-3. Add both projects to `Fakturenn.slnx` under the `/src/` folder.
-4. Add one `typeof(<a public type in it>).Assembly` line to
+**Enforced by `tests/Fakturenn.ArchitectureTests` (one test,
+`The_loader_omits_no_assembly_declared_under_src_in_the_solution`, cross-checks
+both together):**
+
+1. Add both new projects to `Fakturenn.slnx` under the `/src/` folder.
+2. Add one `typeof(<a public type in it>).Assembly` line to
    `FakturennArchitecture.Loaded` in
    `tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs` for **each** new
    assembly. There is no compiler error for a forgotten line — it silently
-   exempts that assembly from every architecture rule. Step 3 without step 4
-   fails `The_loader_omits_no_assembly_declared_under_src_in_the_solution`,
-   which cross-checks the loader's assembly list against `Fakturenn.slnx`'s
-   `/src/` folder for exactly this omission.
-5. The containment and boundary rules apply automatically — they match on the
-   `Fakturenn.Modules.*` name pattern. Do not add a rule per module.
-6. If the module gets its own test project, give it a local `.editorconfig`
+   exempts that assembly from every architecture rule.
+
+**Conventions with no test enforcing them — verified by reading the actual
+edit sites, not assumed:**
+
+1. `tests/Fakturenn.ArchitectureTests/Fakturenn.ArchitectureTests.csproj` needs
+   a `<ProjectReference>` to each new project, or the enforced step 2 above's
+   `typeof(...)` line will not compile. (This one *is* forced, but by the
+   compiler, not a dedicated test.)
+2. If the module owns an EF Core `DbContext`:
+   - `src/Fakturenn.Web/Fakturenn.Web.csproj` — add a `<ProjectReference>`.
+   - `src/Fakturenn.Web/FakturennWebApplication.cs` — register the context in
+     DI with `AddDbContext<...>`, mirroring `InvoicesDbContext`.
+   - `src/Fakturenn.Web/Program.cs` — add one more factory to the
+     `createMigrationContexts` array passed to `DatabaseMigrator.RunAsync`.
+     `DatabaseMigrator.RunAsync` takes `IReadOnlyList<Func<DbContext>>`
+     specifically so this is a one-line addition, not a signature change.
+3. `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`'s
+   `The_architecture_contains_the_assemblies_the_rules_govern` hardcodes an
+   assembly-name list, but asserts it with `.Should().Contain(...)`, not an
+   exact-set match — a forgotten new module name does **not** fail this test.
+   Add it anyway so the anti-vacuity guard actually names every assembly it
+   claims to guard.
+4. Any test project that needs to compile against the new module's types
+   directly needs its own `<ProjectReference>` — nothing adds this
+   automatically. Today, for reference: `Fakturenn.UnitTests` references
+   `Fakturenn.Modules.Invoices` and `.Contracts` for domain-object tests;
+   `Fakturenn.IntegrationTests` references `Fakturenn.Modules.Invoices` and
+   `Fakturenn.Web` for `DatabaseMigratorTests`/`PostgresFixture`.
+5. If the module gets its own test project, give it a local `.editorconfig`
    suppressing CA1707 (underscore test names) and CA1859 (concrete-type
    preference for test collaborators declared by interface) — copy
-   `tests/Fakturenn.UnitTests/.editorconfig`.
-7. If the module gets EF Core migrations, apply the `.editorconfig` pattern
+   `tests/Fakturenn.UnitTests/.editorconfig`. No test checks for this file's
+   existence; its absence just resurfaces CA1707/CA1859 as build errors the
+   first time a test in that project uses the naming convention.
+6. If the module gets EF Core migrations, apply the `.editorconfig` pattern
    from Task 8 (see the migration command above) to its
    `Persistence/Migrations/` folder.
+7. The containment and boundary rules (rules 1–6 above) apply automatically —
+   they match on the `Fakturenn.Modules.*` name pattern. Do not add a rule per
+   module.
 
 ## Definition of Done
 

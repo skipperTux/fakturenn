@@ -32,7 +32,13 @@ if (args.Contains("--migrate"))
             .UseNpgsql(migrationConnectionString)
             .Options);
 
-    int exitCode = await DatabaseMigrator.RunAsync(CreateMigrationContext, databaseOptions, migrationLogger);
+    // One factory per module-owned DbContext. Today there is only the Invoices module;
+    // a future module with its own DbContext adds one more entry here rather than a
+    // discovery mechanism -- see DatabaseMigrator's remarks for why the signature takes
+    // a list instead of a single hard-coded context.
+    Func<DbContext>[] createMigrationContexts = [CreateMigrationContext];
+
+    int exitCode = await DatabaseMigrator.RunAsync(createMigrationContexts, databaseOptions, migrationLogger);
 
     Environment.ExitCode = exitCode;
     return;

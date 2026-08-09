@@ -32,18 +32,25 @@ bank reconciliation, public multi-tenant SaaS, Peppol transport.
 
 ## Installation
 
-Requires Docker and Docker Compose.
+Requires the .NET 10 SDK and Docker (or a Docker-compatible engine). There is
+no published image yet — `compose.yaml` references `fakturenn:dev`, which
+must be built locally first:
 
-    docker compose up
+    dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
+      -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
+    docker compose up --detach
+    docker compose --profile migrate run --rm migrate
 
-The application listens on http://localhost:8080.
+The application listens on http://localhost:8080. See [CLAUDE.md](CLAUDE.md)
+for the full command reference, including `docker compose down --volumes`.
 
 ## Development
 
-Requires the .NET 10 SDK.
-
-    dotnet build
-    dotnet test
+Requires the .NET 10 SDK. `dotnet build` and the unit/architecture/compliance
+suites (`dotnet test --project tests/Fakturenn.UnitTests`, etc.) need nothing
+else. The full suite also needs Docker (integration tests, Testcontainers
+PostgreSQL) and a local Chromium install (UI tests, Playwright) — see
+[CLAUDE.md](CLAUDE.md) for the exact commands and per-suite test counts.
 
 ## Documentation
 

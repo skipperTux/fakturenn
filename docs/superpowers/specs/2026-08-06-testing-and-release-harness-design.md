@@ -132,7 +132,9 @@ All six rules from `TEST-STRATEGY.md`, expressed as conventions rather than as a
 5. No `Fakturenn.Modules.X` assembly may reference a `Fakturenn.Modules.Y` assembly directly; only `Fakturenn.Modules.Y.Contracts`.
 6. No circular references between `Fakturenn.Modules.*` assemblies.
 
-Rules 2 and 3 name assemblies that do not exist yet. They are written now and are vacuously true; they become binding the moment E11 or E14 creates the assembly. This is intentional — the rule precedes the code it governs, so an epic cannot introduce a violation and a rule in the same commit.
+Rules 2 and 3 are live and binding now, not vacuous. Both are expressed as `Types().That().DoNotResideInAssemblyMatching(<Mail|Documents pattern>).Should().NotDependOnAnyTypesThat().ResideInAssemblyMatching(<MimeKit|MailKit|PDFsharp|MigraDoc pattern>)` — the subject selector is "every assembly that is NOT Mail/Documents", which today is all five loaded assemblies, so the rule already governs the whole codebase. Task 6 proved this empirically by making `Fakturenn.Modules.Invoices` depend on real MimeKit and watching the rule fail. When E11 or E14 creates `Fakturenn.Infrastructure.Mail*` or `.Documents*`, the rule does not newly activate — it gets narrower, carving out the one assembly now permitted to reference the library.
+
+Rules 5 and 6 are the genuinely vacuous ones today: rule 5's cross-module check cannot fire while `Fakturenn.Modules.Invoices` is the only module (there is no second module to depend on), and rule 6 needs at least two modules to have a cycle between. Both become binding the moment a second `Fakturenn.Modules.*` assembly exists.
 
 ### 8.2 Compliance corpus
 

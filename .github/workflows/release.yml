@@ -90,6 +90,15 @@ jobs:
     name: Publish image and release
     runs-on: ubuntu-latest
     needs: [format, build-test, integration, ui]
+    # Gates this job on the "release" GitHub Environment: a run pauses here until
+    # someone approves it, if and only if that environment has required reviewers
+    # configured. This is a REPOSITORY SETTING, not something a workflow file can
+    # create -- it must be armed once by a repository admin at Settings ->
+    # Environments -> release -> "Required reviewers". Until that one-time setup
+    # is done, referencing the environment here has no gating effect: the job
+    # runs straight through. See RELEASE-CHECKLIST-v0.1.md for that prerequisite.
+    environment:
+      name: release
     # The only job that writes anything. Scoped narrowly: packages:write to push
     # the image to GHCR, contents:write for the GitHub Release the last step creates.
     permissions:
@@ -109,6 +118,27 @@ jobs:
       - name: Derive version from tag
         id: version
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the changelog section
+        # Deliberately BEFORE any step that publishes anything (image push, GHCR
+        # login, SBOM/checksum artifacts, the GitHub Release). CHANGELOG.md not
+        # having a "## [<version>]" section for the tagged version is a release
+        # authoring error that must fail the job before anything is pushed, not
+        # after -- a check that ran after the image push could only ever report
+        # a release that had already half-happened.
+        run: |
+          awk '/^## \[${{ steps.version.outputs.value }}\]/{flag=1; next} /^## \[/{flag=0} flag' \
+            CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section for ${{ steps.version.outputs.value }}." >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Human verification: see [docs/operations/RELEASE-CHECKLIST-v0.1.md](docs/operations/RELEASE-CHECKLIST-v0.1.md)."
+          } >> release-notes.md
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
@@ -137,21 +167,6 @@ jobs:
       - name: Checksum artifacts
         working-directory: ./artifacts
         run: sha256sum -- * > SHA256SUMS
-
-      - name: Extract the changelog section
-        run: |
-          awk '/^## \[${{ steps.version.outputs.value }}\]/{flag=1; next} /^## \[/{flag=0} flag' \
-            CHANGELOG.md > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "No CHANGELOG section for ${{ steps.version.outputs.value }}." >&2
-            exit 1
-          fi
-          {
-            echo ""
-            echo "---"
-            echo ""
-            echo "Human verification: see [docs/operations/RELEASE-CHECKLIST-v0.1.md](docs/operations/RELEASE-CHECKLIST-v0.1.md)."
-          } >> release-notes.md
 
       - name: Create the GitHub release
         env:

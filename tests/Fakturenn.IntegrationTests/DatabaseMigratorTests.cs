@@ -23,9 +23,10 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
     {
         DatabaseOptions options = new() { StartupTimeoutSeconds = 30, RetryDelaySeconds = 1 };
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Func<DbContext>[] createContexts = [postgres.CreateContext];
 
         int firstResult = await DatabaseMigrator.RunAsync(
-            postgres.CreateContext, options, NullLogger.Instance, cancellationToken);
+            createContexts, options, NullLogger.Instance, cancellationToken);
 
         firstResult.Should().Be(0);
         (await CountSchemas(cancellationToken)).Should().Be(1L);
@@ -34,7 +35,7 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
         // Running "--migrate" again -- e.g. a redeployed migration Job that finds
         // nothing pending -- must succeed and must not duplicate the history row.
         int secondResult = await DatabaseMigrator.RunAsync(
-            postgres.CreateContext, options, NullLogger.Instance, cancellationToken);
+            createContexts, options, NullLogger.Instance, cancellationToken);
 
         secondResult.Should().Be(0);
         (await CountHistoryRows(cancellationToken)).Should().Be(1L);
@@ -54,10 +55,11 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
         InvoicesDbContext CreateContext() =>
             new(new DbContextOptionsBuilder<InvoicesDbContext>().UseNpgsql(connectionString).Options);
 
+        Func<DbContext>[] createContexts = [CreateContext];
         Stopwatch stopwatch = Stopwatch.StartNew();
 
         int result = await DatabaseMigrator.RunAsync(
-            CreateContext, options, NullLogger.Instance, TestContext.Current.CancellationToken);
+            createContexts, options, NullLogger.Instance, TestContext.Current.CancellationToken);
 
         stopwatch.Stop();
 
@@ -109,13 +111,15 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
                 .UseNpgsql(restrictedConnectionString.ConnectionString)
                 .Options);
 
+        Func<DbContext>[] createContexts = [CreateContext];
+
         // A generous budget: proving the call returns almost immediately, well
         // under RetryDelaySeconds, is what demonstrates no retry was attempted.
         DatabaseOptions options = new() { StartupTimeoutSeconds = 30, RetryDelaySeconds = 10 };
         Stopwatch stopwatch = Stopwatch.StartNew();
 
         int result = await DatabaseMigrator.RunAsync(
-            CreateContext, options, NullLogger.Instance, cancellationToken);
+            createContexts, options, NullLogger.Instance, cancellationToken);
 
         stopwatch.Stop();
 
