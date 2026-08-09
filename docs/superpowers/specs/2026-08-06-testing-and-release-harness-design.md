@@ -40,7 +40,11 @@ Explicitly out of scope, each belonging to a named epic:
 
 This design fulfils §10 **structurally** and §11's **release mechanism**. It does not fulfil §11's "runnable alpha", which spans E01–E17.
 
-The `TEST-STRATEGY.md` release gate — independent verification of at least one Factur-X, one XRechnung, one S/MIME message and one OpenPGP message — cannot be satisfied until E12 and E14 land. The harness reserves the gate's slot in the release workflow as a documented manual checklist that **fails closed**: releasing v0.1 requires a human to tick it, and it cannot be ticked truthfully today.
+The `TEST-STRATEGY.md` release gate — independent verification of at least one Factur-X, one XRechnung, one S/MIME message and one OpenPGP message — cannot be satisfied until E12 and E14 land, and `docs/operations/RELEASE-CHECKLIST-v0.1.md` says so plainly.
+
+The enforcement is a GitHub Environment, not the checklist itself. `release.yml`'s `publish` job declares `environment: release`, so nothing reaches GHCR until a configured reviewer approves the deployment. The checklist is what that reviewer consults; the environment is what actually blocks. **This gate is inert until required reviewers are armed once in the repository's GitHub settings** — a step that cannot be performed from the repository contents, and without which the job runs straight through.
+
+One further limit, added after the branch was built: **nothing under `.github/` has ever executed.** The repository has no remote, so the CI and release workflows are syntactically valid and composed of commands verified locally, but unproven. The first push is their first real run.
 
 ## 5. Decisions
 
