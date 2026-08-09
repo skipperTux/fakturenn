@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: csharp
       - name: Build
@@ -34,4 +34,4 @@ jobs:
         # ModuleBoundaryTests.RepositoryRoot resolves the repository through (see
         # ci.yml), and the loader-omission test fails on File.Exists as a result.
         run: dotnet build --configuration Release
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
