@@ -15,7 +15,7 @@ updates:
     schedule:
       interval: weekly
 
-  - package-ecosystem: docker
-    directory: "/"
-    schedule:
-      interval: weekly
+# There is deliberately no `docker` ecosystem here. This project builds its image
+# with the .NET SDK's container support rather than a Dockerfile, so Dependabot has
+# no manifest to scan and the update run fails. The base image is pinned in
+# src/Fakturenn.Web/Fakturenn.Web.csproj as ContainerBaseImage; bump it there.
