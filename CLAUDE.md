@@ -137,7 +137,7 @@ dotnet test
 
 # One suite at a time — SDK 10.0.110 rejects a bare directory; use --project
 dotnet test --project tests/Fakturenn.UnitTests           # domain, fakes, NSubstitute boundary — 26 tests
-dotnet test --project tests/Fakturenn.ArchitectureTests   # the six architecture rules — 8 tests
+dotnet test --project tests/Fakturenn.ArchitectureTests   # the six architecture rules, plus pattern guards, anti-vacuity and loader-omission checks — 14 tests
 dotnet test --project tests/Fakturenn.IntegrationTests    # Testcontainers PostgreSQL, needs Docker — 6 tests
 dotnet test --project tests/Fakturenn.ComplianceTests     # golden-file XML comparer — 10 tests
 dotnet test --project tests/Fakturenn.UiTests             # Playwright, needs browsers installed — 4 tests

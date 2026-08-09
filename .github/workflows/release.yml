@@ -133,6 +133,10 @@ jobs:
             echo "No CHANGELOG section for ${{ steps.version.outputs.value }}." >&2
             exit 1
           fi
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "CHANGELOG section for ${{ steps.version.outputs.value }} exists but is empty." >&2
+            exit 1
+          fi
           {
             echo ""
             echo "---"
