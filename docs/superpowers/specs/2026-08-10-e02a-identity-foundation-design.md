@@ -26,7 +26,8 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 - First-run setup that creates the first administrator, then disappears permanently
 - Password sign-in with lockout and rate limiting
 - Mandatory TOTP enrolment and challenge
-- Recovery codes, shown once, consumed on use, encrypted at rest (see §8)
+- Recovery codes, shown once, consumed on use, encrypted at rest (see §9)
+- Row-level audit provenance on every entity Fakturenn defines (see §7)
 - Administrator-managed users: create, reset password, clear TOTP, lock and unlock
 - Permission-based authorization with database-stored roles
 - Operator CLI entrypoints for the locked-out cases
@@ -59,16 +60,20 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | User key type | `Guid` via `GuidV7IdGenerator` | Consistent with `InvoiceId`; time-ordered keys preserve B-tree locality. |
 | Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
-| TOTP secret at rest | EF Core value converter over `IDataProtector` | Identity keeps ownership of the storage and the flow; the column becomes ciphertext. See §8 for the limits of this. |
+| Audit provenance | `IAuditable` filled by an EF Core interceptor | Added after this spec was first approved, at the project owner's request. Placed before the entities so the columns land in the first migration rather than an `ALTER` later. |
+| TOTP secret at rest | EF Core value converter over `IDataProtector` | Identity keeps ownership of the storage and the flow; the column becomes ciphertext. See §9 for the limits of this. |
 
 ## 4. Module and project layout
 
-Three new projects:
+Four new projects:
 
 ```text
+src/Fakturenn.Infrastructure.Persistence/
+  AuditSaveChangesInterceptor.cs fills IAuditable on save (§7)
+
 src/Fakturenn.Modules.Identity/
   Domain/
-    ApplicationUser.cs           IdentityUser<Guid> plus DisplayName, CreatedAt, MustEnrolTotp
+    ApplicationUser.cs           IdentityUser<Guid> plus DisplayName, MustEnrolTotp, IAuditable
     Role.cs                      Id, Name, Description, IsSystemRole
     RolePermission.cs            RoleId, Permission
     UserRole.cs                  UserId, RoleId
@@ -92,16 +97,23 @@ src/Fakturenn.Infrastructure.DataProtection/
 Changes to existing projects:
 
 ```text
+src/Fakturenn.SharedKernel/
+  IAuditable.cs                  row-level provenance contract (§7)
+  ICurrentUserAccessor.cs        who is acting, or null outside a request
+  AuditStamp.cs                  the interceptor's decisions, as a pure function
+
 src/Fakturenn.Web/
   Components/Account/            static-SSR auth pages
   Operations/                    CLI entrypoints
+  HttpContextCurrentUserAccessor.cs
   FakturennWebApplication.cs     Identity, authorization, Data Protection registration
   Program.cs                     three context factories instead of one
 
 tests/Fakturenn.Modules.Identity.UnitTests/   new, the first per-module test project
-tests/Fakturenn.IntegrationTests/             migration and round-trip tests
+tests/Fakturenn.UnitTests/                    AuditStamp, alongside the existing fakes
+tests/Fakturenn.IntegrationTests/             migrations, audit stamping, token encryption
 tests/Fakturenn.UiTests/                      the SPIKE-009 journey
-tests/Fakturenn.ArchitectureTests/            three more loader lines
+tests/Fakturenn.ArchitectureTests/            four more loader lines
 ```
 
 ### Harness obligations
@@ -180,7 +192,59 @@ A startup validation fails fast when `RolePermission` holds a permission string 
 
 Building a permission layer for four permissions would normally be over-engineering. It is not here: E02b arrives immediately as the second consumer with organization-scoped roles, and `PLAN-v0.1.md`'s Definition of Done requires *every* epic to test authorization. Establishing the seam once, before a dozen slices exist, is cheaper than retrofitting it across them.
 
-## 7. Flows
+## 7. Row-level audit provenance
+
+Every entity Fakturenn defines records who created it and who last changed it. The values are filled by an EF Core `SaveChanges` interceptor, so entity code never sets them by hand and cannot forget to.
+
+```csharp
+public interface IAuditable
+{
+    DateTimeOffset CreatedAt { get; set; }
+    string CreatedBy { get; set; }
+    DateTimeOffset ModifiedAt { get; set; }
+    string ModifiedBy { get; set; }
+}
+```
+
+### This is not the Audit module
+
+`MODULE-OWNERSHIP.md` assigns an **Audit** module owning `AuditEvent` and correlation metadata. That is an event log: a record of things that happened. This is a property of each row: who put it there. Same word, different thing. A later epic building `AuditEvent` does not supersede this and should not absorb it.
+
+### Why it belongs in E02a rather than later
+
+The columns must exist in each table's **first** migration. Adding them afterwards means an `ALTER` against tables that already shipped, and every entity written between now and then has to be revisited. Since E02a creates the first entities beyond the walking-skeleton seam, this is the last moment it is free.
+
+### Placement
+
+| Type | Project | Why |
+| --- | --- | --- |
+| `IAuditable`, `ICurrentUserAccessor`, `AuditStamp` | `Fakturenn.SharedKernel` | Pure contracts and a pure function. No EF Core, no ASP.NET Core. |
+| `AuditSaveChangesInterceptor` | `Fakturenn.Infrastructure.Persistence` | Needs EF Core. The shared kernel is referenced by the `.Contracts` assemblies that form the cross-module surface, so a persistence dependency there would land on every module's public surface. |
+| `HttpContextCurrentUserAccessor` | `Fakturenn.Web` | Only the host knows about requests. |
+
+Modules implement `IAuditable` and never reference the interceptor, so the existing architecture rule that no module may depend on infrastructure continues to hold.
+
+### Who is "the current user"
+
+`ICurrentUserAccessor` returns the acting user's name, or `null` when there is no request. The host implementation resolves `preferred_username`, then `ClaimTypes.Name`, then `ClaimTypes.NameIdentifier`.
+
+`preferred_username` is first so that adding generic OIDC later, per ADR-008, changes nothing but that one class. Local Identity does not issue it, so today the name claim answers.
+
+When there is no user — migrations, seeding, background work, the operator entrypoints — the interceptor records `system`. That is truthful rather than a placeholder: nobody was authenticated at that moment. The first administrator is therefore created by `system`, which is correct.
+
+### Two rules the interceptor enforces
+
+**Existing provenance is preserved on insert.** A seeder or an import knows the real creator; overwriting it would replace a fact with the identity of whoever ran the import. Only absent or blank values are filled.
+
+**Creation provenance is immutable.** On update the interceptor marks `CreatedAt` and `CreatedBy` as unmodified, so nothing in the object graph can rewrite them — deliberately or by accident. An integration test tampers with `CreatedBy` and asserts it survives; a plain round-trip would never notice.
+
+### Testing
+
+The decisions live in `AuditStamp`, a pure function, so they are unit-tested without a database or a request pipeline. The interceptor is thin glue over it, covered by integration tests against real PostgreSQL: that an insert is stamped, that no signed-in user yields `system`, and that an update moves `ModifiedBy` while `CreatedBy` stands.
+
+`IClock` supplies the time rather than `DateTimeOffset.UtcNow`, so tests assert an exact timestamp instead of a tolerance window.
+
+## 8. Flows
 
 ```text
 no users in database
@@ -214,7 +278,7 @@ Lockout: five failures, fifteen-minute window. Rate limiting on the login and 2F
 
 Sign-in failures never distinguish an unknown user from a wrong password.
 
-## 8. Data Protection and secrets at rest
+## 9. Data Protection and secrets at rest
 
 The key ring is persisted to PostgreSQL with `PersistKeysToDbContext<DataProtectionDbContext>()` and a fixed application name, so every replica shares one ring and it is covered by the existing database backup rather than needing a second backup story.
 
@@ -291,7 +355,7 @@ E02a therefore supports optional `ProtectKeysWithCertificate`, reading a certifi
 
 `docs/operations/DEPLOYMENT-BASELINE.md` gains a section covering the backup implication, the certificate option, and the restore hazard that comes with it.
 
-## 9. Operator entrypoints
+## 10. Operator entrypoints
 
 Alongside `--migrate`:
 
@@ -308,7 +372,7 @@ These require host and database access rather than a password. That is deliberat
 
 A password must never be passed as a command-line argument — it would land in shell history and process listings. `--create-admin` and `--reset-password` read from a file path or standard input.
 
-## 10. Testing
+## 11. Testing
 
 Per `SPEC-v0.1.md` §10, in order of preference: real objects, then fakes, then NSubstitute only where interaction is the behaviour under test.
 
@@ -330,7 +394,7 @@ The spike asks three questions; the answers are:
 
 The integration test asserting that the stored token is not plaintext is the one that matters most in this list: it is the only check that would notice the value converter being silently dropped in a future refactor.
 
-## 11. Risks
+## 12. Risks
 
 - **Static SSR and Interactive Server in one application.** Mixing render modes has sharp edges around antiforgery and redirects. The Playwright journey is the check that the combination actually works end to end, rather than compiling.
 - **Data Protection and the container.** If the key ring is misconfigured, symptoms appear as random sign-out rather than as an error. The integration test simulating a restart is what turns that into a visible failure.
