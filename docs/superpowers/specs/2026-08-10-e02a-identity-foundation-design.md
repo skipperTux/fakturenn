@@ -26,7 +26,7 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 - First-run setup that creates the first administrator, then disappears permanently
 - Password sign-in with lockout and rate limiting
 - Mandatory TOTP enrolment and challenge
-- Recovery codes, hashed, shown once
+- Recovery codes, shown once, consumed on use, encrypted at rest (see §8)
 - Administrator-managed users: create, reset password, clear TOTP, lock and unlock
 - Permission-based authorization with database-stored roles
 - Operator CLI entrypoints for the locked-out cases
@@ -57,7 +57,7 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | Authorization model | Permissions as code constants, roles as database rows | Code authorizes on permissions only. An operator can create a role without a deploy; nobody can invent a permission the code does not enforce. |
 | Role storage | Custom `Role` / `RolePermission` / `UserRole` tables | Stock `AspNetRoles` and `AspNetUserRoles` have nowhere to put E02b's `OrganizationId`, and running two role systems side by side later is worse than not adopting one now. |
 | User key type | `Guid` via `GuidV7IdGenerator` | Consistent with `InvoiceId`; time-ordered keys preserve B-tree locality. |
-| Data Protection key ring | Persisted to PostgreSQL via EF Core | The filesystem ring regenerates on restart, which breaks cookies and antiforgery across restarts and makes the stateless replicas `DEPLOYMENT-BASELINE.md` requires impossible. |
+| Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
 | TOTP secret at rest | EF Core value converter over `IDataProtector` | Identity keeps ownership of the storage and the flow; the column becomes ciphertext. See §8 for the limits of this. |
 
@@ -218,9 +218,48 @@ Sign-in failures never distinguish an unknown user from a wrong password.
 
 The key ring is persisted to PostgreSQL with `PersistKeysToDbContext<DataProtectionDbContext>()` and a fixed application name, so every replica shares one ring and it is covered by the existing database backup rather than needing a second backup story.
 
-This fixes a pre-existing defect. The ring currently lives in the container filesystem and regenerates on restart, so authentication cookies and antiforgery tokens already break across restarts, and the stateless replicas `DEPLOYMENT-BASELINE.md` requires cannot work at all.
+### What sticky sessions do and do not solve
 
-TOTP shared secrets are encrypted through an EF Core value converter over `IDataProtector`, applied to `IdentityUserToken.Value`.
+Blazor Server needs session affinity, because a SignalR circuit must stay on one server. Affinity is necessary but does not share keys, and the two are often conflated:
+
+- **Circuit affinity** — solved by sticky sessions.
+- **Key sharing** — not solved. The authentication cookie is a persistent browser cookie, independent of the circuit. A cookie encrypted by one replica cannot be decrypted by another, and the same holds for an antiforgery token on a form rendered by one replica and posted to another. Affinity is also not permanent: a replica restart or a scale event moves the client, and a per-replica ring then forces a new sign-in.
+
+The circuit itself is lost on restart regardless of any of this. That is expected and is not what the shared ring addresses.
+
+Honest magnitude of leaving the ring on the filesystem:
+
+| Deployment | Effect |
+| --- | --- |
+| Single replica, occasional restarts | forced sign-in after each restart; an annoyance, not a fault |
+| Rolling update | forced sign-in on every deployment |
+| Multiple replicas | cookies and antiforgery break whenever affinity moves |
+
+Only the third row is a genuine defect, so calling this a bug today would overstate it. It is in scope because `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes compatibility, which makes the third row a requirement rather than a hypothetical.
+
+### What the value converter actually covers
+
+The converter is applied to `IdentityUserToken.Value`, which stores **both** second-factor credentials:
+
+| Token name | Contents | Stock Identity storage |
+| --- | --- | --- |
+| `AuthenticatorKey` | the base32 TOTP shared secret | plaintext |
+| `RecoveryCodes` | the recovery codes, semicolon-joined | **plaintext, not hashed** |
+
+The second row corrects an earlier draft of this spec, which claimed recovery codes were hashed. `UserStoreBase.ReplaceCodesAsync` joins them into a single plaintext token value; hashing them would require a custom store.
+
+This was **verified empirically**, not assumed. A throwaway probe referencing `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, creating a user, resetting the authenticator key, generating three recovery codes, and then reading the rows back directly through the `DbContext` rather than through `UserManager`:
+
+```text
+generated codes: XBK77-435VP,TG5RD-6TJW9,QWVJ8-F983Q
+
+ROW  LoginProvider=[AspNetUserStore]  Name=AuthenticatorKey  Value=2W2NZBPUT2YX3LP3SUMMXICIO2INDYYU
+ROW  LoginProvider=[AspNetUserStore]  Name=RecoveryCodes     Value=XBK77-435VP;TG5RD-6TJW9;QWVJ8-F983Q
+```
+
+The codes are stored exactly as issued. The join happens in `UserStoreBase`, so this is provider-independent; the probe used SQLite for convenience and PostgreSQL behaves identically.
+
+The consequence is the argument for the converter: **a read of this one table yields a working second factor for every user** — both the TOTP secret and the recovery codes that bypass it. That is a stronger case than "encrypt the TOTP secret", and it is the reason this design departs from stock Identity here rather than following it.
 
 ### The limit of that protection, stated plainly
 
