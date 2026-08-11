@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fakturenn.Infrastructure.DataProtection/Fakturenn.Infrastructure.DataProtection.csproj" />
     <Project Path="src/Fakturenn.Infrastructure.Persistence/Fakturenn.Infrastructure.Persistence.csproj" />
     <Project Path="src/Fakturenn.Infrastructure.Storage/Fakturenn.Infrastructure.Storage.csproj" />
     <Project Path="src/Fakturenn.Modules.Identity.Contracts/Fakturenn.Modules.Identity.Contracts.csproj" />

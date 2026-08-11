@@ -23,6 +23,7 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.SharedKernel",
             "Fakturenn.Infrastructure.Storage",
             "Fakturenn.Infrastructure.Persistence",
+            "Fakturenn.Infrastructure.DataProtection",
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
             "Fakturenn.Modules.Identity",
