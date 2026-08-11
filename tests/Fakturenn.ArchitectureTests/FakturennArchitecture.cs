@@ -25,6 +25,7 @@ public static class FakturennArchitecture
             typeof(Modules.Invoices.InvoicesModule).Assembly,
             typeof(Modules.Identity.Contracts.UserId).Assembly,
             typeof(Modules.Identity.IdentityModule).Assembly,
+            typeof(Infrastructure.Persistence.AuditSaveChangesInterceptor).Assembly,
             typeof(Web.FakturennWebApplication).Assembly)
         .Build();
 
