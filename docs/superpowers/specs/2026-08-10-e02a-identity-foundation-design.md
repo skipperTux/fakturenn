@@ -382,6 +382,20 @@ This is recorded rather than papered over. The mitigations are the ones already 
 
 If a maintained, well-calibrated .NET strength estimator appears, this decision is worth revisiting: the seam is an `IPasswordValidator<ApplicationUser>` registration, which is one class and no schema change.
 
+### Backlog: an entropy warning, not a strength meter
+
+Recorded here because the seam above is where it would land, not as scope for this epic.
+
+Entropy is arithmetic over a character-class size and a length; the algorithm is public and small. `zxcvbn` itself is roughly a decade old, so any port starts from old code — implementing the calculation directly is not the hard part.
+
+The hard part is what a password meter *does to the user*. A meter that says "strong" grants confidence the measurement cannot support: it is trivially satisfied by a password a dictionary attack finds immediately, and its false positives actively mislead. The proposal is therefore deliberately asymmetric:
+
+- **Never display a strength meter or a score.** No bar, no colour, no "strong".
+- **Warn only when the estimate is confidently low**, on the true positives where a warning is honest.
+- **Configurable on or off**, with the threshold in `appsettings.json`, defaulting to off.
+
+A warning that fires only when it is confident tells the user something true. A meter that always shows something tells them something reassuring, which is worse than silence. If this is built, the KeePassXC health-check approach is the reference for the estimator's shape — implemented from its published description rather than its source, which keeps it clear of GPL entanglement, since algorithms are not copyrightable and only expression is.
+
 ### Lockout, sessions, and rate limiting
 
 Lockout: five failures, fifteen-minute window.

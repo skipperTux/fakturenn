@@ -26,30 +26,31 @@
 - No secrets in the repository. No password may ever be passed as a command-line argument.
 - Design principles: TDD where a test can meaningfully come first; SOLID, KISS, YAGNI.
 
-## Status: partially revised against the 2026-08-11 spec review
+## Revised against the 2026-08-11 spec review
 
-The spec was revised against `docs/superpowers/reviews/2026-08-11-e02a-identity-foundation-spec-review.md` — 19 findings, all dispositioned. **The spec is authoritative; this plan is catching up.** Where they disagree, the spec wins.
+The spec was revised against `docs/superpowers/reviews/2026-08-11-e02a-identity-foundation-spec-review.md` — 19 findings, all dispositioned — and this plan is now aligned with it. Where they disagree, the spec wins.
 
-Already reworked into the tasks below:
+What the review changed, and where each landed:
 
-- The claims factory (Task 8) — the review's S2, which was a defect rather than a documentation gap: the permission handler read claims nothing wrote, so every authorized endpoint would have returned 403.
-- `roles.read` / `roles.manage` removed from `Permissions` (Task 3).
-- `MustChangePassword` on `ApplicationUser` (Task 4), so it lands in the first migration.
-- Security-stamp rotation with a one-minute validation interval, the username-plus-IP rate-limit partition, and forwarded-header trust (Task 7).
-- `--unlock-user` (Task 14).
-- Seeding moved to `--migrate` and made a re-sync (Task 8).
-
-**Still to be written into tasks before implementation starts:**
-
-| Outstanding | From | Where it belongs |
+| Finding | Change | Task |
 | --- | --- | --- |
-| Forced password-change page and flow | S7 | New task after Task 11 |
+| S1 | Security-stamp rotation with a one-minute validation interval | 7, 13, 14 |
+| S2 | The claims factory — nothing wrote the claims the handler reads | 8 |
+| S3 | `--unlock-user`, and `--reset-password` clears lockout | 14 |
+| S4 | Password policy bound from configuration, no third-party scorer | 7 |
+| S5 | Rate limiting partitioned on username plus client IP | 7 |
+| S6 | Unique index plus caught violation on `/setup` | 9 |
+| S7 | `MustChangePassword` and the forced-change flow | 4, 11 |
+| C1 | Seeding from `--migrate`, as a re-sync | 7, 8 |
+| C2 | `roles.read` and `roles.manage` removed; `users.read` given a site | 3, 13 |
+| C3 | Sign-out, forced change, ten recovery codes, remember-machine rejected | 11 |
+| C4 | English and German resources | 17 |
+| C5 | Forwarded headers, HSTS, Content Security Policy with its test | 7, 15 |
+| C6 | Confirmed-email requirement off | 7 |
+| C7 | Authentication event logging and the `_msg` formatter | 16 |
+| M1–M5 | Cross-references, data model, enrolment idempotency, accepted risks | spec |
 
-| English and German `.resx` entries for every page this epic adds | C4 | New task before Task 16 |
-| HSTS, Content Security Policy, and the Playwright test that fails if the policy blocks the app's own assets | C5 | Task 7 and Task 15 |
-| Structured authentication event logging, plus the `_msg`-emitting JSON formatter shipped but not selected | C7 | New task |
-
-The last two Playwright tests matter most. The first is the only check that would have caught S2 — Task 3's unit tests construct a principal with the claims already present and pass either way. The second is what makes "lock" mean something.
+**The two tests that exist because of the review** are in Task 15: an administrator reaching an authorized page, and a locked user's existing session ceasing to work. The first catches S2, which every unit test passed over because they construct a principal with the claims already present.
 
 ## Baseline before this plan starts
 
@@ -1965,6 +1966,46 @@ public static class ForwardedHeaderTrust
 
 `app.UseForwardedHeaders();` must run **before** `app.UseAuthentication();` — the authentication cookie's `Secure` decision and the rate limiter both depend on the corrected scheme and address.
 
+- [ ] **Step 2e: HSTS and a Content Security Policy**
+
+In `FakturennWebApplication.Build`, after `UseForwardedHeaders` and before `UseAuthentication`:
+
+```csharp
+        if (!app.Environment.IsDevelopment())
+        {
+            // Production only. A Strict-Transport-Security header served over plain
+            // HTTP from a local run poisons the browser for localhost across every
+            // other project on the machine, and it cannot be cleared per-site.
+            app.UseHsts();
+        }
+
+        app.Use(async (context, next) =>
+        {
+            // Blazor Server needs its own script and the WebSocket back to the origin.
+            // 'unsafe-inline' for styles is required by MudBlazor's component styles;
+            // scripts do NOT get it, which is the half that matters for injection.
+            context.Response.Headers["Content-Security-Policy"] =
+                "default-src 'self'; "
+                + "script-src 'self'; "
+                + "style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data:; "
+                + "font-src 'self'; "
+                + "connect-src 'self' ws: wss:; "
+                + "frame-ancestors 'none'; "
+                + "base-uri 'self'; "
+                + "form-action 'self'";
+
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+
+            await next();
+        });
+```
+
+**This policy is a guess until a test proves it.** A too-strict CSP breaks Blazor in ways that look like unrelated bugs — a page that renders but never becomes interactive, a form that posts nothing, a stylesheet that silently does not apply. Task 15 carries the test that fails if the policy blocks the application's own assets. Do not tune the policy by clicking around; tune it against that test.
+
+If the test shows Blazor needs `'unsafe-eval'` or an inline script hash, add the narrowest thing that works and **record why in a comment** — a CSP nobody can explain gets widened by the next person who hits a symptom.
+
 Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
 
 - [ ] **Step 2c: Bind the password policy from configuration**
@@ -3040,9 +3081,53 @@ Add to `AccountEndpoints.MapAccountEndpoints`:
                 return Results.Redirect("/account/lockout");
             }
 
-            return result.Succeeded
-                ? Results.Redirect("/")
-                : Results.Redirect("/account/login-2fa?error=invalid");
+            if (!result.Succeeded)
+            {
+                return Results.Redirect("/account/login-2fa?error=invalid");
+            }
+
+            // Somebody else chose this password -- an administrator creating the
+            // account, or an operator running --reset-password. Send them to change
+            // it before anything else, so a shared credential stops being shared the
+            // first time it is used.
+            ApplicationUser? signedIn = await signIn.UserManager.GetUserAsync(http.User);
+            return signedIn?.MustChangePassword == true
+                ? Results.Redirect("/account/change-password")
+                : Results.Redirect("/");
+        });
+
+        group.MapPost("/change-password", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            ApplicationUser? user = await users.GetUserAsync(http.User);
+            if (user is null)
+            {
+                return Results.Redirect("/account/login");
+            }
+
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string current = form["currentPassword"].ToString();
+            string replacement = form["newPassword"].ToString();
+
+            IdentityResult changed = await users.ChangePasswordAsync(user, current, replacement);
+            if (!changed.Succeeded)
+            {
+                string message = string.Join(" ", changed.Errors.Select(e => e.Description));
+                return Results.Redirect($"/account/change-password?error={Uri.EscapeDataString(message)}");
+            }
+
+            user.MustChangePassword = false;
+            await users.UpdateAsync(user);
+
+            // ChangePasswordAsync rotates the security stamp, which invalidates every
+            // session including this one. Re-sign-in so the user is not bounced to the
+            // login page immediately after succeeding.
+            await signIn.RefreshSignInAsync(user);
+
+            return Results.Redirect("/");
         });
 
         group.MapPost("/login-recovery", async (
@@ -3172,6 +3257,41 @@ Add to `AccountEndpoints.MapAccountEndpoints`:
     private string? Error { get; set; }
 }
 ```
+
+`src/Fakturenn.Web/Components/Account/ChangePassword.razor`:
+
+```razor
+@page "/account/change-password"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+<PageTitle>Fakturenn — Change your password</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Change your password</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">
+    Your current password was set by somebody else. Choose one only you know.
+</MudText>
+
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="change-password-error">@Error</MudAlert>
+}
+
+<form method="post" action="/account/change-password" data-testid="change-password-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Current password" InputType="InputType.Password" name="currentPassword" Required="true" data-testid="current-password" />
+    <MudTextField T="string" Label="New password" InputType="InputType.Password" name="newPassword" Required="true" data-testid="new-password" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="change-password-submit">
+        Change password
+    </MudButton>
+</form>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+}
+```
+
+The enrolment gate in Task 12 must also allow `/account/change-password`, and must gate on it: a user with `MustChangePassword` set may reach only that page, sign-out, health and static assets — the same shape as `MustEnrolTotp`. Add the path to `EnrolmentGate` and extend its middleware to check both flags, ordering TOTP enrolment first so a new user enrols before changing a password they were given.
 
 `src/Fakturenn.Web/Components/Account/Lockout.razor`:
 
@@ -4090,6 +4210,46 @@ public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app)
 - `Task<IPage> SignInAsAdministratorAsync(IBrowser browser)` — runs the real setup, enrolment and password-plus-TOTP sign-in once, caches the resulting Playwright `storageState`, and returns a page already carrying it. This is SPIKE-009's "reusable authenticated state" answer, and it must reuse a **genuine** sign-in rather than fabricating a cookie.
 - `Task LockUserAsync(string email)` — locks the account through `UserManager` in the host's own service provider, exactly as the administrative endpoint does, including the explicit `UpdateSecurityStampAsync`. Locking by raw SQL would bypass the stamp rotation and make the test pass for the wrong reason.
 
+- [ ] **Step 4b: Prove the Content Security Policy does not break the application**
+
+A CSP that blocks the app's own assets produces symptoms that read as unrelated bugs: a page renders but never becomes interactive, a form posts nothing, styles silently do not apply. The browser reports each block as a console error, so assert on those rather than on the page looking right.
+
+```csharp
+    [Fact]
+    public async Task The_content_security_policy_blocks_nothing_the_application_needs()
+    {
+        List<string> violations = [];
+
+        IBrowserContext context = await _browser!.NewContextAsync();
+        IPage page = await context.NewPageAsync();
+
+        // Both channels matter: securitypolicyviolation surfaces as a console error,
+        // but a blocked resource also shows up as a failed request.
+        page.Console += (_, message) =>
+        {
+            if (message.Text.Contains("Content Security Policy", StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(message.Text);
+            }
+        };
+
+        await page.GotoAsync($"{app.BaseAddress}account/login");
+        await page.GetByTestId("login-form").WaitForAsync();
+
+        // The response must actually carry the header -- a test that passes because
+        // no policy was sent proves nothing.
+        IResponse? response = await page.GotoAsync($"{app.BaseAddress}account/login");
+        response!.Headers.Should().ContainKey("content-security-policy");
+
+        await page.GetByTestId("login-submit").WaitForAsync();
+
+        violations.Should().BeEmpty(
+            "the policy must not block the application's own scripts, styles or connections");
+    }
+```
+
+Run this against a page that exercises MudBlazor's styles and, once any page opts into `@rendermode InteractiveServer`, against that too — the WebSocket connection is the part `connect-src` governs and it is the most likely thing to be blocked.
+
 - [ ] **Step 5: Prove the journey is load-bearing**
 
 Temporarily change `EnrolTotp.razor`'s endpoint to skip `VerifyTwoFactorTokenAsync` and always accept. Run the suite and confirm the journey **still passes** — then explain in the report why that is expected, and instead mutate `CurrentTotpCode()` to return `"000000"` and confirm the journey **fails**. That is the check that the test computes a genuine code rather than any code being accepted. Revert both.
@@ -4109,7 +4269,215 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 16: Documentation, and closing SPIKE-009 in the record
+### Task 16: Authentication event logging
+
+An operator must be able to answer "is someone attacking this instance" from day one. This is **not** the Audit module — that owns `AuditEvent` as domain data — and not §7's row provenance, which records who changed a row and says nothing about a failed attempt that changed nothing.
+
+**Files:**
+
+- Create: `src/Fakturenn.Infrastructure.Logging/Fakturenn.Infrastructure.Logging.csproj`, `MessageFieldJsonFormatter.cs`
+- Modify: `src/Fakturenn.Web/Components/Account/AccountEndpoints.cs`, `Operations/OperatorCommands.cs`, `Fakturenn.slnx`, `tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs`
+
+**Interfaces:**
+
+- Produces: `MessageFieldJsonFormatter : ITextFormatter` — writes each event as one JSON object whose rendered message is under `_msg`
+
+- [ ] **Step 1: Emit the events**
+
+Add structured Serilog events at each decision point. Use a stable event name as the first property so queries do not depend on message wording:
+
+```csharp
+    logger.LogInformation("AuthEvent {Event} {Email}", "SignInSucceeded", email);
+    logger.LogWarning("AuthEvent {Event} {Email} {Reason}", "SignInFailed", email, "InvalidCredentials");
+    logger.LogWarning("AuthEvent {Event} {Email}", "AccountLockedOut", email);
+    logger.LogInformation("AuthEvent {Event} {Email}", "TwoFactorSucceeded", email);
+    logger.LogWarning("AuthEvent {Event} {Email}", "TwoFactorFailed", email);
+    logger.LogWarning("AuthEvent {Event} {Email}", "RecoveryCodeUsed", email);
+    logger.LogInformation("AuthEvent {Event} {Email}", "TotpEnrolled", email);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminResetPassword", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminClearedMfa", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminLockedUser", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Target}", "OperatorResetMfa", target);
+```
+
+**No log event may contain a password, a TOTP code, a recovery code, or an authenticator key.** Write a test that runs a sign-in with a known password against an in-memory Serilog sink and asserts the password string appears in no event — an error message that helpfully includes the input is how secrets reach log aggregators.
+
+Sign-in failure logs the email that was attempted. That is deliberate and is not the enumeration concern: the *response* to the user stays identical for unknown account and wrong password; only the operator's own log distinguishes them.
+
+- [ ] **Step 2: The `_msg` formatter**
+
+```bash
+dotnet new classlib --output src/Fakturenn.Infrastructure.Logging --name Fakturenn.Infrastructure.Logging
+dotnet add src/Fakturenn.Infrastructure.Logging package Serilog
+dotnet sln Fakturenn.slnx add src/Fakturenn.Infrastructure.Logging/Fakturenn.Infrastructure.Logging.csproj
+dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.Infrastructure.Logging
+```
+
+`MessageFieldJsonFormatter` writes one JSON object per event with the rendered message under `_msg`, the timestamp, the level, and every structured property as its own field.
+
+```csharp
+using System.Globalization;
+using Serilog.Events;
+using Serilog.Formatting;
+
+namespace Fakturenn.Infrastructure.Logging;
+
+/// <summary>
+/// One JSON object per event, with the rendered message under <c>_msg</c>.
+/// <para>
+/// Some log stores take a line's headline text from a field of exactly that name and
+/// render a placeholder when it is absent, leaving the real text one click away in
+/// every row. That cannot be fixed outside the application, so the formatter ships
+/// here — but it is NOT selected by default. The human-readable console formatter
+/// stays the default and an operator selects this one through Serilog configuration.
+/// </para>
+/// <para>
+/// The type and assembly name are part of the contract: configuration names them.
+/// Renaming either is a breaking change for a deployment that has adopted it.
+/// </para>
+/// </summary>
+public sealed class MessageFieldJsonFormatter : ITextFormatter
+{
+    public void Format(LogEvent logEvent, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(logEvent);
+        ArgumentNullException.ThrowIfNull(output);
+
+        output.Write("{\"_time\":\"");
+        output.Write(logEvent.Timestamp.ToString("O", CultureInfo.InvariantCulture));
+        output.Write("\",\"level\":\"");
+        output.Write(logEvent.Level);
+        output.Write("\",\"_msg\":");
+        WriteJsonString(logEvent.RenderMessage(CultureInfo.InvariantCulture), output);
+
+        foreach ((string name, LogEventPropertyValue value) in logEvent.Properties)
+        {
+            output.Write(',');
+            WriteJsonString(name, output);
+            output.Write(':');
+            WriteJsonString(value.ToString(null, CultureInfo.InvariantCulture).Trim('"'), output);
+        }
+
+        if (logEvent.Exception is not null)
+        {
+            output.Write(",\"exception\":");
+            WriteJsonString(logEvent.Exception.ToString(), output);
+        }
+
+        output.WriteLine('}');
+    }
+
+    private static void WriteJsonString(string value, TextWriter output) =>
+        output.Write(System.Text.Json.JsonSerializer.Serialize(value));
+}
+```
+
+Do not select it in `appsettings.json`. Document in `DEPLOYMENT-BASELINE.md` how an operator switches to it:
+
+```json
+"Serilog": { "WriteTo": [ { "Name": "Console", "Args": {
+  "formatter": "Fakturenn.Infrastructure.Logging.MessageFieldJsonFormatter, Fakturenn.Infrastructure.Logging" } } ] }
+```
+
+- [ ] **Step 3: Test the formatter**
+
+Assert that output parses as JSON, that `_msg` holds the **rendered** message rather than the template, and that structured properties survive as their own fields. A formatter that emits the template with `{Email}` unsubstituted looks correct in a code review and is useless in a log store.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/Fakturenn.Infrastructure.Logging src/Fakturenn.Web tests Fakturenn.slnx Directory.Packages.props
+git commit --message "feat(identity): add authentication event logging
+
+Structured events for sign-in, lockout, two-factor and every administrative and
+CLI action, so an operator can answer 'is someone attacking this instance' on day
+one. A test asserts no event carries a password, TOTP code or recovery code.
+
+Ships a formatter that emits the rendered message under _msg but does not select
+it, so a log store can be adopted by configuration rather than by a code change.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 17: English and German resources
+
+`PLAN-v0.1.md`'s Definition of Done requires complete English and German resources per epic. This task runs after the pages exist, so every string is known rather than guessed.
+
+**Files:**
+
+- Modify: `src/Fakturenn.Web/Resources/SharedResource.resx`, `SharedResource.de.resx`
+- Modify: every page under `Components/Account/` and `Components/Admin/`
+
+- [ ] **Step 1: Extract every literal**
+
+Walk each page added by this epic — `Setup`, `Login`, `LoginWith2fa`, `LoginWithRecoveryCode`, `EnrolTotp`, `RecoveryCodes`, `ChangePassword`, `Lockout`, `AccessDenied`, `Admin/Users` — and replace user-visible literals with `@Localizer["Key"]`, injecting `IStringLocalizer<SharedResource>`.
+
+Include the error strings returned by endpoints. A German user who mistypes a password and receives an English sentence has an untranslated application, however well the page itself is translated.
+
+Keys follow the existing convention: `Account_Login_Title`, `Account_Login_InvalidCredentials`, `Setup_CreateAdministrator`, and so on.
+
+- [ ] **Step 2: Do not translate the operator surface**
+
+Log messages, CLI output and exception text stay English. They are read by operators and pasted into issue trackers, and a translated log line is harder to search, not easier. Only user-facing UI text is localized.
+
+- [ ] **Step 3: Prove both cultures render**
+
+Extend the Playwright suite: the existing German assertion covers the home page, so add one for a page this epic adds — the sign-in page is the natural choice, since it is the first thing any user sees.
+
+```csharp
+    [Fact]
+    public async Task The_sign_in_page_renders_in_German_for_a_German_browser()
+    {
+        IPage page = await NewPageAsync("de-DE");
+
+        await page.GotoAsync($"{app.BaseAddress}account/login");
+
+        string? title = await page.GetByTestId("login-title").TextContentAsync();
+        title.Should().Be("Anmelden");
+    }
+```
+
+- [ ] **Step 4: Check for missing keys**
+
+Assert that `SharedResource.de.resx` contains a translation for every key in `SharedResource.resx`. A missing key silently falls back to English, which looks like a working application in review and a half-translated one to a German user.
+
+```csharp
+    [Fact]
+    public void Every_English_resource_key_has_a_German_translation()
+    {
+        HashSet<string> english = ReadKeys("Resources/SharedResource.resx");
+        HashSet<string> german = ReadKeys("Resources/SharedResource.de.resx");
+
+        english.Except(german).Should().BeEmpty("every key must be translated");
+        german.Except(english).Should().BeEmpty("a German key with no English source is a leftover");
+    }
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/Fakturenn.Web tests
+git commit --message "feat(identity): localize every page this epic adds
+
+English and German resources for setup, sign-in, two-factor, recovery codes,
+enrolment, password change and user administration, including the error strings
+endpoints return -- an English error on a German page is an untranslated
+application.
+
+A test asserts the two resource files have identical key sets: a missing key
+falls back to English silently, which reads as working in review and as
+half-translated to a German user.
+
+Operator-facing text -- logs, CLI output, exceptions -- stays English on purpose.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 18: Documentation, and closing SPIKE-009 in the record
 
 **Files:**
 
