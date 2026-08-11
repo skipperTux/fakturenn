@@ -29,6 +29,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj" />
     <ProjectReference Include="../../src/Fakturenn.Web/Fakturenn.Web.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
   </ItemGroup>
 
 </Project>

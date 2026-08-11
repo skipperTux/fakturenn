@@ -1,0 +1,8 @@
+# CA1711 reserves the suffix "Permission" for types deriving from
+# System.Security.IPermission, a Code Access Security concept that no longer
+# exists on .NET. RolePermission is the table and entity name fixed by
+# DOMAIN/spec section 5 and by the project's canonical-terminology rule, so the
+# analyzer is told the suffix is allowed here rather than the entity renamed.
+# Scoped to this folder, for the domain entities only, rather than project-wide.
+[*.cs]
+dotnet_code_quality.CA1711.allowed_suffixes = Permission
