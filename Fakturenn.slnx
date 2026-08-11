@@ -17,5 +17,6 @@
     <Project Path="tests/Fakturenn.Modules.Identity.UnitTests/Fakturenn.Modules.Identity.UnitTests.csproj" />
     <Project Path="tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj" />
     <Project Path="tests/Fakturenn.UnitTests/Fakturenn.UnitTests.csproj" />
+    <Project Path="tests/Fakturenn.Web.UnitTests/Fakturenn.Web.UnitTests.csproj" />
   </Folder>
 </Solution>
