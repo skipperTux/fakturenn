@@ -1,8 +1,11 @@
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.SharedKernel;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Fakturenn.Modules.Identity.Persistence;
 
@@ -17,7 +20,9 @@ namespace Fakturenn.Modules.Identity.Persistence;
 /// systems side by side later would be worse than not adopting the stock one now.
 /// </para>
 /// </summary>
-public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options)
+public sealed class IdentityDbContext(
+    DbContextOptions<IdentityDbContext> options,
+    IDataProtectionProvider dataProtectionProvider)
     : IdentityUserContext<ApplicationUser, Guid>(options)
 {
     public const string SchemaName = "identity";
@@ -78,6 +83,20 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
                 .HasForeignKey(ur => ur.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        // Both second factors live in IdentityUserToken.Value. The purpose string is
+        // part of the key derivation: changing it makes every existing value
+        // undecryptable, so it must never be edited.
+        // Declared as the non-generic base on purpose: IdentityUserToken.Value is
+        // `string?`, so the generic HasConversion<TProvider> overload demands a
+        // ValueConverter<string?, string> and rejects this one (CS8620). EF never
+        // passes null to a converter, so the non-null model type is correct.
+        ValueConverter converter = new EncryptedStringConverter(
+            dataProtectionProvider.CreateProtector("Fakturenn.Identity.UserToken.v1"));
+
+        builder.Entity<IdentityUserToken<Guid>>()
+            .Property(token => token.Value)
+            .HasConversion(converter);
 
         // One place configures the audit columns for every auditable entity, so a
         // later entity cannot arrive with a different column width by accident.

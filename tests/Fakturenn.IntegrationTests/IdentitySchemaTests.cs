@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Fakturenn.IntegrationTests;
@@ -53,7 +54,9 @@ public sealed class IdentitySchemaTests(PostgresFixture postgres) : IClassFixtur
     }
 
     private IdentityDbContext CreateContext() =>
-        new(new DbContextOptionsBuilder<IdentityDbContext>()
-            .UseNpgsql(postgres.ConnectionString)
-            .Options);
+        new(
+            new DbContextOptionsBuilder<IdentityDbContext>()
+                .UseNpgsql(postgres.ConnectionString)
+                .Options,
+            DataProtectionProvider.Create("Fakturenn.Tests"));
 }

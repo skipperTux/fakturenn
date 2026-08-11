@@ -3,6 +3,7 @@ using Fakturenn.Infrastructure.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.SharedKernel;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Fakturenn.IntegrationTests;
@@ -84,7 +85,7 @@ public sealed class AuditStampingTests(PostgresFixture postgres) : IClassFixture
                 new StubClock(_now), new StubCurrentUser(userName)))
             .Options;
 
-        return new IdentityDbContext(options);
+        return new IdentityDbContext(options, DataProtectionProvider.Create("Fakturenn.Tests"));
     }
 
     private sealed class StubClock(DateTimeOffset now) : IClock
