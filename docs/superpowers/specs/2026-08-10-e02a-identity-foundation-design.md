@@ -518,6 +518,17 @@ Three states, and they are not the same:
 
 The resolved trust list is logged at startup as **values, not counts**. A count of one looks identical whether the operator chose that entry or inherited it.
 
+**Both header forms are supported, because ASP.NET Core only supports one.** Verified against `Microsoft.AspNetCore.HttpOverrides` 10.0.10: the framework handles `X-Forwarded-For`, `-Proto`, `-Host` and `-Prefix` only. RFC 7239's standardised `Forwarded` header — `for=192.0.2.60;proto=http;host=example.test` — has no support at all; the configurable header-name options rename the header but still expect X-Forwarded-For's value format.
+
+Since `Forwarded` is the standard, E02a adds a small middleware that parses it and synthesises the equivalent `X-Forwarded-*` headers before the built-in middleware runs. This is a **translation of input format, not a second trust mechanism**: the built-in middleware still requires the connection's peer address to match a configured proxy before honouring anything, and that check is unchanged.
+
+Two rules the translation follows:
+
+- **`X-Forwarded-For` takes precedence when both are present, with no merging.** Whichever header a trusted proxy sets, it must strip the inbound copy — that requirement is identical for both — so precedence is about not changing behaviour for the far more widely deployed header. Merging two chains of different provenance would construct an address list that never existed.
+- **Node identifiers that are not addresses yield nothing.** RFC 7239 permits obfuscated identifiers such as `for=_gazonk` and the literal `for=unknown`. Passing either through as an address produces an `X-Forwarded-For` entry the built-in parser silently discards, which is indistinguishable from the header never arriving — and that is how this gets diagnosed as "forwarded headers don't work" months later.
+
+IPv6 node identifiers are bracketed and may carry a port (`for="[2001:db8::1]:4711"`); both address families are covered by the parser's tests.
+
 ### Transport and content hardening
 
 - **HSTS** in production only, never in development — a `Strict-Transport-Security` header issued from a local HTTP run poisons the browser for `localhost` across other projects.

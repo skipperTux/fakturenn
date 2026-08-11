@@ -1966,6 +1966,191 @@ public static class ForwardedHeaderTrust
 
 `app.UseForwardedHeaders();` must run **before** `app.UseAuthentication();` — the authentication cookie's `Secure` decision and the rate limiter both depend on the corrected scheme and address.
 
+- [ ] **Step 2b-ii: RFC 7239 `Forwarded` support**
+
+**ASP.NET Core does not support RFC 7239.** Verified against `Microsoft.AspNetCore.HttpOverrides` 10.0.10: the `ForwardedHeaders` enum is `XForwardedFor | XForwardedHost | XForwardedProto | XForwardedPrefix`, and while `ForwardedForHeaderName` lets you rename the header, the parser still expects X-Forwarded-For's comma-separated list rather than `for=…;proto=…;host=…` parameter syntax.
+
+`Forwarded` is the standardised header, so it must work. The approach is a **translation shim, not a reimplementation**: parse `Forwarded`, synthesise the equivalent `X-Forwarded-*` headers, and let the built-in middleware evaluate trust as it already does. Trust remains anchored on the connection's peer address, so translating the input format grants nothing that was not already granted.
+
+`src/Fakturenn.Web/ForwardedHeaderNormalizer.cs`:
+
+```csharp
+using System.Diagnostics.CodeAnalysis;
+using System.Net;
+
+namespace Fakturenn.Web;
+
+/// <summary>
+/// Translates an RFC 7239 <c>Forwarded</c> header into the <c>X-Forwarded-*</c>
+/// headers ASP.NET Core understands, so the standardised header works without
+/// reimplementing trust evaluation.
+/// <para>
+/// This grants nothing. The built-in middleware still requires the connection's peer
+/// address to match a configured proxy or network before it honours any forwarded
+/// header, and that check runs after this translation.
+/// </para>
+/// </summary>
+public static class ForwardedHeaderNormalizer
+{
+    public static void UseRfc7239Forwarded(this IApplicationBuilder app) =>
+        app.Use(async (context, next) =>
+        {
+            // X-Forwarded-For wins when both are present. Whichever header the trusted
+            // proxy sets, it must strip the inbound copy -- that requirement is
+            // identical for both -- so precedence is about not changing behaviour for
+            // the far more widely deployed header, not about safety.
+            if (!context.Request.Headers.TryGetValue("Forwarded", out var forwarded)
+                || context.Request.Headers.ContainsKey("X-Forwarded-For"))
+            {
+                await next();
+                return;
+            }
+
+            List<string> fors = [];
+            string? proto = null;
+            string? host = null;
+
+            // A Forwarded header is a comma-separated chain of elements, each a
+            // semicolon-separated list of parameters. Order matters: element one is
+            // the closest to the client, same as X-Forwarded-For.
+            foreach (string element in string.Join(',', forwarded.ToArray()).Split(','))
+            {
+                foreach (string parameter in element.Split(';'))
+                {
+                    int equals = parameter.IndexOf('=', StringComparison.Ordinal);
+                    if (equals < 0)
+                    {
+                        continue;
+                    }
+
+                    string name = parameter[..equals].Trim().ToLowerInvariant();
+                    string value = Unquote(parameter[(equals + 1)..].Trim());
+
+                    switch (name)
+                    {
+                        case "for" when TryReadNode(value, out string? node):
+                            fors.Add(node);
+                            break;
+                        case "proto":
+                            proto ??= value;
+                            break;
+                        case "host":
+                            host ??= value;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+
+            if (fors.Count > 0)
+            {
+                context.Request.Headers["X-Forwarded-For"] = string.Join(", ", fors);
+            }
+
+            if (proto is not null)
+            {
+                context.Request.Headers["X-Forwarded-Proto"] = proto;
+            }
+
+            if (host is not null)
+            {
+                context.Request.Headers["X-Forwarded-Host"] = host;
+            }
+
+            await next();
+        });
+
+    private static string Unquote(string value) =>
+        value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
+
+    /// <summary>
+    /// Extracts an address from an RFC 7239 node identifier, rejecting the ones that
+    /// are not addresses at all.
+    /// </summary>
+    private static bool TryReadNode(string value, [NotNullWhen(true)] out string? address)
+    {
+        address = null;
+
+        // RFC 7239 section 6.3 permits obfuscated identifiers such as "_hidden", and
+        // section 6.2 permits the literal "unknown". Neither is an address; passing
+        // either through as one would produce a garbage X-Forwarded-For entry that the
+        // built-in parser then silently discards, which looks identical to the header
+        // being absent.
+        if (value.Length == 0 || value[0] == '_' || value.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // IPv6 is bracketed and may carry a port: [2001:db8::1]:8080
+        if (value[0] == '[')
+        {
+            int close = value.IndexOf(']', StringComparison.Ordinal);
+            if (close < 0)
+            {
+                return false;
+            }
+
+            string inner = value[1..close];
+            if (!IPAddress.TryParse(inner, out _))
+            {
+                return false;
+            }
+
+            address = value[..(close + 1)];
+            return true;
+        }
+
+        // IPv4 may carry a port: 192.0.2.1:1234
+        int colon = value.IndexOf(':', StringComparison.Ordinal);
+        string candidate = colon >= 0 ? value[..colon] : value;
+
+        if (!IPAddress.TryParse(candidate, out _))
+        {
+            return false;
+        }
+
+        address = candidate;
+        return true;
+    }
+}
+```
+
+Register it **immediately before** `app.UseForwardedHeaders()`, so the built-in middleware sees the synthesised headers:
+
+```csharp
+        app.UseRfc7239Forwarded();
+        app.UseForwardedHeaders();
+```
+
+- [ ] **Step 2b-iii: Test the parser against the RFC's awkward cases**
+
+The straightforward case is not where this breaks. Each of these is a real form permitted by RFC 7239:
+
+```csharp
+    [Theory]
+    // The RFC's own examples.
+    [InlineData("for=\"_gazonk\"", null)]                                  // obfuscated: not an address
+    [InlineData("for=unknown", null)]                                      // literal unknown
+    [InlineData("for=192.0.2.60;proto=http;by=203.0.113.43", "192.0.2.60")]
+    [InlineData("for=192.0.2.43, for=198.51.100.17", "192.0.2.43, 198.51.100.17")]
+    // Quoting, ports, IPv6 -- CLAUDE.md requires both address families work.
+    [InlineData("for=\"[2001:db8:cafe::17]:4711\"", "[2001:db8:cafe::17]")]
+    [InlineData("for=\"192.0.2.1:1234\"", "192.0.2.1")]
+    [InlineData("For=192.0.2.60", "192.0.2.60")]                           // parameter names are case-insensitive
+    [InlineData("proto=https", null)]                                      // no for= at all
+    [InlineData("garbage", null)]
+    public void Forwarded_is_translated_to_X_Forwarded_For(string header, string? expected)
+    {
+        // ...assert the synthesised X-Forwarded-For, or its absence when expected is null
+    }
+```
+
+Two behaviours worth asserting separately:
+
+- **An obfuscated or unknown node yields no entry rather than a malformed one.** Passing `_gazonk` through as an address produces an `X-Forwarded-For` the built-in parser silently discards, which is indistinguishable from the header never arriving — and that is precisely the kind of failure that gets diagnosed as "forwarded headers don't work" months later.
+- **`X-Forwarded-For` present means `Forwarded` is ignored entirely**, with no merging. Merging two chains of different provenance is how you construct an address list that never existed.
+
 - [ ] **Step 2e: HSTS and a Content Security Policy**
 
 In `FakturennWebApplication.Build`, after `UseForwardedHeaders` and before `UseAuthentication`:
