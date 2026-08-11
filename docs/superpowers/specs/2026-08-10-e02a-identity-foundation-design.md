@@ -71,7 +71,7 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
 | Audit provenance | `IAuditable` filled by an EF Core interceptor | Added after this spec was first approved, at the project owner's request. Placed before the entities so the columns land in the first migration rather than an `ALTER` later. |
-| Password policy | Strength **scored**, not ruled: minimum 8 characters, composition rules off, and a configurable guess-count floor via `zxcvbn-core` | Every structural rule has a shape that defeats it. Scoring against dictionaries and patterns is the only approach that does not, and its guess count converts directly to crack time — see §8. |
+| Password policy | ASP.NET Core Identity's own `PasswordOptions`, bound from configuration. Defaults: 12 characters, upper plus lower plus digit, no punctuation requirement | No third-party scorer. Three were evaluated and none earned a dependency in the sign-in path — see §8. The password is one factor of two, and mandatory TOTP carries the weight a scorer was being asked to carry. |
 | Permission delivery | Derived at sign-in, carried as cookie claims | Avoids a database query per authorized request. The staleness this introduces is bounded by the security-stamp interval below — the two decisions only make sense together. |
 | Session revocation | Explicit stamp rotation, one-minute validation interval | Identity rotates the stamp on password and two-factor changes but **not** on lockout. The default thirty-minute interval would leave a locked user working for half an hour. |
 | Rate-limit partition | Username plus client IP | IP alone is useless behind a shared address and a self-DoS behind a proxy. Requires forwarded-header trust, which is why §9 configures it. |
@@ -339,59 +339,48 @@ Every `/setup` and `/account/*` page is static SSR posting a real form. The rest
 
 ### Password policy
 
-**Every structural rule has a shape that defeats it.** That is the finding this policy is built on, and it was reached by trying them in order:
+The policy is **configuration, not code**. ASP.NET Core Identity's own `PasswordOptions` are bound from `appsettings.json`, so a deployment can tighten or loosen them without a rebuild:
 
-| Rule | Defeated by |
+```json
+"Identity": {
+  "Password": {
+    "RequiredLength": 12,
+    "RequireUppercase": true,
+    "RequireLowercase": true,
+    "RequireDigit": true,
+    "RequireNonAlphanumeric": false,
+    "RequiredUniqueChars": 4
+  }
+}
+```
+
+Defaults are 12 characters with upper, lower and a digit; punctuation is not required, because requiring it mostly produces a `!` on the end. `RequireNonAlphanumeric` is the one Identity default that is deliberately flipped off.
+
+### Why no strength scorer
+
+Three libraries were evaluated and measured, and none earned a place in the sign-in path:
+
+| | Outcome |
 | --- | --- |
-| Minimum length alone | `000000000000000` |
-| Length plus composition rules | `Aaaaaaaaaaa1` |
-| …plus a distinct-character floor | `12345aaaaAAAAA` |
+| `zxcvbn-core` | Ranks correctly, and is the only one that does. Last stable release **February 2021**; the 2022 betas are the end of the line. |
+| Every other zxcvbn .NET port | `Devolutions.Zxcvbn` 2020, `Hexasoft.Zxcvbn` 2017, `zxcvbn-netstandard` 2018, `zxcvbn.net` 2014. There is no maintained port. |
+| `Easy.Password.Validator` | Actively maintained, June 2026, with bad lists and l33t decoding. But its score is length-dominated: `Sommer2026!` scores 96 while a random ten-character password scores 98 and a reasonable two-word password scores 88. No threshold separates good from bad. Its entropy mode did not produce a usable value in testing. |
 
-Each rule is a structural test, and structure is exactly what a weak password can satisfy while remaining trivially guessable. So E02a does not gate on structure. It gates on an **estimated guess count** from `zxcvbn-core` (MIT), which scores against dictionaries of common passwords, names, keyboard walks, dates and l33t substitutions.
+The choice was therefore between an unmaintained dependency doing regex matching on untrusted input, and a maintained one whose ranking inverts exactly where it matters. Neither is worth it **because the password is one factor of two**. TOTP is mandatory, lockout is durable and rate limiting is in front of the endpoint. A scorer was being asked to carry weight those controls already carry.
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| Minimum length | 8 | NIST SP 800-63B's floor. The scorer, not the length, is the control. |
-| Maximum length | none below 64 | A short maximum forces weaker passwords and hints at reversible storage. |
-| Composition rules | **all off** | They add no strength the scorer does not already measure, and they push users toward predictable substitutions. |
-| Expiry | none | Periodic rotation drives incremental, guessable changes. |
-| Paste | permitted | Blocking it defeats password managers, the largest real improvement available. |
-| `Password:MinimumGuesses` | `1e10` default, configurable | The actual gate. |
+### What this policy does not do, stated plainly
 
-Measured against the counterexamples above and some realistic passwords:
+Structural rules are known to be insufficient. Each of these satisfies the default policy and is still weak:
 
-| Candidate | Guesses | At 10¹⁰ |
-| --- | --- | --- |
-| `000000000000000` | 1.8×10² | rejected |
-| `Password1234` | 1.5×10⁴ | rejected |
-| `Aaaaaaaaaaa1` | 7.7×10⁶ | rejected |
-| `12345aaaaAAAAA` | 1.0×10⁸ | rejected |
-| `Sommer2026!` | 6.0×10⁸ | rejected |
-| `Tr0ub4dor&3` | 1.0×10¹¹ | accepted |
-| `j7#qL2!vXm9pR4wZ` | 1.0×10¹⁶ | accepted |
-| `correct horse battery staple` | 2.1×10²⁰ | accepted |
+| Password | Satisfies |
+| --- | --- |
+| `Passwort1234` | 12 characters, upper, lower, digit |
+| `Sommer2026Ab` | same |
+| `Aaaaaaaaaaa1` | same, and even `RequiredUniqueChars: 4` only raises the bar to `Aaaabbbb1234` |
 
-**Use `Guesses`, never `Score`.** zxcvbn's headline score is 0–4 and is too coarse to gate on: `12345aaaaAAAAA` scores **3**, and `Tr0ub4dor&3` and the passphrase both score **4** while being nine orders of magnitude apart. A naive implementation reaching for the obvious property would ship the exact hole this policy exists to close.
+This is recorded rather than papered over. The mitigations are the ones already in this design — mandatory second factor, lockout after five failures, rate limiting, and session revocation on credential change — plus the operator's ability to raise the requirements in configuration for a deployment that needs it.
 
-**Why a guess count rather than a score.** It converts to crack time. At PBKDF2-HMAC-SHA256 with 100,000 iterations — what Identity uses, not bcrypt — 10¹⁰ guesses is far beyond feasible offline attack on a stolen hash. An operator can therefore justify the threshold, and raise it, from a physical argument rather than from a magic number.
-
-**This also closes the blocklist gap.** NIST recommends checking candidates against known-breached lists; zxcvbn's embedded dictionaries are that check, at a cost of roughly 4 MB in a 163 MB image. An earlier draft of this spec deferred the blocklist while keeping NIST's permissiveness, which was incoherent: the two are a package, and dropping one made the other unsafe.
-
-### The known weakness, and what is done about it
-
-**zxcvbn's dictionaries are English-centric.** Measured on a German-language product this matters: `Rechnung2026!` scores 10¹³ and `Fakturenn2026!` 10¹⁴, both comfortably accepted, because German business vocabulary looks like random letters to it. A German user picking an obvious German password gets less protection than an English one.
-
-Two things are done about it, and one is not:
-
-- **User inputs are fed to the estimator** — the product name, the user's email, user name and display name are passed as extra dictionary entries, so passwords derived from them are penalised. This is the cheap part and it is implemented.
-- **The threshold is configurable**, so a deployment can raise it above the default.
-- **A German dictionary is not added.** It would mean sourcing, licensing and shipping a word list, and the same argument would then apply to every other language this product is translated into. Recorded as a limitation rather than solved.
-
-The alternative library considered, `Easy.Password.Validator` (MIT, 443 KB), was rejected on measurement rather than on principle: it scores structure and patterns without dictionaries, and it **accepts `Passwort1234`** — German for "password1234" — at any threshold that still admits reasonable passwords. That is the same failure mode as every structural rule above, one level up.
-
-**Identity's defaults must be overridden, not accepted.** All four of `RequireDigit`, `RequireLowercase`, `RequireUppercase` and `RequireNonAlphanumeric` default to `true`. A test asserts all four are off and that the guess-count validator is registered, resolved from the real host composition — a setting that defaults back on is invisible in a diff.
-
-`MustChangePassword` is not periodic rotation. It fires on the condition NIST endorses: somebody other than the user knows the current password, because an administrator or operator set it.
+If a maintained, well-calibrated .NET strength estimator appears, this decision is worth revisiting: the seam is an `IPasswordValidator<ApplicationUser>` registration, which is one class and no schema change.
 
 ### Lockout, sessions, and rate limiting
 

@@ -45,7 +45,6 @@ Already reworked into the tasks below:
 | --- | --- | --- |
 | Forced password-change page and flow | S7 | New task after Task 11 |
 
-
 | English and German `.resx` entries for every page this epic adds | C4 | New task before Task 16 |
 | HSTS, Content Security Policy, and the Playwright test that fails if the policy blocks the app's own assets | C5 | Task 7 and Task 15 |
 | Structured authentication event logging, plus the `_msg`-emitting JSON formatter shipped but not selected | C7 | New task |
@@ -1758,20 +1757,23 @@ public static class IdentityConfiguration
         builder.Services.AddIdentityCore<ApplicationUser>(options =>
             {
                 options.User.RequireUniqueEmail = true;
-                // Strength is gated by PasswordStrengthValidator (below) on an
-                // estimated guess count, not by structure. Every structural rule has a
-                // shape that satisfies it while remaining trivially guessable --
-                // 000000000000000 defeats length, Aaaaaaaaaaa1 defeats composition
-                // rules, 12345aaaaAAAAA defeats a distinct-character floor.
+                // Defaults only. The Configure<IdentityOptions> call after this block
+                // binds the "Identity" configuration section over the top, so an
+                // operator can tighten or loosen the policy without a rebuild.
                 //
-                // All four composition flags default to TRUE in Identity, so leaving
-                // them alone would ship rules that contradict the policy. The test
-                // below asserts all four: a setting that defaults back on is invisible
-                // in a diff.
-                options.Password.RequiredLength = 8;
-                options.Password.RequireDigit = false;
-                options.Password.RequireLowercase = false;
-                options.Password.RequireUppercase = false;
+                // These rules are known to be insufficient on their own -- Passwort1234
+                // satisfies all of them. Three strength scorers were evaluated and none
+                // earned a dependency in the sign-in path; see the spec's section 8.
+                // The password is one factor of two, and mandatory TOTP, lockout and
+                // rate limiting are what carry the weight.
+                options.Password.RequiredLength = 12;
+                options.Password.RequireUppercase = true;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireDigit = true;
+                options.Password.RequiredUniqueChars = 4;
+
+                // The one Identity default deliberately flipped off: requiring
+                // punctuation mostly produces an exclamation mark on the end.
                 options.Password.RequireNonAlphanumeric = false;
 
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
@@ -1966,215 +1968,66 @@ public static class ForwardedHeaderTrust
 
 Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
 
-- [ ] **Step 2c: The password strength validator**
+- [ ] **Step 2c: Bind the password policy from configuration**
 
-```bash
-dotnet add src/Fakturenn.Modules.Identity package zxcvbn-core
-```
-
-`src/Fakturenn.Modules.Identity/Authorization/PasswordStrengthValidator.cs`:
+The policy is configuration, not code. Immediately after `AddIdentityCore`, bind the `Identity` section over the defaults so an operator can adjust it without a rebuild:
 
 ```csharp
-using Fakturenn.Modules.Identity.Domain;
-using Microsoft.AspNetCore.Identity;
+        builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection("Identity"));
+```
 
-namespace Fakturenn.Modules.Identity.Authorization;
+and add to `src/Fakturenn.Web/appsettings.json`:
 
-/// <summary>
-/// Rejects passwords whose estimated guess count falls below a configured floor.
-/// <para>
-/// Structure is not gated, because every structural rule has a shape that satisfies
-/// it while remaining trivially guessable: a length minimum accepts
-/// <c>000000000000000</c>, composition rules accept <c>Aaaaaaaaaaa1</c>, and a
-/// distinct-character floor accepts <c>12345aaaaAAAAA</c>. An estimator that knows
-/// about dictionaries, keyboard walks and l33t substitutions rejects all three.
-/// </para>
-/// <para>
-/// Gates on <c>Guesses</c>, never on zxcvbn's 0-4 <c>Score</c>. The score is far too
-/// coarse: <c>12345aaaaAAAAA</c> scores 3, and <c>Tr0ub4dor&amp;3</c> (1e11 guesses)
-/// and <c>correct horse battery staple</c> (2e20) both score 4 — nine orders of
-/// magnitude apart. Reaching for the obvious property would reintroduce exactly the
-/// weakness this validator exists to remove.
-/// </para>
-/// </summary>
-public sealed class PasswordStrengthValidator(double minimumGuesses)
-    : IPasswordValidator<ApplicationUser>
-{
-    public Task<IdentityResult> ValidateAsync(
-        UserManager<ApplicationUser> manager,
-        ApplicationUser user,
-        string? password)
-    {
-        if (string.IsNullOrEmpty(password))
-        {
-            return Task.FromResult(IdentityResult.Success);
-        }
-
-        // zxcvbn's dictionaries are English-centric, so German business vocabulary
-        // looks like random letters to it: measured, "Rechnung2026!" scores 1e13 and
-        // "Fakturenn2026!" 1e14, both comfortably above the floor. Feeding the
-        // product name and the user's own identifiers in as dictionary entries is
-        // what penalises passwords derived from them. It does not make the estimator
-        // German-aware in general -- that limitation is recorded in the spec.
-        string[] userInputs =
-        [
-            "fakturenn",
-            user.Email ?? string.Empty,
-            user.UserName ?? string.Empty,
-            user.DisplayName,
-        ];
-
-        double guesses = Zxcvbn.Core.EvaluatePassword(
-            password,
-            userInputs.Where(input => !string.IsNullOrWhiteSpace(input)).ToArray()).Guesses;
-
-        if (guesses >= minimumGuesses)
-        {
-            return Task.FromResult(IdentityResult.Success);
-        }
-
-        // The message never quotes the password or its score: an error string is a
-        // place secrets leak into logs and screenshots.
-        return Task.FromResult(IdentityResult.Failed(new IdentityError
-        {
-            Code = "PasswordTooGuessable",
-            Description =
-                "That password is too easy to guess. Longer passphrases of ordinary "
-                + "words work well; predictable patterns and substitutions do not.",
-        }));
+```json
+  "Identity": {
+    "Password": {
+      "RequiredLength": 12,
+      "RequireUppercase": true,
+      "RequireLowercase": true,
+      "RequireDigit": true,
+      "RequireNonAlphanumeric": false,
+      "RequiredUniqueChars": 4
     }
-}
+  },
 ```
 
-Register it in `AddFakturennIdentity`, reading the floor from configuration:
+No third-party strength scorer is used. Three were evaluated during design and none earned a dependency in the sign-in path: every `zxcvbn` .NET port is unmaintained, the maintained alternative's score is length-dominated and cannot separate a weak seasonal password from a strong short one, and its entropy mode produced no usable value. The reasoning and the measurements are in the spec's section 8; do not re-litigate it here, and do not add a scorer without redoing that comparison.
 
-```csharp
-        double minimumGuesses = builder.Configuration.GetValue("Password:MinimumGuesses", 1e10);
-        builder.Services.AddScoped<IPasswordValidator<ApplicationUser>>(
-            _ => new PasswordStrengthValidator(minimumGuesses));
-```
+- [ ] **Step 2d: Pin the policy with a test**
 
-- [ ] **Step 2d: Pin the policy with tests**
-
-Two tests. The first asserts the resolved options from the **real host composition** — testing a hand-built options object would assert only that the test sets what the test sets:
+Assert the options resolved from the **real host composition**. A test over a hand-built options object would assert only that the test sets what the test sets — and the point is to catch a default silently reasserting itself:
 
 ```csharp
     [Fact]
-    public void Structural_password_rules_are_off_and_the_strength_validator_is_registered()
+    public void The_password_policy_matches_the_documented_defaults()
     {
         WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
         IdentityOptions options = app.Services.GetRequiredService<IOptions<IdentityOptions>>().Value;
 
-        options.Password.RequiredLength.Should().Be(8);
-        options.Password.RequireDigit.Should().BeFalse();
-        options.Password.RequireLowercase.Should().BeFalse();
-        options.Password.RequireUppercase.Should().BeFalse();
+        options.Password.RequiredLength.Should().Be(12);
+        options.Password.RequireUppercase.Should().BeTrue();
+        options.Password.RequireLowercase.Should().BeTrue();
+        options.Password.RequireDigit.Should().BeTrue();
+        options.Password.RequiredUniqueChars.Should().Be(4);
+
+        // The one Identity default deliberately flipped off.
         options.Password.RequireNonAlphanumeric.Should().BeFalse();
+    }
 
-        using IServiceScope scope = app.Services.CreateScope();
-        scope.ServiceProvider.GetServices<IPasswordValidator<ApplicationUser>>()
-            .Should().ContainItemsAssignableTo<PasswordStrengthValidator>(
-                "structure is not gated, so the strength validator is the only control");
+    [Fact]
+    public void The_password_policy_can_be_overridden_by_configuration()
+    {
+        // The value of binding the section is that a deployment can tighten it.
+        // If this stops working, the appsettings block becomes decoration.
+        WebApplication app = FakturennWebApplication.Build(
+            ["--urls", "http://127.0.0.1:0", "--Identity:Password:RequiredLength", "20"]);
+
+        app.Services.GetRequiredService<IOptions<IdentityOptions>>()
+            .Value.Password.RequiredLength.Should().Be(20);
     }
 ```
 
-The second pins the behaviour against the passwords that defeated each earlier rule. These values were measured, not assumed:
-
-```csharp
-    [Theory]
-    [InlineData("000000000000000", false)]   // defeats a length minimum
-    [InlineData("Password1234", false)]
-    [InlineData("Aaaaaaaaaaa1", false)]      // defeats composition rules
-    [InlineData("12345aaaaAAAAA", false)]    // defeats a distinct-character floor
-    [InlineData("Sommer2026!", false)]
-    [InlineData("Tr0ub4dor&3", true)]
-    [InlineData("j7#qL2!vXm9pR4wZ", true)]
-    [InlineData("correct horse battery staple", true)]
-    public async Task The_strength_validator_accepts_only_hard_to_guess_passwords(
-        string password, bool expectedAccepted)
-    {
-        var validator = new PasswordStrengthValidator(minimumGuesses: 1e10);
-        var user = new ApplicationUser
-        {
-            Email = "someone@example.test",
-            UserName = "someone@example.test",
-            DisplayName = "Someone",
-        };
-
-        IdentityResult result = await validator.ValidateAsync(userManager: null!, user, password);
-
-        result.Succeeded.Should().Be(expectedAccepted);
-    }
-
-    [Theory]
-    [InlineData("Fakturenn2026!")]           // the product name
-    [InlineData("someone@example.test1")]    // the user's own email
-    [InlineData("SomeoneSomeone2026")]       // the user's display name, doubled
-    public async Task A_password_derived_from_the_product_or_the_user_is_rejected(string password)
-    {
-        // Without user inputs these score 1e13 and above, because zxcvbn's
-        // dictionaries are English-centric and know nothing about this product or
-        // this person. Feeding them in is what makes these guessable-in-context
-        // passwords score as guessable.
-        var validator = new PasswordStrengthValidator(minimumGuesses: 1e10);
-        var user = new ApplicationUser
-        {
-            Email = "someone@example.test",
-            UserName = "someone@example.test",
-            DisplayName = "Someone",
-        };
-
-        IdentityResult result = await validator.ValidateAsync(userManager: null!, user, password);
-
-        result.Succeeded.Should().BeFalse();
-    }
-```
-
-`ValidateAsync` ignores its `UserManager` argument, so passing null there keeps the test free of an Identity fixture — but the `user` argument is now read, so it must be a real instance. **Verify the second theory's expectations against the library before committing them**: user inputs demonstrably lower the score, but whether each of these three lands below 10¹⁰ was not measured, unlike the first theory's values which were. If one passes, either adjust the case or say so — do not adjust the threshold to make a test green.
-
-The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
-
-- [ ] **Step 2a: Implement the current-user accessor**
-
-`src/Fakturenn.Web/HttpContextCurrentUserAccessor.cs`:
-
-```csharp
-using System.Security.Claims;
-using Fakturenn.SharedKernel;
-
-namespace Fakturenn.Web;
-
-/// <summary>
-/// Resolves who is acting from the current request, or null when there is no
-/// request — migrations, seeding, background work and the operator entrypoints all
-/// run without one, and the interceptor records those as the system actor.
-/// <para>
-/// The claim order puts <c>preferred_username</c> first so that adding generic OIDC
-/// later, per ADR-008, needs no change here. Local Identity does not issue that
-/// claim, so today the name claim is the one that answers.
-/// </para>
-/// </summary>
-public sealed class HttpContextCurrentUserAccessor(IHttpContextAccessor httpContextAccessor)
-    : ICurrentUserAccessor
-{
-    public string? UserName
-    {
-        get
-        {
-            ClaimsPrincipal? user = httpContextAccessor.HttpContext?.User;
-
-            if (user?.Identity?.IsAuthenticated != true)
-            {
-                return null;
-            }
-
-            return user.FindFirst("preferred_username")?.Value
-                ?? user.FindFirst(ClaimTypes.Name)?.Value
-                ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        }
-    }
-}
-```
+The second test is the one that matters. A `Configure` call that silently fails to bind leaves the defaults in place and looks identical to a working one.
 
 - [ ] **Step 3: Call it and add the middleware**
 
