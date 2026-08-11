@@ -71,7 +71,7 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
 | Audit provenance | `IAuditable` filled by an EF Core interceptor | Added after this spec was first approved, at the project owner's request. Placed before the entities so the columns land in the first migration rather than an `ALTER` later. |
-| Password policy | Minimum 15 characters, composition rules explicitly **off**, no expiry | NIST SP 800-63B. Length is the control; composition rules mostly produce predictable substitutions. Every one of Identity's four composition defaults is `true`, so they must be turned off rather than left alone — see §8. |
+| Password policy | Strength **scored**, not ruled: minimum 8 characters, composition rules off, and a configurable guess-count floor via `zxcvbn-core` | Every structural rule has a shape that defeats it. Scoring against dictionaries and patterns is the only approach that does not, and its guess count converts directly to crack time — see §8. |
 | Permission delivery | Derived at sign-in, carried as cookie claims | Avoids a database query per authorized request. The staleness this introduces is bounded by the security-stamp interval below — the two decisions only make sense together. |
 | Session revocation | Explicit stamp rotation, one-minute validation interval | Identity rotates the stamp on password and two-factor changes but **not** on lockout. The default thirty-minute interval would leave a locked user working for half an hour. |
 | Rate-limit partition | Username plus client IP | IP alone is useless behind a shared address and a self-DoS behind a proxy. Requires forwarded-header trust, which is why §9 configures it. |
@@ -339,21 +339,47 @@ Every `/setup` and `/account/*` page is static SSR posting a real form. The rest
 
 ### Password policy
 
-Per NIST SP 800-63B, which inverts most of what password UIs traditionally did:
+**Every structural rule has a shape that defeats it.** That is the finding this policy is built on, and it was reached by trying them in order:
 
-| Rule | Setting | Why |
+| Rule | Defeated by |
+| --- | --- |
+| Minimum length alone | `000000000000000` |
+| Length plus composition rules | `Aaaaaaaaaaa1` |
+| …plus a distinct-character floor | `12345aaaaAAAAA` |
+
+Each rule is a structural test, and structure is exactly what a weak password can satisfy while remaining trivially guessable. So E02a does not gate on structure. It gates on an **estimated guess count** from `zxcvbn-core` (MIT), which scores against dictionaries of common passwords, names, keyboard walks, dates and l33t substitutions.
+
+| Setting | Value | Why |
 | --- | --- | --- |
-| Minimum length | **15 characters** | Length is the control that actually resists offline cracking. NIST requires at least 8 and recommends at least 15. |
-| Maximum length | at least 64 accepted | A short maximum forces weaker passwords and signals reversible storage. Identity imposes none; do not add one. |
-| Composition rules | **all off** | Digit, lowercase, uppercase and non-alphanumeric requirements produce predictable substitutions — `Password1!` — rather than entropy. |
-| Expiry | none | Periodic rotation drives incremental, guessable changes. Force a change on evidence of compromise, not on a calendar. |
-| Paste | permitted | Blocking paste defeats password managers, which are the single largest real improvement to password quality. |
+| Minimum length | 8 | NIST SP 800-63B's floor. The scorer, not the length, is the control. |
+| Maximum length | none below 64 | A short maximum forces weaker passwords and hints at reversible storage. |
+| Composition rules | **all off** | They add no strength the scorer does not already measure, and they push users toward predictable substitutions. |
+| Expiry | none | Periodic rotation drives incremental, guessable changes. |
+| Paste | permitted | Blocking it defeats password managers, the largest real improvement available. |
+| `Password:MinimumGuesses` | `1e10` default, configurable | The actual gate. |
 
-**This requires overriding Identity, not accepting it.** All four of `RequireDigit`, `RequireLowercase`, `RequireUppercase` and `RequireNonAlphanumeric` default to `true`. Leaving them alone ships composition rules that contradict the policy above, so each is explicitly set to `false` and a unit test asserts it — a defaulted-back-on setting is invisible in review.
+Measured against the counterexamples above and some realistic passwords:
 
-`MustChangePassword` is not periodic rotation and does not contradict the no-expiry rule. It fires on exactly the condition NIST endorses: somebody other than the user knows the current password, because an administrator or operator set it.
+| Candidate | Guesses | At 10¹⁰ |
+| --- | --- | --- |
+| `000000000000000` | 1.8×10² | rejected |
+| `Password1234` | 1.5×10⁴ | rejected |
+| `Aaaaaaaaaaa1` | 7.7×10⁶ | rejected |
+| `12345aaaaAAAAA` | 1.0×10⁸ | rejected |
+| `Sommer2026!` | 6.0×10⁸ | rejected |
+| `Tr0ub4dor&3` | 1.0×10¹¹ | accepted |
+| `j7#qL2!vXm9pR4wZ` | 1.0×10¹⁶ | accepted |
+| `correct horse battery staple` | 2.1×10²⁰ | accepted |
 
-**Compromised-password blocklists are deferred, deliberately.** NIST recommends checking candidates against known-breached lists. The two implementations are a bundled list, which is megabytes of data to ship and maintain in an offline-capable self-hosted product, or an online lookup, which adds a network dependency to sign-up on a product whose entire premise is your own infrastructure. Neither is free enough to include without a reason. A 15-character minimum with no composition rules already puts the common cases out of reach, and the deferral is recorded here rather than silently omitted.
+**Use `Guesses`, never `Score`.** zxcvbn's headline score is 0–4 and is too coarse to gate on: `12345aaaaAAAAA` scores **3**, and `Tr0ub4dor&3` and the passphrase both score **4** while being nine orders of magnitude apart. A naive implementation reaching for the obvious property would ship the exact hole this policy exists to close.
+
+**Why a guess count rather than a score.** It converts to crack time. At PBKDF2-HMAC-SHA256 with 100,000 iterations — what Identity uses, not bcrypt — 10¹⁰ guesses is far beyond feasible offline attack on a stolen hash. An operator can therefore justify the threshold, and raise it, from a physical argument rather than from a magic number.
+
+**This also closes the blocklist gap.** NIST recommends checking candidates against known-breached lists; zxcvbn's embedded dictionaries are that check, at a cost of roughly 4 MB in a 163 MB image. An earlier draft of this spec deferred the blocklist while keeping NIST's permissiveness, which was incoherent: the two are a package, and dropping one made the other unsafe.
+
+**Identity's defaults must be overridden, not accepted.** All four of `RequireDigit`, `RequireLowercase`, `RequireUppercase` and `RequireNonAlphanumeric` default to `true`. A test asserts all four are off and that the guess-count validator is registered, resolved from the real host composition — a setting that defaults back on is invisible in a diff.
+
+`MustChangePassword` is not periodic rotation. It fires on the condition NIST endorses: somebody other than the user knows the current password, because an administrator or operator set it.
 
 ### Lockout, sessions, and rate limiting
 

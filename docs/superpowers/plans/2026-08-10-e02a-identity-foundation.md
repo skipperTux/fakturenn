@@ -1760,12 +1760,17 @@ public static class IdentityConfiguration
         builder.Services.AddIdentityCore<ApplicationUser>(options =>
             {
                 options.User.RequireUniqueEmail = true;
-                // NIST SP 800-63B: length is the control, composition rules are not.
-                // Every one of these four defaults to TRUE in Identity, so leaving
-                // them alone would ship composition rules that contradict the policy.
-                // The unit test below asserts all four, because a setting that
-                // defaults back on is invisible in a diff.
-                options.Password.RequiredLength = 15;
+                // Strength is gated by PasswordStrengthValidator (below) on an
+                // estimated guess count, not by structure. Every structural rule has a
+                // shape that satisfies it while remaining trivially guessable --
+                // 000000000000000 defeats length, Aaaaaaaaaaa1 defeats composition
+                // rules, 12345aaaaAAAAA defeats a distinct-character floor.
+                //
+                // All four composition flags default to TRUE in Identity, so leaving
+                // them alone would ship rules that contradict the policy. The test
+                // below asserts all four: a setting that defaults back on is invisible
+                // in a diff.
+                options.Password.RequiredLength = 8;
                 options.Password.RequireDigit = false;
                 options.Password.RequireLowercase = false;
                 options.Password.RequireUppercase = false;
@@ -1963,29 +1968,126 @@ public static class ForwardedHeaderTrust
 
 Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
 
-- [ ] **Step 2c: Pin the password policy with a test**
+- [ ] **Step 2c: The password strength validator**
 
-Composition rules default to `true` in Identity. A future refactor that drops one of the four `false` assignments reintroduces them silently, and nothing about the running application makes that visible. Assert the resolved options rather than the source:
+```bash
+dotnet add src/Fakturenn.Modules.Identity package zxcvbn-core
+```
+
+`src/Fakturenn.Modules.Identity/Authorization/PasswordStrengthValidator.cs`:
+
+```csharp
+using Fakturenn.Modules.Identity.Domain;
+using Microsoft.AspNetCore.Identity;
+
+namespace Fakturenn.Modules.Identity.Authorization;
+
+/// <summary>
+/// Rejects passwords whose estimated guess count falls below a configured floor.
+/// <para>
+/// Structure is not gated, because every structural rule has a shape that satisfies
+/// it while remaining trivially guessable: a length minimum accepts
+/// <c>000000000000000</c>, composition rules accept <c>Aaaaaaaaaaa1</c>, and a
+/// distinct-character floor accepts <c>12345aaaaAAAAA</c>. An estimator that knows
+/// about dictionaries, keyboard walks and l33t substitutions rejects all three.
+/// </para>
+/// <para>
+/// Gates on <c>Guesses</c>, never on zxcvbn's 0-4 <c>Score</c>. The score is far too
+/// coarse: <c>12345aaaaAAAAA</c> scores 3, and <c>Tr0ub4dor&amp;3</c> (1e11 guesses)
+/// and <c>correct horse battery staple</c> (2e20) both score 4 — nine orders of
+/// magnitude apart. Reaching for the obvious property would reintroduce exactly the
+/// weakness this validator exists to remove.
+/// </para>
+/// </summary>
+public sealed class PasswordStrengthValidator(double minimumGuesses)
+    : IPasswordValidator<ApplicationUser>
+{
+    public Task<IdentityResult> ValidateAsync(
+        UserManager<ApplicationUser> manager,
+        ApplicationUser user,
+        string? password)
+    {
+        if (string.IsNullOrEmpty(password))
+        {
+            return Task.FromResult(IdentityResult.Success);
+        }
+
+        double guesses = Zxcvbn.Core.EvaluatePassword(password).Guesses;
+
+        if (guesses >= minimumGuesses)
+        {
+            return Task.FromResult(IdentityResult.Success);
+        }
+
+        // The message never quotes the password or its score: an error string is a
+        // place secrets leak into logs and screenshots.
+        return Task.FromResult(IdentityResult.Failed(new IdentityError
+        {
+            Code = "PasswordTooGuessable",
+            Description =
+                "That password is too easy to guess. Longer passphrases of ordinary "
+                + "words work well; predictable patterns and substitutions do not.",
+        }));
+    }
+}
+```
+
+Register it in `AddFakturennIdentity`, reading the floor from configuration:
+
+```csharp
+        double minimumGuesses = builder.Configuration.GetValue("Password:MinimumGuesses", 1e10);
+        builder.Services.AddScoped<IPasswordValidator<ApplicationUser>>(
+            _ => new PasswordStrengthValidator(minimumGuesses));
+```
+
+- [ ] **Step 2d: Pin the policy with tests**
+
+Two tests. The first asserts the resolved options from the **real host composition** — testing a hand-built options object would assert only that the test sets what the test sets:
 
 ```csharp
     [Fact]
-    public void The_password_policy_follows_NIST_length_over_composition()
+    public void Structural_password_rules_are_off_and_the_strength_validator_is_registered()
     {
         WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
         IdentityOptions options = app.Services.GetRequiredService<IOptions<IdentityOptions>>().Value;
 
-        options.Password.RequiredLength.Should().BeGreaterThanOrEqualTo(15);
-
-        // NIST SP 800-63B: composition rules produce predictable substitutions rather
-        // than entropy. All four of these default to true in ASP.NET Core Identity.
+        options.Password.RequiredLength.Should().Be(8);
         options.Password.RequireDigit.Should().BeFalse();
         options.Password.RequireLowercase.Should().BeFalse();
         options.Password.RequireUppercase.Should().BeFalse();
         options.Password.RequireNonAlphanumeric.Should().BeFalse();
+
+        using IServiceScope scope = app.Services.CreateScope();
+        scope.ServiceProvider.GetServices<IPasswordValidator<ApplicationUser>>()
+            .Should().ContainItemsAssignableTo<PasswordStrengthValidator>(
+                "structure is not gated, so the strength validator is the only control");
     }
 ```
 
-This belongs in `tests/Fakturenn.UiTests` alongside the other tests that build the real host, or in a small host-configuration test class — wherever it can resolve `IOptions<IdentityOptions>` from the real composition rather than a hand-built one. Testing a hand-built options object would assert only that the test sets what the test sets.
+The second pins the behaviour against the passwords that defeated each earlier rule. These values were measured, not assumed:
+
+```csharp
+    [Theory]
+    [InlineData("000000000000000", false)]   // defeats a length minimum
+    [InlineData("Password1234", false)]
+    [InlineData("Aaaaaaaaaaa1", false)]      // defeats composition rules
+    [InlineData("12345aaaaAAAAA", false)]    // defeats a distinct-character floor
+    [InlineData("Sommer2026!", false)]
+    [InlineData("Tr0ub4dor&3", true)]
+    [InlineData("j7#qL2!vXm9pR4wZ", true)]
+    [InlineData("correct horse battery staple", true)]
+    public async Task The_strength_validator_accepts_only_hard_to_guess_passwords(
+        string password, bool expectedAccepted)
+    {
+        var validator = new PasswordStrengthValidator(minimumGuesses: 1e10);
+
+        IdentityResult result = await validator.ValidateAsync(userManager: null!, user: null!, password);
+
+        result.Succeeded.Should().Be(expectedAccepted);
+    }
+```
+
+`ValidateAsync` ignores its manager and user arguments, so passing null is safe here and keeps the test free of an Identity fixture. If a future change starts using them, this test fails loudly rather than silently passing null into live code.
 
 The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
 
