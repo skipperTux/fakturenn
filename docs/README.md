@@ -17,10 +17,15 @@ This directory is the implementation baseline for Fakturenn v0.1.
 11. `operations/RELEASE-CHECKLIST-v0.1.md`
 12. `architecture/IMPLEMENTATION-NOTES.md`
 13. `superpowers/specs/`, `superpowers/reviews/` and `superpowers/plans/`
+14. `planning/BACKLOG.md`
 
 Every epic spec receives a review (`superpowers/reviews/`) before it is
 turned into an implementation plan — see `superpowers/reviews/README.md`
 for the gate.
+
+`planning/BACKLOG.md` holds ideas raised during design that are not scope
+for the epic they surfaced in. Nothing there is committed work, and every
+entry names the epic it would land in.
 
 ## Project status
 
