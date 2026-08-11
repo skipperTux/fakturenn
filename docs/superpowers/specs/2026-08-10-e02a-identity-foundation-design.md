@@ -28,11 +28,17 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 - Mandatory TOTP enrolment and challenge
 - Recovery codes, shown once, consumed on use, encrypted at rest (see §9)
 - Row-level audit provenance on every entity Fakturenn defines (see §7)
+- Forced password change when an administrator or operator set the password
+- Sign-out
 - Administrator-managed users: create, reset password, clear TOTP, lock and unlock
 - Permission-based authorization with database-stored roles
+- Session revocation on credential and lock-state changes
 - Operator CLI entrypoints for the locked-out cases
 - Data Protection key ring persisted to PostgreSQL
-- TOTP shared secrets encrypted at rest
+- TOTP shared secrets and recovery codes encrypted at rest
+- Forwarded-header trust, HSTS and a Content Security Policy
+- Structured authentication event logging
+- English and German resources for every page this epic adds
 - The automated password + TOTP journey that closes `SPIKE-009`
 
 ### Out, with reasons
@@ -45,6 +51,10 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | `Organization`, `Membership`, isolation | E02b | Next slice. |
 | Organization-scoped roles | E02b | Roles gain an `OrganizationId` when organizations exist. |
 | Permission management UI | Later | Roles are seeded and editable by SQL until something needs otherwise. |
+| `roles.read` / `roles.manage` permissions | E02b | A permission constant with no enforcement site is speculative surface. They arrive with the UI that enforces them. |
+| Recovery-code regeneration page | Later | `--reset-mfa` and the administrator's clear-TOTP action both force re-enrolment, which issues a fresh set. A self-service page belongs to whichever epic adds account self-service. |
+| 2FA "remember this machine" | Rejected, not deferred | A persistent second-factor bypass cookie is not a trade worth making on a system holding invoicing records and signing identities, for a sign-in that happens a few times a day. |
+| Shared rate-limit state across replicas | Rejected | Solving it needs distributed state this project does not otherwise require. The per-replica multiplication is accepted in §8; lockout is the durable control. |
 
 ## 3. Decisions
 
@@ -61,6 +71,15 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
 | Audit provenance | `IAuditable` filled by an EF Core interceptor | Added after this spec was first approved, at the project owner's request. Placed before the entities so the columns land in the first migration rather than an `ALTER` later. |
+| Password policy | Minimum 12 characters, no composition rules | Current NIST guidance: length beats character-class rules, which mostly produce predictable substitutions. Identity's default of 6 is too short to ship. |
+| Permission delivery | Derived at sign-in, carried as cookie claims | Avoids a database query per authorized request. The staleness this introduces is bounded by the security-stamp interval below — the two decisions only make sense together. |
+| Session revocation | Explicit stamp rotation, one-minute validation interval | Identity rotates the stamp on password and two-factor changes but **not** on lockout. The default thirty-minute interval would leave a locked user working for half an hour. |
+| Rate-limit partition | Username plus client IP | IP alone is useless behind a shared address and a self-DoS behind a proxy. Requires forwarded-header trust, which is why §9 configures it. |
+| Setup concurrency | Unique index plus caught violation | A count-then-insert guard is a check-then-act race between two posts, or between a replica and a migration Job. |
+| Email confirmation | Off | No SMTP until E14. Leaving Identity's confirmed-account requirement on would lock out every user with no way to confirm. |
+| Forwarded-header trust | Delimiter-separated strings, not configuration arrays | .NET binds arrays by index, so an environment variable can overwrite elements but cannot *replace* a list. One string in one variable can be. |
+| Localization | In scope for this epic | `PLAN-v0.1.md`'s Definition of Done requires complete English and German resources per epic. Deferring means shipping knowingly not-done. |
+| Authentication logging | Structured Serilog events now | An operator needs to answer "is someone attacking this instance" from day one. Distinct from the Audit module and from §7's row provenance. |
 | TOTP secret at rest | EF Core value converter over `IDataProtector` | Identity keeps ownership of the storage and the flow; the column becomes ciphertext. See §9 for the limits of this. |
 
 ## 4. Module and project layout
@@ -139,14 +158,20 @@ Omitting step 2 fails `The_loader_omits_no_assembly_declared_under_src_in_the_so
 Schema `identity`:
 
 ```text
-AspNetUsers          stock Identity, extended with DisplayName, CreatedAt, MustEnrolTotp
-AspNetUserTokens     stock; holds the authenticator key, Value encrypted at rest
-AspNetUserClaims     stock
+AspNetUsers          stock Identity, extended with DisplayName, MustEnrolTotp,
+                     MustChangePassword, and the four IAuditable columns (§7)
+AspNetUserTokens     stock; holds the authenticator key and the recovery codes,
+                     Value encrypted at rest (§9)
+AspNetUserClaims     stock, unused — permissions are derived, never stored per user (§6)
 AspNetUserLogins     stock, unused until OIDC
-Role                 Id, Name, Description, IsSystemRole
-RolePermission       RoleId, Permission
-UserRole             UserId, RoleId
+Role                 Id, Name, Description, IsSystemRole, + IAuditable
+RolePermission       RoleId, Permission, + IAuditable
+UserRole             UserId, RoleId, + IAuditable
 ```
+
+Every table Fakturenn defines carries `CreatedAt`, `CreatedBy`, `ModifiedAt` and `ModifiedBy` per §7. `AspNetUsers` does too, because we extend that entity; the stock tables we do not define are left alone.
+
+`MustChangePassword` exists because an administrator who creates a user, or an operator who runs `--reset-password`, knows that password. The state forces a change at next sign-in so the credential stops being shared the moment it is first used.
 
 `AspNetRoles` and `AspNetUserRoles` are deliberately not used.
 
@@ -170,17 +195,33 @@ User ──< UserRole >── Role ──< RolePermission >── Permission
 - **Roles are data.** Seeded with defaults, editable without a deploy.
 - **Code never authorizes on a role name.** `[Authorize(Policy = Permissions.UsersManage)]`, never `[Authorize(Roles = "Administrator")]`.
 
-E02a defines only the permissions it enforces:
+E02a defines only the permissions it enforces, and each one names its enforcement site:
 
 ```csharp
 public static class Permissions
 {
-    public const string UsersRead = "users.read";
-    public const string UsersManage = "users.manage";
-    public const string RolesRead = "roles.read";
-    public const string RolesManage = "roles.manage";
+    public const string UsersRead = "users.read";      // GET /admin/users
+    public const string UsersManage = "users.manage";  // every mutating admin endpoint
 }
 ```
+
+`roles.read` and `roles.manage` were in an earlier draft and are **removed**: roles are seeded and edited by SQL in E02a, there is no roles UI in scope, and a permission constant with no enforcement site is exactly the speculative surface this project's YAGNI rule exists to prevent. E02b adds them when it adds the UI that enforces them.
+
+### How a principal acquires its permissions
+
+Permissions are **derived at sign-in and re-derived at every security-stamp validation**, then carried as claims of type `fakturenn.permission` in the authentication cookie. A custom `IUserClaimsPrincipalFactory<ApplicationUser>` performs the derivation by joining `UserRole` to `RolePermission`.
+
+This is a decision with a consequence, and the consequence is why §8's security-stamp handling exists: **a claim in a cookie is a cached authorization decision.** Removing a role from a user does not take effect until that cookie is re-validated. The two mechanisms are therefore specified together — the stamp interval bounds how stale a permission set can be.
+
+The alternative, a database lookup per request, was rejected: it puts a query on every authorized request to remove a staleness window that the stamp interval already bounds to minutes.
+
+### Seeding, and what happens when a later epic adds a permission
+
+The `Administrator` system role is seeded **by the `--migrate` entrypoint**, not at application startup. Startup seeding on multiple replicas races on the unique role-name index, and `--migrate` already runs exactly once by design.
+
+Seeding is a **re-sync, not a create-if-absent**: it grants the system role every permission in `Permissions.All` that it does not already hold. Without that rule, an installation upgraded to a version defining a fifth permission would have an `Administrator` role silently missing it — the startup validation catches permission strings the code does not define, but nothing would catch grants the code defines and the database lacks.
+
+System roles are re-synced. Operator-created roles are never touched.
 
 Seeded role: `Administrator`, `IsSystemRole = true`, holding all four.
 
@@ -263,22 +304,54 @@ sign-in
   POST /account/login       password; Identity counts lockout
                             success -> /account/login-2fa
   POST /account/login-2fa   TOTP code, or a recovery code, consumed on use
-                            success -> cookie issued, redirect to returnUrl
+                            success -> MustChangePassword ? /account/change-password
+                                                          : returnUrl
                             locked   -> /account/lockout
 
-administration, requires users.manage
-  /admin/users              list, create, reset password, clear TOTP, lock, unlock
+forced password change (while MustChangePassword)
+  GET  /account/change-password
+  POST /account/change-password   current + new; clears the flag, rotates the stamp
+
+sign-out
+  POST /account/logout      always available; rendered in the layout when signed in
+
+administration
+  GET  /admin/users         requires users.read
+  POST /account/admin/*     requires users.manage
+                            create, reset password, clear TOTP, lock, unlock
 ```
 
 Every `/setup` and `/account/*` page is static SSR posting a real form. The rest of the application stays Interactive Server.
 
+### Guards and state
+
 `/setup` is guarded by a user-count query, not a configuration flag. A flag can be left on; a populated table cannot.
 
-Lockout: five failures, fifteen-minute window. Rate limiting on the login and 2FA endpoints via ASP.NET Core's built-in limiter — `SECURITY-BASELINE.md` requires it, and without it lockout degrades into a user-enumeration oracle.
+**The setup race.** The count query and the insert are not atomic: two concurrent posts, or a replica racing a `--create-admin` Job, can both pass the check. The guard is therefore a **unique index on the normalized user name plus a caught constraint violation** — the loser of the race receives the same "already configured" response as a late visitor. A count query alone is a check-then-act bug.
+
+**A fresh instance is owned by whoever reaches `/setup` first.** This is accepted, as most self-hosted software accepts it. The mitigation is documented rather than coded: run `--create-admin` before exposing the instance, or do not expose it until setup is complete.
+
+**Enrolment idempotency.** A user who verifies TOTP but leaves before acknowledging the recovery codes keeps `MustEnrolTotp` set. Returning to the enrolment page **reuses the existing authenticator key** rather than resetting it, so the entry already added to their authenticator app keeps working. The key is reset only by `--reset-mfa` or the administrator's clear-TOTP action.
+
+**Recovery codes.** Ten are issued at enrolment. They are shown once. There is no regeneration UI in E02a — when they run out or are lost, `--reset-mfa` or an administrator's clear-TOTP forces re-enrolment, which issues a fresh set. A regeneration page belongs to whichever epic adds account self-service.
+
+**"Remember this machine" is not offered.** Identity supports skipping the second factor on a trusted browser; E02a does not enable it. On a system holding invoicing records and signing identities, a persistent second-factor bypass cookie is not a trade we need to make for a login that happens a few times a day.
+
+### Lockout, sessions, and rate limiting
+
+Lockout: five failures, fifteen-minute window.
+
+**Locking a user must end their session.** Identity rotates the security stamp automatically on password reset and on two-factor changes, but **not** on lockout. Every administrative and CLI action that changes credentials or lock state therefore rotates the security stamp explicitly, and `SecurityStampValidatorOptions.ValidationInterval` is set to **one minute** rather than the default thirty. A lock that leaves a working session for half an hour is not a lock. The one-minute interval is also what bounds how stale a cookie's permission claims can be (§6).
+
+**Rate limiting** partitions on **username plus client IP**, not IP alone: IP alone is either useless behind a shared address or a self-DoS behind a proxy. Ten attempts per minute per partition on `/account/login`, `/account/login-2fa` and `/account/login-recovery`.
+
+This requires correct client addresses, so forwarded-header trust is configured — see §9. It is not optional: without it every request behind a reverse proxy carries the proxy's address and the limiter partitions everyone into one bucket.
+
+**Accepted trade-off:** the built-in limiter is in-memory per replica, so with *N* replicas the effective limit is *N* × the configured value. Solving it properly means shared state, which is a distributed-systems dependency this project does not otherwise need. Lockout — which *is* durable, being a database column — remains the real control; the limiter exists to blunt the enumeration oracle that lockout alone creates.
 
 Sign-in failures never distinguish an unknown user from a wrong password.
 
-## 9. Data Protection and secrets at rest
+## 9. Data Protection, web hardening and observability
 
 The key ring is persisted to PostgreSQL with `PersistKeysToDbContext<DataProtectionDbContext>()` and a fixed application name, so every replica shares one ring and it is covered by the existing database backup rather than needing a second backup story.
 
@@ -355,16 +428,65 @@ E02a therefore supports optional `ProtectKeysWithCertificate`, reading a certifi
 
 `docs/operations/DEPLOYMENT-BASELINE.md` gains a section covering the backup implication, the certificate option, and the restore hazard that comes with it.
 
+### Forwarded headers
+
+E02a introduces the application's first cookie and its first rate limiter, both of which depend on knowing the real client address. `SECURITY-BASELINE.md` lists proxy-header configuration; this is where it lands.
+
+Trust is **configuration, not code**, and it is expressed as **delimiter-separated strings** rather than configuration arrays:
+
+```text
+Network:KnownProxies    "203.0.113.7, 203.0.113.8"
+Network:KnownNetworks   "10.0.0.0/8; 172.16.0.0/12"
+Network:ForwardLimit    1
+```
+
+A string is used deliberately. .NET binds configuration arrays by index, so an environment variable can only *add to or overwrite individual elements* of a list defined in `appsettings.json` — it cannot replace the list. An operator who wants exactly two trusted proxies, and nothing inherited, cannot express that with an array. One string in one variable can be replaced wholesale.
+
+Three states, and they are not the same:
+
+| Configuration | Behaviour |
+| --- | --- |
+| Not set | `X-Forwarded-*` ignored entirely. A decision, not an error — no reverse proxy in front. Logged as a warning at startup |
+| Set and parseable | Trust exactly those entries. The middleware's loopback defaults are **cleared** first, so the trust list is what the operator asked for and nothing more |
+| Set but nothing parses | **Startup fails.** Otherwise the middleware silently falls back to loopback-only and drops every forwarded header at request time — a typo would become an unexplained redirect-to-`http` months later |
+
+The resolved trust list is logged at startup as **values, not counts**. A count of one looks identical whether the operator chose that entry or inherited it.
+
+### Transport and content hardening
+
+- **HSTS** in production only, never in development — a `Strict-Transport-Security` header issued from a local HTTP run poisons the browser for `localhost` across other projects.
+- **Content Security Policy.** Blazor Server needs specific allowances, and an over-strict policy breaks the application in ways that look like unrelated bugs rather than like a policy error. The policy therefore ships **with a Playwright test that fails if it blocks the application's own scripts or styles**. An untested CSP is worse than none, because it creates confident-looking evidence of protection while breaking the page.
+- Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. `Always` is not used: the reference Compose deployment serves plain HTTP on localhost, and forcing `Always` would drop the cookie and make sign-in fail with no visible error.
+
+### Authentication event logging
+
+Serilog is already configured. E02a emits structured events for sign-in success and failure, lockout, two-factor outcome, enrolment, and every administrative and CLI action. An operator should be able to answer "is someone attacking this instance" on day one.
+
+This is **not** the Audit module and does not pre-empt it: that owns `AuditEvent` as domain data with correlation metadata. This is operational telemetry, and it is also distinct from §7's row provenance, which records who changed a row and says nothing about a failed attempt that changed nothing.
+
+Log events never contain a password, a TOTP code, a recovery code, or an authenticator key.
+
+**One forward-looking allowance.** Log shipping is Ops' concern, and the container writes to standard output — a collector ships it. But a JSON console formatter must emit the message under a field named `_msg` for some log stores to render it, and that cannot be fixed outside the application. E02a therefore ships a formatter that emits `_msg`, as a stable public type, **not selected by default**: the human-readable console formatter stays the default, and an operator selects the JSON one through existing Serilog configuration.
+
+The cost is roughly thirty lines and one type name that must stay stable. The alternative is a code change and a release when Ops asks. This project ships **no** log-store configuration, no URL and no credential — only the ability to be pointed at one.
+
 ## 10. Operator entrypoints
 
 Alongside `--migrate`:
 
 ```text
---create-admin <email>      only when no users exist; password from a secret file or stdin
---reset-password <email>    sets a new password and forces a change at next sign-in
---reset-mfa <email>         clears TOTP and forces re-enrolment
+--create-admin <email>      only when no users exist; password from stdin
+                            sets MustChangePassword and MustEnrolTotp
+--reset-password <email>    sets a new password from stdin, sets MustChangePassword,
+                            clears lockout, rotates the security stamp
+--reset-mfa <email>         clears TOTP, forces re-enrolment, rotates the stamp
+--unlock-user <email>       clears lockout and the failed-attempt count
 --list-users                diagnostic: email, display name, lockout state, TOTP state
 ```
+
+`--unlock-user` exists because the `IsSystemRole` guard prevents *stripping* the last administrator's permissions but does not prevent **locking** them. Without it, an administrator who locks themselves out — or is locked by another administrator — has no route back, and the guard would have protected the wrong thing. `--reset-password` clears lockout for the same reason: an operator resetting a password almost always wants the account usable afterwards, and a reset that leaves the account locked is a surprise.
+
+Every entrypoint that changes credentials or lock state rotates the security stamp, so any existing session for that user stops working. This is the CLI half of §8's rule; an administrator locking a user through the UI and an operator locking them through the CLI must not behave differently.
 
 `--create-admin` and the `/setup` page are alternative routes to the same state, not a sequence. Both are guarded by the same "no users exist" query, so whichever runs first closes the other. The page suits an operator with a browser; the entrypoint suits a Kubernetes Job or an unattended install. The user created by `--create-admin` still has `MustEnrolTotp` set and completes enrolment at first sign-in, so the CLI path never produces an account without a second factor.
 
@@ -378,9 +500,15 @@ Per `SPEC-v0.1.md` §10, in order of preference: real objects, then fakes, then 
 
 | Tier | Coverage |
 | --- | --- |
-| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the startup validation rejecting an undefined permission; `IsSystemRole` protection; the last-administrator guard |
-| Integration | both new migrations apply to a clean database and are idempotent; a TOTP secret round-trips through the value converter and is **not** readable as plaintext in the column; the Data Protection ring survives a simulated restart |
-| UI (Playwright) | the full password + TOTP journey; `/setup` returning 404 after the first user; lockout after five failures; recovery-code sign-in consuming the code |
+| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the startup validation rejecting an undefined permission; `IsSystemRole` protection; the last-administrator guard; the enrolment-gate path policy; forwarded-header trust parsing, including that a configured-but-unparseable list throws |
+| Integration | both new migrations apply to a clean database and are idempotent; a TOTP secret round-trips through the value converter and is **not** readable as plaintext in the column; the Data Protection ring survives a simulated restart; **the claims factory derives a user's permissions from their roles**; seeding re-syncs a system role that is missing a permission the code defines; audit stamping, including that `CreatedBy` survives an update that tries to change it |
+| UI (Playwright) | the full password + TOTP journey; `/setup` returning 404 after the first user; lockout after five failures; recovery-code sign-in consuming the code; **an authorized page reaching a permitted user rather than 403**; forced password change on first sign-in; that the Content Security Policy does not block the application's own scripts or styles |
+
+### The two tests that exist because of the spec review
+
+**A permitted user reaches an authorized page.** The permission handler reads claims that a claims factory must write. Unit tests that hand-construct a principal with the claims already present pass whether or not anything populates them in production — which is exactly how a review found that nothing did. Only an end-to-end assertion catches it.
+
+**A locked user's existing session stops working.** Sign in, lock the account from another session, and confirm the first session cannot reach an authorized page within the stamp validation interval. Without it, "lock" is a database column with no effect on anyone already inside.
 
 ### Closing SPIKE-009
 
@@ -401,4 +529,13 @@ The integration test asserting that the stored token is not plaintext is the one
 - **`Otp.NET` must match Identity's algorithm.** Identity's authenticator provider implements standard RFC 6238 over the shared key, so a standard library agrees — but this is an assumption to verify in the first task that uses it, not at the end.
 - **Three new migration contexts at once.** `--migrate` now applies three sets. The existing wall-clock startup budget covers all of them collectively, not each individually; the integration tests must confirm the budget is still adequate.
 - **`MustEnrolTotp` as a partial-authentication state.** A user who authenticated by password but has not finished enrolling must be able to reach only the enrolment page. Getting that wrong either locks users out or opens a hole; it is worth an explicit test rather than trust.
-- **Losing the Data Protection key ring invalidates every enrolled authenticator.** This is the availability cost of encrypting TOTP secrets, accepted deliberately in §8. Keeping the ring in the database makes it atomic under backup and restore, which is the mitigation; `--reset-mfa` is the recovery path if it happens anyway. An operator who enables certificate protection takes on a second, independent way to lose the same data.
+- **Losing the Data Protection key ring invalidates every enrolled authenticator.** This is the availability cost of encrypting TOTP secrets, accepted deliberately in §9. Keeping the ring in the database makes it atomic under backup and restore, which is the mitigation; `--reset-mfa` is the recovery path if it happens anyway. An operator who enables certificate protection takes on a second, independent way to lose the same data.
+
+### Accepted risks
+
+Stated rather than mitigated, so that a later reader knows they were considered:
+
+- **TOTP codes are replayable within their time window.** Identity keeps no cache of used codes, so a code captured in transit can be reused for up to the validity window. Mitigating it means a per-user store of consumed codes and the cache-invalidation problems that come with it. Standard practice is to accept this and rely on TLS; E02a does the same.
+- **Rate limits multiply by replica count.** The in-memory limiter is per replica. Accepted in §8, with lockout as the durable control.
+- **CLI actions leave a thinner trail than their UI equivalents.** An operator running `--reset-mfa` is recorded as `system` by §7's provenance, because no user is authenticated. The authentication event log (§9) records that the action happened, but not who ran it — that is inherent to a recovery path whose whole point is working when nobody can sign in. Host and database access is the control.
+- **A fresh instance is claimed by whoever reaches `/setup` first.** Accepted in §8, with `--create-admin` before exposure as the documented mitigation.

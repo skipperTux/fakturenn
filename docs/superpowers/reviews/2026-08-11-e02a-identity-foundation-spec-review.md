@@ -33,11 +33,44 @@ findings are one-line fixes.
 
 ---
 
+## Revision outcome — 2026-08-11
+
+All 19 findings dispositioned: 18 fixed, 1 fixed partly by deletion (C2). None
+rejected. The spec is revised; the implementation plan is revised to match.
+
+**S2 was the finding that justified the gate.** It reads as a documentation gap
+— "the spec is silent while the plan has already decided" — but the plan's
+decision was incomplete in a way that would have shipped: `PermissionClaims` was
+read by the authorization handler and written by nothing. Every authorized page
+would have returned 403, including the administrator's own. It would not have
+been caught by the plan's tests, because they construct a `ClaimsPrincipal` with
+the claims already present.
+
+That is the same shape as this project's earlier dead-architecture-rules
+incident: a mechanism that was never wired, and a test suite that asserted the
+mechanism's *inputs* rather than its *effect*. The spec now specifies the claims
+factory, and §11 adds an end-to-end test that a permitted user actually reaches
+an authorized page.
+
+**Two findings were the reviewer catching the author's own errors.** M1 and M2
+were introduced by the section renumber that inserted §7 — a self-review had
+already run over that change and missed both.
+
+**Scope discipline held.** C2 was resolved by *removing* two permission
+constants rather than inventing enforcement sites for them, and three items were
+rejected outright rather than deferred: 2FA "remember this machine", shared
+rate-limit state across replicas, and a recovery-code regeneration page. The
+project owner's framing — find the balance between must-have, nice-to-have and
+YAGNI for an open-source project rather than importing commercial-SaaS instincts
+wholesale — is what those three rejections implement.
+
+---
+
 ## Security findings
 
 ### S1 — Session revocation on administrative actions is unspecified
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §8 now requires explicit security-stamp rotation on every admin and CLI action that changes credentials or lock state, with `ValidationInterval` set to one minute rather than the default thirty. §11 adds a test that a locked user's existing session stops working.
 
 The spec's admin actions (§2: reset password, clear TOTP, lock) and the CLI
 entrypoints (§10) say nothing about what happens to the target user's
@@ -54,7 +87,7 @@ interval; and a test that a locked user's existing session stops working.
 
 ### S2 — How the authorization handler learns permissions is undefined
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed, and it was worse than a spec gap.** The plan already read `fakturenn.permission` claims that *nothing populated* — every `[Authorize(Policy = ...)]` would have denied, including the administrator's own page, and the hand-constructed unit tests would still have passed. §6 now specifies an `IUserClaimsPrincipalFactory` deriving permissions at sign-in and at each stamp validation, and §11 adds the end-to-end test that would have caught it.
 
 §6 defines the model but never says whether permissions are stamped as
 claims into the cookie at sign-in (the implementation plan has already
@@ -68,7 +101,7 @@ decided.
 
 ### S3 — The last administrator can be locked with no recovery path in the spec
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §10 adds `--unlock-user`, and `--reset-password` now explicitly clears lockout. The guard protected the wrong thing without them.
 
 The `IsSystemRole` guard (§6) prevents stripping `users.manage` from its
 last holder and prevents role deletion — but not **locking** the last
@@ -82,7 +115,7 @@ also unlocking; or extend the last-administrator guard to the lock action.
 
 ### S4 — No password policy anywhere
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §3 fixes minimum length 12, no composition rules, per current NIST guidance.
 
 ASP.NET Core Identity's defaults (6 characters) ship unless overridden, and
 neither the spec nor `SECURITY-BASELINE.md` states requirements. The spec
@@ -92,7 +125,7 @@ exists for.
 
 ### S5 — Rate limiting is named but not designed
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §8 partitions on username plus client IP; §9 configures forwarded-header trust, without which the partition is meaningless behind a proxy. The per-replica multiplication is now an accepted, written trade-off with lockout named as the durable control.
 
 §8 says "built-in limiter" on login and 2FA, but not the partition key
 (per-IP? per-username? both?). Per-IP behind a reverse proxy requires
@@ -107,7 +140,7 @@ omission.
 
 ### S6 — `/setup` and `--create-admin` share a TOCTOU race and an unowned-instance window
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §8 replaces the count-then-insert guard with a unique index plus a caught constraint violation, and states plainly that a fresh instance is owned by whoever reaches `/setup` first, with `--create-admin` before exposure as the documented mitigation.
 
 Both are guarded by a "no users exist" query; nothing serializes
 check-and-insert. Two concurrent `/setup` posts — or a replica racing a
@@ -122,7 +155,7 @@ the mitigation.
 
 ### S7 — Admin-created users: the administrator knows the password, and "must change password" has no state or flow
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §5 adds `MustChangePassword`; §8 adds the forced-change flow; §10 sets the flag on both `--create-admin` and `--reset-password`, and on administrator-created users.
 
 §2 says "administrators create users with a password directly", and only
 `--reset-password` mentions forcing a change at next sign-in. The
@@ -138,7 +171,7 @@ admin paths.
 
 ### C1 — Seeding timing and the permission upgrade path
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §6 states that seeding runs from `--migrate` rather than at startup, avoiding a multi-replica race on the unique role-name index, and that it is a **re-sync** rather than create-if-absent, so a permission added by a later epic is granted to existing installations.
 
 §6 says the `Administrator` role is "seeded" — never when. Startup?
 `--migrate`? Multi-replica startup seeding races on the unique name index.
@@ -150,7 +183,7 @@ to `Permissions.All` during seeding/migration.
 
 ### C2 — Permission set inconsistency
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed, partly by deletion.** `roles.read` and `roles.manage` are removed — a permission constant with no enforcement site is exactly the speculative surface this project's YAGNI rule forbids, and E02b will add them with the UI that enforces them. `users.read` is kept and given a real site: the user list. Mutations require `users.manage`.
 
 §6 claims "E02a defines only the permissions it enforces", but `RolesRead`
 and `RolesManage` have no enforcement site — roles are managed by SQL and
@@ -161,7 +194,7 @@ sites.
 
 ### C3 — Missing flows in §8
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §8 adds sign-out and the forced password change, fixes the recovery-code count at ten, defers a regeneration page with a reason, and rejects 2FA "remember this machine" outright rather than deferring it.
 
 - Logout.
 - Forced password change (see S7).
@@ -173,7 +206,7 @@ sites.
 
 ### C4 — Localization stance absent
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** Localization is in scope for E02a. Deferring it would mean shipping an epic that knowingly fails a Definition of Done item.
 
 Definition of Ready requires "localization impact is known"; Definition of
 Done requires complete English and German resources. The spec never mentions
@@ -182,7 +215,7 @@ so) or explicitly deferred to E03 with a reason.
 
 ### C5 — Cookie and web hardening unplaced
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §9 adds forwarded headers, HSTS and a Content Security Policy. The CSP ships with a Playwright test that fails if it blocks the application's own assets — an untested CSP produces confident-looking evidence of protection while breaking the page.
 
 `SECURITY-BASELINE.md` lists secure cookies, HSTS, proxy headers, and CSP.
 E02a introduces the application's first cookie. If those controls land in a
@@ -190,7 +223,7 @@ different epic, the spec should say which; silence reads as dropped.
 
 ### C6 — Email confirmation must be off
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §3 records that Identity's confirmed-account requirement is off, with the reason: no SMTP until E14, and the wrong default locks out every user.
 
 No SMTP until E14, so `RequireConfirmedAccount` / confirmed-email sign-in
 checks must be disabled. Unstated — and the wrong default locks out every
@@ -198,7 +231,7 @@ user.
 
 ### C7 — Authentication event logging
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §9 adds structured Serilog authentication events, distinguished from both the Audit module and §7's row provenance. It also records the one forward-looking allowance the project owner asked for: a `_msg`-emitting JSON formatter shipped but not selected, so a log store can be adopted by configuration rather than by a code change.
 
 Failed sign-ins, lockouts, admin actions: not row provenance (§7 does not
 cover them) and the Audit module is a later epic. The spec should explicitly
@@ -211,14 +244,14 @@ one.
 
 ### M1 — Wrong cross-references in §12
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** The stale `§8` in the risks list now reads `§9`. Both stale references were introduced by the section renumber that inserted §7; the review caught what the author's own check missed.
 
 The last §12 bullet cites "§8" twice for the encryption decision — it is §9
 ("accepted deliberately in §8"; "the mitigation; … §8").
 
 ### M2 — §5 data model omits three audit columns
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §5 now lists `MustChangePassword` and the four `IAuditable` columns, and notes that `AspNetUserClaims` is unused because permissions are derived rather than stored per user.
 
 §5 says `AspNetUsers` is extended with `DisplayName, CreatedAt,
 MustEnrolTotp` — §7's `IAuditable` adds four columns, so
@@ -226,7 +259,7 @@ MustEnrolTotp` — §7's `IAuditable` adds four columns, so
 
 ### M3 — Enrolment idempotency ambiguity
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed.** §8 states that returning to enrolment reuses the existing authenticator key rather than resetting it, so an entry already added to an authenticator app keeps working. The key is reset only by `--reset-mfa` or an administrator's clear-TOTP.
 
 A user verifies TOTP, leaves without acknowledging the recovery codes, and
 `MustEnrolTotp` stays set (§8). Does the next visit regenerate the secret?
@@ -235,7 +268,7 @@ The state machine deserves one sentence.
 
 ### M4 — TOTP replay window
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed as an accepted risk.** §12 records that Identity keeps no used-code cache, so a captured code is replayable within its window, and that standard practice is to accept this and rely on TLS.
 
 Identity's TOTP verification has no used-code replay cache; a captured code
 is reusable within the time window. A standard accepted risk — worth a line
@@ -243,7 +276,7 @@ in §12.
 
 ### M5 — CLI provenance is thinner than UI provenance
 
-- [ ] Dispositioned
+- [x] Dispositioned — **Fixed as an accepted risk.** §12 records that CLI recovery actions are stamped `system` because no user is authenticated, that the event log records the action but not the operator, and that host and database access is the control.
 
 CLI actions stamp `CreatedBy = "system"` — truthful per §7, but the operator
 identity is lost for recovery actions. Acceptable; note that `--reset-mfa`
