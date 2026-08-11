@@ -33,11 +33,16 @@
 
   <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
     <PackageReference Include="MudBlazor" />
     <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
+    <ProjectReference Include="..\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
   </ItemGroup>
 

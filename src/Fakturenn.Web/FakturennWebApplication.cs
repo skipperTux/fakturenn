@@ -81,6 +81,8 @@ public static class FakturennWebApplication
                 TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
                 errorCodesToAdd: null)));
 
+        builder.AddFakturennIdentity(connectionString, databaseOptions);
+
         WebApplication app = builder.Build();
 
         app.UseSerilogRequestLogging();
