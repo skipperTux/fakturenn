@@ -1760,7 +1760,16 @@ public static class IdentityConfiguration
         builder.Services.AddIdentityCore<ApplicationUser>(options =>
             {
                 options.User.RequireUniqueEmail = true;
-                options.Password.RequiredLength = 12;
+                // NIST SP 800-63B: length is the control, composition rules are not.
+                // Every one of these four defaults to TRUE in Identity, so leaving
+                // them alone would ship composition rules that contradict the policy.
+                // The unit test below asserts all four, because a setting that
+                // defaults back on is invisible in a diff.
+                options.Password.RequiredLength = 15;
+                options.Password.RequireDigit = false;
+                options.Password.RequireLowercase = false;
+                options.Password.RequireUppercase = false;
+                options.Password.RequireNonAlphanumeric = false;
 
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
                 options.Lockout.MaxFailedAccessAttempts = 5;
@@ -1953,6 +1962,30 @@ public static class ForwardedHeaderTrust
 `app.UseForwardedHeaders();` must run **before** `app.UseAuthentication();` — the authentication cookie's `Secure` decision and the rate limiter both depend on the corrected scheme and address.
 
 Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
+
+- [ ] **Step 2c: Pin the password policy with a test**
+
+Composition rules default to `true` in Identity. A future refactor that drops one of the four `false` assignments reintroduces them silently, and nothing about the running application makes that visible. Assert the resolved options rather than the source:
+
+```csharp
+    [Fact]
+    public void The_password_policy_follows_NIST_length_over_composition()
+    {
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+        IdentityOptions options = app.Services.GetRequiredService<IOptions<IdentityOptions>>().Value;
+
+        options.Password.RequiredLength.Should().BeGreaterThanOrEqualTo(15);
+
+        // NIST SP 800-63B: composition rules produce predictable substitutions rather
+        // than entropy. All four of these default to true in ASP.NET Core Identity.
+        options.Password.RequireDigit.Should().BeFalse();
+        options.Password.RequireLowercase.Should().BeFalse();
+        options.Password.RequireUppercase.Should().BeFalse();
+        options.Password.RequireNonAlphanumeric.Should().BeFalse();
+    }
+```
+
+This belongs in `tests/Fakturenn.UiTests` alongside the other tests that build the real host, or in a small host-configuration test class — wherever it can resolve `IOptions<IdentityOptions>` from the real composition rather than a hand-built one. Testing a hand-built options object would assert only that the test sets what the test sets.
 
 The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
 

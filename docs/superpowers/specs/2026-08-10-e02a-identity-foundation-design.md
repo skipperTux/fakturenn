@@ -71,7 +71,7 @@ Identity comes first because `SPIKE-009` is open and its exit criterion — "aut
 | Data Protection key ring | Persisted to PostgreSQL via EF Core | Sticky sessions give a Blazor circuit affinity but do not share keys, so a cookie encrypted by one replica cannot be read by another. `DEPLOYMENT-BASELINE.md` commits to stateless replicas and Kubernetes. Justified independently of any encryption decision. |
 | Key ring ownership | New `Fakturenn.Infrastructure.DataProtection` project | `MODULE-OWNERSHIP.md` does not assign key material to the Identity module, and key rings are not domain data. No exceptions to the module map. |
 | Audit provenance | `IAuditable` filled by an EF Core interceptor | Added after this spec was first approved, at the project owner's request. Placed before the entities so the columns land in the first migration rather than an `ALTER` later. |
-| Password policy | Minimum 12 characters, no composition rules | Current NIST guidance: length beats character-class rules, which mostly produce predictable substitutions. Identity's default of 6 is too short to ship. |
+| Password policy | Minimum 15 characters, composition rules explicitly **off**, no expiry | NIST SP 800-63B. Length is the control; composition rules mostly produce predictable substitutions. Every one of Identity's four composition defaults is `true`, so they must be turned off rather than left alone — see §8. |
 | Permission delivery | Derived at sign-in, carried as cookie claims | Avoids a database query per authorized request. The staleness this introduces is bounded by the security-stamp interval below — the two decisions only make sense together. |
 | Session revocation | Explicit stamp rotation, one-minute validation interval | Identity rotates the stamp on password and two-factor changes but **not** on lockout. The default thirty-minute interval would leave a locked user working for half an hour. |
 | Rate-limit partition | Username plus client IP | IP alone is useless behind a shared address and a self-DoS behind a proxy. Requires forwarded-header trust, which is why §9 configures it. |
@@ -337,6 +337,24 @@ Every `/setup` and `/account/*` page is static SSR posting a real form. The rest
 
 **"Remember this machine" is not offered.** Identity supports skipping the second factor on a trusted browser; E02a does not enable it. On a system holding invoicing records and signing identities, a persistent second-factor bypass cookie is not a trade we need to make for a login that happens a few times a day.
 
+### Password policy
+
+Per NIST SP 800-63B, which inverts most of what password UIs traditionally did:
+
+| Rule | Setting | Why |
+| --- | --- | --- |
+| Minimum length | **15 characters** | Length is the control that actually resists offline cracking. NIST requires at least 8 and recommends at least 15. |
+| Maximum length | at least 64 accepted | A short maximum forces weaker passwords and signals reversible storage. Identity imposes none; do not add one. |
+| Composition rules | **all off** | Digit, lowercase, uppercase and non-alphanumeric requirements produce predictable substitutions — `Password1!` — rather than entropy. |
+| Expiry | none | Periodic rotation drives incremental, guessable changes. Force a change on evidence of compromise, not on a calendar. |
+| Paste | permitted | Blocking paste defeats password managers, which are the single largest real improvement to password quality. |
+
+**This requires overriding Identity, not accepting it.** All four of `RequireDigit`, `RequireLowercase`, `RequireUppercase` and `RequireNonAlphanumeric` default to `true`. Leaving them alone ships composition rules that contradict the policy above, so each is explicitly set to `false` and a unit test asserts it — a defaulted-back-on setting is invisible in review.
+
+`MustChangePassword` is not periodic rotation and does not contradict the no-expiry rule. It fires on exactly the condition NIST endorses: somebody other than the user knows the current password, because an administrator or operator set it.
+
+**Compromised-password blocklists are deferred, deliberately.** NIST recommends checking candidates against known-breached lists. The two implementations are a bundled list, which is megabytes of data to ship and maintain in an offline-capable self-hosted product, or an online lookup, which adds a network dependency to sign-up on a product whose entire premise is your own infrastructure. Neither is free enough to include without a reason. A 15-character minimum with no composition rules already puts the common cases out of reach, and the deferral is recorded here rather than silently omitted.
+
 ### Lockout, sessions, and rate limiting
 
 Lockout: five failures, fifteen-minute window.
@@ -466,9 +484,11 @@ This is **not** the Audit module and does not pre-empt it: that owns `AuditEvent
 
 Log events never contain a password, a TOTP code, a recovery code, or an authenticator key.
 
-**One forward-looking allowance.** Log shipping is Ops' concern, and the container writes to standard output — a collector ships it. But a JSON console formatter must emit the message under a field named `_msg` for some log stores to render it, and that cannot be fixed outside the application. E02a therefore ships a formatter that emits `_msg`, as a stable public type, **not selected by default**: the human-readable console formatter stays the default, and an operator selects the JSON one through existing Serilog configuration.
+**One forward-looking allowance.** Log shipping is an operations concern: the container writes to standard output and a collector ships it. But some log stores take a line's headline text from a field named `_msg` — [VictoriaLogs](https://docs.victoriametrics.com/victorialogs/) is the one this project has been asked to stay compatible with — and a JSON formatter that writes the rendered message under any other name leaves every row in the UI reading as a missing-field placeholder while the real text sits one click away. That cannot be fixed outside the application.
 
-The cost is roughly thirty lines and one type name that must stay stable. The alternative is a code change and a release when Ops asks. This project ships **no** log-store configuration, no URL and no credential — only the ability to be pointed at one.
+E02a therefore ships a JSON console formatter that emits `_msg`, as a stable public type, **not selected by default**: the human-readable console formatter stays the default, and an operator selects the JSON one through existing Serilog configuration.
+
+The cost is roughly thirty lines and one type name that must stay stable, because configuration will name it. The alternative is a code change and a release the day operations asks. This project ships **no** log-store configuration, no URL and no credential — only the ability to be pointed at one, which keeps the coupling at the level of a field name rather than a dependency.
 
 ## 10. Operator entrypoints
 
