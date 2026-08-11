@@ -32,6 +32,21 @@ public sealed class PermissionPolicyProviderTests
     }
 
     [Fact]
+    public async Task A_name_that_is_not_a_permission_is_resolved_by_the_fallback_provider()
+    {
+        // Distinguishes "delegates to the fallback" from "returns null". With an empty
+        // AuthorizationOptions both look identical, which is why the existing test
+        // passes even against a hardcoded null.
+        var options = new AuthorizationOptions();
+        options.AddPolicy("legacy.policy", policy => policy.RequireAssertion(_ => true));
+
+        AuthorizationPolicy? policy =
+            await new PermissionPolicyProvider(Options.Create(options)).GetPolicyAsync("legacy.policy");
+
+        policy.Should().NotBeNull("a name that is not a permission must still reach the fallback provider");
+    }
+
+    [Fact]
     public void Every_declared_constant_is_present_in_the_catalogue()
     {
         // Two permissions, both with a named enforcement site. roles.read and

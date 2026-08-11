@@ -40,6 +40,20 @@ public sealed class PermissionAuthorizationHandlerTests
     }
 
     [Fact]
+    public async Task A_permission_claim_differing_only_in_case_does_not_satisfy_the_requirement()
+    {
+        // Permission strings come from the database. Case-insensitive matching would let
+        // a row reading "Users.Manage" grant access, while the permission catalogue
+        // validator would separately reject it as an unknown permission -- two mechanisms
+        // disagreeing about the same string.
+        AuthorizationHandlerContext context = ContextFor(Permissions.UsersManage, "Users.Manage");
+
+        await new PermissionAuthorizationHandler().HandleAsync(context);
+
+        context.HasSucceeded.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task An_unauthenticated_principal_does_not_succeed()
     {
         var context = new AuthorizationHandlerContext(
