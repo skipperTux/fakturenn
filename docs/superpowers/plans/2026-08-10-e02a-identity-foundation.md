@@ -1889,6 +1889,22 @@ public static class ForwardedHeaderTrust
 
         bool configured = !string.IsNullOrWhiteSpace(proxyList) || !string.IsNullOrWhiteSpace(networkList);
 
+        // ASPNETCORE_FORWARDEDHEADERS_ENABLED clears both trust lists and enables
+        // XForwardedFor|XForwardedProto, which honours forwarded headers from ANY
+        // source. It is widely suggested for cloud environments where proxy addresses
+        // rotate, so an operator may set it without realising it overrides everything
+        // configured here. Warn loudly rather than let it pass silently.
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("ASPNETCORE_FORWARDEDHEADERS_ENABLED"),
+                "true",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning(
+                "ASPNETCORE_FORWARDEDHEADERS_ENABLED is set. It clears the forwarded-header trust "
+                + "lists and accepts X-Forwarded-* from any source, overriding Network:KnownProxies "
+                + "and Network:KnownNetworks. Unset it and configure trust explicitly.");
+        }
+
         // Parse eagerly rather than inside the Configure callback: a trust list that
         // binds but whose entries are all unparseable must fail at startup, not have
         // the middleware silently fall back to loopback and drop every forwarded
@@ -1911,6 +1927,20 @@ public static class ForwardedHeaderTrust
             logger.LogWarning(
                 "ForwardedHeaders: no trust configured, X-Forwarded-* headers are ignored");
             return;
+        }
+
+        // Clearing BOTH lists is documented as the way to disable trust validation
+        // entirely and honour forwarded headers from any source -- see the ASP.NET
+        // Core 8.0.17 / 9.0.6 breaking change "Forwarded headers middleware ignores
+        // X-Forwarded-* headers from unknown proxies". This code must therefore never
+        // clear and leave empty. The guard above returns before reaching here when
+        // nothing parsed, so by this point at least one entry exists; assert it rather
+        // than rely on a reader tracing the control flow.
+        if (proxies.Count == 0 && networks.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Refusing to clear the forwarded-header trust lists with nothing to replace them: "
+                + "empty lists disable trust validation and honour headers from any source.");
         }
 
         builder.Services.Configure<ForwardedHeadersOptions>(options =>

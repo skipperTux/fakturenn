@@ -516,6 +516,17 @@ Three states, and they are not the same:
 | Set and parseable | Trust exactly those entries. The middleware's loopback defaults are **cleared** first, so the trust list is what the operator asked for and nothing more |
 | Set but nothing parses | **Startup fails.** Otherwise the middleware silently falls back to loopback-only and drops every forwarded header at request time — a typo would become an unexplained redirect-to-`http` months later |
 
+### Two ways to accidentally disable this
+
+ASP.NET Core 8.0.17 and 9.0.6 hardened the middleware so `X-Forwarded-*` from an untrusted source is ignored; previously `X-Forwarded-Proto`, `-Host` and `-Prefix` were honoured from *any* source when `X-Forwarded-For` was not configured. This project runs 10.0.10 and therefore has the hardened behaviour.
+
+The same change documents two ways back to the old, unsafe behaviour, and both are reachable by accident:
+
+- **Clearing both trust lists.** Empty `KnownProxies` *and* empty `KnownNetworks` means headers are honoured from any source. The implementation clears both before repopulating them, so it throws if it would ever leave them empty rather than relying on control flow to have prevented it.
+- **`ASPNETCORE_FORWARDEDHEADERS_ENABLED=true`.** This clears both lists and enables `XForwardedFor | XForwardedProto`. It is widely recommended for cloud environments where proxy addresses rotate, so an operator may set it without realising it overrides everything configured here. The application logs a warning at startup when it is set.
+
+The failure this hardening causes when trust is *missing* is worth recognising, because it does not look like a header problem: **infinite redirects** from HTTPS redirection middleware behind TLS termination, or **authentication failing** because the request appears to be plain HTTP. An operator seeing either should check the trust list before anything else.
+
 The resolved trust list is logged at startup as **values, not counts**. A count of one looks identical whether the operator chose that entry or inherited it.
 
 **Both header forms are supported, because ASP.NET Core only supports one.** Verified against `Microsoft.AspNetCore.HttpOverrides` 10.0.10: the framework handles `X-Forwarded-For`, `-Proto`, `-Host` and `-Prefix` only. RFC 7239's standardised `Forwarded` header — `for=192.0.2.60;proto=http;host=example.test` — has no support at all; the configurable header-name options rename the header but still expect X-Forwarded-For's value format.
