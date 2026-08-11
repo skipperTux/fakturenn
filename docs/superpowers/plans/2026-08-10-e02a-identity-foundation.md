@@ -44,14 +44,12 @@ Already reworked into the tasks below:
 | Outstanding | From | Where it belongs |
 | --- | --- | --- |
 | Forced password-change page and flow | S7 | New task after Task 11 |
-| `/setup` unique index plus caught violation, replacing the count-then-insert race | S6 | Task 9 |
-| `RoleSeeder.SeedAsync` called from the `--migrate` path in `Program.cs` | C1 | Task 7 |
-| `users.read` on the user list, `users.manage` on mutations | C2 | Task 13 |
+
+
 | English and German `.resx` entries for every page this epic adds | C4 | New task before Task 16 |
 | HSTS, Content Security Policy, and the Playwright test that fails if the policy blocks the app's own assets | C5 | Task 7 and Task 15 |
 | Structured authentication event logging, plus the `_msg`-emitting JSON formatter shipped but not selected | C7 | New task |
 | Playwright: a permitted user reaches an authorized page; a locked user's existing session stops working | S1, S2 | Task 15 |
-| Enrolment reuses the existing authenticator key rather than resetting it | M3 | Task 10 |
 
 The last two Playwright tests matter most. The first is the only check that would have caught S2 — Task 3's unit tests construct a principal with the claims already present and pass either way. The second is what makes "lock" mean something.
 
@@ -2221,6 +2219,32 @@ In `Program.cs`, replace the single-factory array:
     ];
 ```
 
+- [ ] **Step 4a: Seed the Administrator role from the `--migrate` path**
+
+Immediately after `DatabaseMigrator.RunAsync` returns, and only when it succeeded:
+
+```csharp
+    // Seeding runs here, not at application startup. Startup seeding races on the
+    // unique role-name index when more than one replica starts together, and
+    // --migrate already runs exactly once by design.
+    //
+    // RoleSeeder.SeedAsync is a re-sync, not create-if-absent: an installation
+    // upgraded to a version that defines a new permission constant gains the grant.
+    // The catalogue validator catches stored permissions the code does not define;
+    // nothing else would catch permissions the code defines and the database lacks.
+    if (exitCode == 0)
+    {
+        await using AsyncServiceScope seedScope = app.Services.CreateAsyncScope();
+        IdentityDbContext seedContext =
+            seedScope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        await RoleSeeder.SeedAsync(seedContext, CancellationToken.None);
+        migrationLogger.LogInformation("Seeded system roles.");
+    }
+```
+
+Verify against a real database: run `--migrate` twice and confirm the `Administrator` role exists exactly once afterwards, holding every permission in `Permissions.All`. Then delete one `RolePermission` row by SQL, run `--migrate` again, and confirm the grant returns — that is the re-sync behaviour, and a create-if-absent implementation would leave the row missing.
+
 - [ ] **Step 5: Verify against a real database**
 
 ```bash
@@ -2741,6 +2765,12 @@ public static class AccountEndpoints
         {
             // Re-checked server-side. The page's own guard is a redirect for humans;
             // this is the one that actually closes the endpoint.
+            //
+            // The check is necessary but NOT sufficient: it and the insert are not
+            // atomic, so two concurrent posts -- or a replica racing a --create-admin
+            // Job -- can both pass it. Identity's unique index on NormalizedUserName
+            // is what actually serialises this, and the catch below is what turns the
+            // loser of the race into a clean "already configured" rather than a 500.
             if (await db.Users.AnyAsync(cancellationToken))
             {
                 return Results.NotFound();
@@ -2761,9 +2791,29 @@ public static class AccountEndpoints
                 MustEnrolTotp = true,
             };
 
-            IdentityResult created = await users.CreateAsync(user, password);
+            IdentityResult created;
+            try
+            {
+                created = await users.CreateAsync(user, password);
+            }
+            catch (DbUpdateException)
+            {
+                // Lost the race: another request created the first user between our
+                // count check and this insert, and the unique index rejected ours.
+                // Same answer as a late visitor gets.
+                return Results.Redirect("/account/login");
+            }
+
             if (!created.Succeeded)
             {
+                // Identity itself reports a duplicate user name as a validation
+                // failure rather than an exception, so the race can surface either way
+                // depending on how the store is configured.
+                if (created.Errors.Any(error => error.Code == nameof(IdentityErrorDescriber.DuplicateUserName)))
+                {
+                    return Results.Redirect("/account/login");
+                }
+
                 string message = string.Join(" ", created.Errors.Select(e => e.Description));
                 return Results.Redirect($"/setup?error={Uri.EscapeDataString(message)}");
             }
@@ -2975,6 +3025,13 @@ Add `using Microsoft.AspNetCore.DataProtection;`.
         HttpContext http = HttpContextAccessor.HttpContext!;
         ApplicationUser user = (await Users.GetUserAsync(http.User))!;
 
+        // Reuse an existing key rather than resetting on every visit. A user who
+        // verified a code but left before acknowledging their recovery codes still
+        // has MustEnrolTotp set and comes back here; resetting would silently kill
+        // the entry they already added to their authenticator app, and the next code
+        // they read from it would be rejected with no explanation.
+        //
+        // The key is reset only by --reset-mfa or an administrator's clear-TOTP.
         string? key = await Users.GetAuthenticatorKeyAsync(user);
         if (string.IsNullOrEmpty(key))
         {
@@ -3571,7 +3628,10 @@ Add `using Fakturenn.Modules.Identity.Authorization;`.
 @using Fakturenn.Modules.Identity.Domain
 @using Fakturenn.Modules.Identity.Persistence
 @using Microsoft.EntityFrameworkCore
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersManage)]
+@* Reading the list needs users.read; every mutation below posts to an endpoint
+   gated on users.manage. Two permissions, two enforcement sites -- which is why
+   users.read survived the spec review's cull and roles.read did not. *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersRead)]
 @inject IdentityDbContext Db
 
 <PageTitle>Fakturenn — Users</PageTitle>
