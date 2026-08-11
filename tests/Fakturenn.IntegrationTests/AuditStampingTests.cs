@@ -61,14 +61,18 @@ public sealed class AuditStampingTests(PostgresFixture postgres) : IClassFixture
         Role tracked = await modified.Roles.SingleAsync(r => r.Id == role.Id, TestContext.Current.CancellationToken);
         tracked.Description = "changed";
         // Creation provenance is a fact about the past; the interceptor must refuse
-        // this even when something in the graph tries to overwrite it.
+        // this even when something in the graph tries to overwrite it. Both halves
+        // are tampered with, because each is guarded by its own line in the
+        // interceptor and each line has to be independently load-bearing.
         tracked.CreatedBy = "tampered";
+        tracked.CreatedAt = DateTimeOffset.UnixEpoch;
         await modified.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         Role stored = await modified.Roles.AsNoTracking()
             .SingleAsync(r => r.Id == role.Id, TestContext.Current.CancellationToken);
 
         stored.CreatedBy.Should().Be("first@example.test");
+        stored.CreatedAt.Should().Be(_now);
         stored.ModifiedBy.Should().Be("second@example.test");
     }
 

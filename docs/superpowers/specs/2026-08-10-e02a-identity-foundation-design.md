@@ -164,10 +164,20 @@ AspNetUserTokens     stock; holds the authenticator key and the recovery codes,
                      Value encrypted at rest (§9)
 AspNetUserClaims     stock, unused — permissions are derived, never stored per user (§6)
 AspNetUserLogins     stock, unused until OIDC
-Role                 Id, Name, Description, IsSystemRole, + IAuditable
-RolePermission       RoleId, Permission, + IAuditable
-UserRole             UserId, RoleId, + IAuditable
+Roles                Id, Name, Description, IsSystemRole, + IAuditable
+                     PK Id; unique index on Name
+RolePermissions      RoleId, Permission, + IAuditable
+                     PK {RoleId, Permission}; FK RoleId -> Roles.Id, ON DELETE CASCADE
+UserRoles            UserId, RoleId, + IAuditable
+                     PK {UserId, RoleId}; FK RoleId -> Roles.Id and
+                     FK UserId -> AspNetUsers.Id, both ON DELETE CASCADE
 ```
+
+Entity names are singular (`Role`, `RolePermission`, `UserRole`); table names are plural because EF Core takes them from the `DbSet` property, and we follow the framework's naming rather than overriding it with `ToTable`. Below, a plural name means the table and a singular name means the C# entity.
+
+The cascades mean a deleted role takes its permission grants and its role assignments with it, and a deleted user takes its assignments with it. No navigation properties back the foreign keys — the entities stay POCOs and nothing traverses these relationships; the constraint is the point.
+
+`RolePermissions`' composite primary key is load-bearing: collapsing it to `RoleId` alone would cap a role at exactly one permission.
 
 Every table Fakturenn defines carries `CreatedAt`, `CreatedBy`, `ModifiedAt` and `ModifiedBy` per §7. `AspNetUsers` does too, because we extend that entity; the stock tables we do not define are left alone.
 
@@ -175,7 +185,7 @@ Every table Fakturenn defines carries `CreatedAt`, `CreatedBy`, `ModifiedAt` and
 
 `AspNetRoles` and `AspNetUserRoles` are deliberately not used.
 
-`UserRole` gains an `OrganizationId` in E02b. It is a separate table now specifically so that migration is an added column rather than a swap of role systems.
+`UserRole` gains an `OrganizationId` in E02b. It is a table of our own now specifically so that migration is an added column rather than a swap of role systems.
 
 Schema `dataprotection`:
 

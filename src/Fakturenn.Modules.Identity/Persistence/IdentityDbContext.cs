@@ -50,19 +50,43 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
         builder.Entity<RolePermission>(rolePermission =>
         {
+            // Composite: a role holds many grants, one row per permission. Collapsing
+            // this to RoleId alone would cap a role at a single permission.
             rolePermission.HasKey(rp => new { rp.RoleId, rp.Permission });
             rolePermission.Property(rp => rp.Permission).HasMaxLength(128).IsRequired();
+
+            // No navigation properties: the entities stay POCOs, and nothing in the
+            // module traverses these relationships. The constraint is what we are
+            // after — a deleted role must not leave its grants behind.
+            rolePermission.HasOne<Role>()
+                .WithMany()
+                .HasForeignKey(rp => rp.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<UserRole>(userRole =>
         {
             userRole.HasKey(ur => new { ur.UserId, ur.RoleId });
+
+            userRole.HasOne<Role>()
+                .WithMany()
+                .HasForeignKey(ur => ur.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            userRole.HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(ur => ur.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // One place configures the audit columns for every auditable entity, so a
         // later entity cannot arrive with a different column width by accident.
-        foreach (IMutableEntityType entityType in builder.Model.GetEntityTypes()
-                     .Where(type => typeof(IAuditable).IsAssignableFrom(type.ClrType)))
+        // Materialised first: builder.Entity(...) mutates the model that
+        // GetEntityTypes() enumerates.
+        List<IMutableEntityType> auditableEntityTypes = [.. builder.Model.GetEntityTypes()
+            .Where(type => typeof(IAuditable).IsAssignableFrom(type.ClrType))];
+
+        foreach (IMutableEntityType entityType in auditableEntityTypes)
         {
             builder.Entity(entityType.ClrType, entity =>
             {
