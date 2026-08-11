@@ -377,6 +377,18 @@ Measured against the counterexamples above and some realistic passwords:
 
 **This also closes the blocklist gap.** NIST recommends checking candidates against known-breached lists; zxcvbn's embedded dictionaries are that check, at a cost of roughly 4 MB in a 163 MB image. An earlier draft of this spec deferred the blocklist while keeping NIST's permissiveness, which was incoherent: the two are a package, and dropping one made the other unsafe.
 
+### The known weakness, and what is done about it
+
+**zxcvbn's dictionaries are English-centric.** Measured on a German-language product this matters: `Rechnung2026!` scores 10¹³ and `Fakturenn2026!` 10¹⁴, both comfortably accepted, because German business vocabulary looks like random letters to it. A German user picking an obvious German password gets less protection than an English one.
+
+Two things are done about it, and one is not:
+
+- **User inputs are fed to the estimator** — the product name, the user's email, user name and display name are passed as extra dictionary entries, so passwords derived from them are penalised. This is the cheap part and it is implemented.
+- **The threshold is configurable**, so a deployment can raise it above the default.
+- **A German dictionary is not added.** It would mean sourcing, licensing and shipping a word list, and the same argument would then apply to every other language this product is translated into. Recorded as a limitation rather than solved.
+
+The alternative library considered, `Easy.Password.Validator` (MIT, 443 KB), was rejected on measurement rather than on principle: it scores structure and patterns without dictionaries, and it **accepts `Passwort1234`** — German for "password1234" — at any threshold that still admits reasonable passwords. That is the same failure mode as every structural rule above, one level up.
+
 **Identity's defaults must be overridden, not accepted.** All four of `RequireDigit`, `RequireLowercase`, `RequireUppercase` and `RequireNonAlphanumeric` default to `true`. A test asserts all four are off and that the guess-count validator is registered, resolved from the real host composition — a setting that defaults back on is invisible in a diff.
 
 `MustChangePassword` is not periodic rotation. It fires on the condition NIST endorses: somebody other than the user knows the current password, because an administrator or operator set it.

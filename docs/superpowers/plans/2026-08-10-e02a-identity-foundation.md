@@ -2012,7 +2012,23 @@ public sealed class PasswordStrengthValidator(double minimumGuesses)
             return Task.FromResult(IdentityResult.Success);
         }
 
-        double guesses = Zxcvbn.Core.EvaluatePassword(password).Guesses;
+        // zxcvbn's dictionaries are English-centric, so German business vocabulary
+        // looks like random letters to it: measured, "Rechnung2026!" scores 1e13 and
+        // "Fakturenn2026!" 1e14, both comfortably above the floor. Feeding the
+        // product name and the user's own identifiers in as dictionary entries is
+        // what penalises passwords derived from them. It does not make the estimator
+        // German-aware in general -- that limitation is recorded in the spec.
+        string[] userInputs =
+        [
+            "fakturenn",
+            user.Email ?? string.Empty,
+            user.UserName ?? string.Empty,
+            user.DisplayName,
+        ];
+
+        double guesses = Zxcvbn.Core.EvaluatePassword(
+            password,
+            userInputs.Where(input => !string.IsNullOrWhiteSpace(input)).ToArray()).Guesses;
 
         if (guesses >= minimumGuesses)
         {
@@ -2080,14 +2096,43 @@ The second pins the behaviour against the passwords that defeated each earlier r
         string password, bool expectedAccepted)
     {
         var validator = new PasswordStrengthValidator(minimumGuesses: 1e10);
+        var user = new ApplicationUser
+        {
+            Email = "someone@example.test",
+            UserName = "someone@example.test",
+            DisplayName = "Someone",
+        };
 
-        IdentityResult result = await validator.ValidateAsync(userManager: null!, user: null!, password);
+        IdentityResult result = await validator.ValidateAsync(userManager: null!, user, password);
 
         result.Succeeded.Should().Be(expectedAccepted);
     }
+
+    [Theory]
+    [InlineData("Fakturenn2026!")]           // the product name
+    [InlineData("someone@example.test1")]    // the user's own email
+    [InlineData("SomeoneSomeone2026")]       // the user's display name, doubled
+    public async Task A_password_derived_from_the_product_or_the_user_is_rejected(string password)
+    {
+        // Without user inputs these score 1e13 and above, because zxcvbn's
+        // dictionaries are English-centric and know nothing about this product or
+        // this person. Feeding them in is what makes these guessable-in-context
+        // passwords score as guessable.
+        var validator = new PasswordStrengthValidator(minimumGuesses: 1e10);
+        var user = new ApplicationUser
+        {
+            Email = "someone@example.test",
+            UserName = "someone@example.test",
+            DisplayName = "Someone",
+        };
+
+        IdentityResult result = await validator.ValidateAsync(userManager: null!, user, password);
+
+        result.Succeeded.Should().BeFalse();
+    }
 ```
 
-`ValidateAsync` ignores its manager and user arguments, so passing null is safe here and keeps the test free of an Identity fixture. If a future change starts using them, this test fails loudly rather than silently passing null into live code.
+`ValidateAsync` ignores its `UserManager` argument, so passing null there keeps the test free of an Identity fixture — but the `user` argument is now read, so it must be a real instance. **Verify the second theory's expectations against the library before committing them**: user inputs demonstrably lower the score, but whether each of these three lands below 10¹⁰ was not measured, unlike the first theory's values which were. If one passes, either adjust the case or say so — do not adjust the threshold to make a test green.
 
 The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
 
