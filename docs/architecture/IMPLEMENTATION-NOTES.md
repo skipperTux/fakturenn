@@ -250,6 +250,25 @@ mechanisms, on purpose:
   first database-backed page needs to either add a schema-version check to
   readiness, or make migrate-before-traffic a hard documented operational
   requirement.
+- `dotnet ef migrations remove` needs `--force` in this repository. Without it
+  the command opens the design-time connection to check whether the migration
+  has already been applied, and the design-time string points at
+  `localhost:5432`, where nothing is listening. The failure looks like a
+  database problem; it is not. Regenerating a migration is
+  `remove --force` followed by `add`.
+- Regenerated migration files come back with a UTF-8 BOM every time.
+  `dotnet format` strips it from the migration itself but **not** from the
+  `.Designer.cs` or the model snapshot, because it skips files marked
+  auto-generated. Those two need stripping by hand after every regenerate, or
+  the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
+  `head -c3 <file> | od -An -tx1` — `ef bb bf` means the BOM is still there.
+- A change to keys, schema name or column facets is caught only by EF's
+  `PendingModelChangesWarning`, which fails *every* test in the suite on the
+  migration guard rather than the one test that cares. That makes it useless
+  as a mutation signal: regenerating the migration silences it, which is
+  exactly what a careless change would do. When proving such a guard is
+  load-bearing, regenerate against the mutated model first, then observe which
+  test actually fails. Task 4 did this for `RolePermission`'s composite key.
 
 ## Containerisation
 
