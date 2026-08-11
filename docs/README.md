@@ -16,7 +16,11 @@ This directory is the implementation baseline for Fakturenn v0.1.
 10. `operations/DEPLOYMENT-BASELINE.md`
 11. `operations/RELEASE-CHECKLIST-v0.1.md`
 12. `architecture/IMPLEMENTATION-NOTES.md`
-13. `superpowers/specs/` and `superpowers/plans/`
+13. `superpowers/specs/`, `superpowers/reviews/` and `superpowers/plans/`
+
+Every epic spec receives a review (`superpowers/reviews/`) before it is
+turned into an implementation plan — see `superpowers/reviews/README.md`
+for the gate.
 
 ## Project status
 
