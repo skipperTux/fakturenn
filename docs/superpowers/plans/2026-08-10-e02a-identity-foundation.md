@@ -26,6 +26,35 @@
 - No secrets in the repository. No password may ever be passed as a command-line argument.
 - Design principles: TDD where a test can meaningfully come first; SOLID, KISS, YAGNI.
 
+## Status: partially revised against the 2026-08-11 spec review
+
+The spec was revised against `docs/superpowers/reviews/2026-08-11-e02a-identity-foundation-spec-review.md` — 19 findings, all dispositioned. **The spec is authoritative; this plan is catching up.** Where they disagree, the spec wins.
+
+Already reworked into the tasks below:
+
+- The claims factory (Task 8) — the review's S2, which was a defect rather than a documentation gap: the permission handler read claims nothing wrote, so every authorized endpoint would have returned 403.
+- `roles.read` / `roles.manage` removed from `Permissions` (Task 3).
+- `MustChangePassword` on `ApplicationUser` (Task 4), so it lands in the first migration.
+- Security-stamp rotation with a one-minute validation interval, the username-plus-IP rate-limit partition, and forwarded-header trust (Task 7).
+- `--unlock-user` (Task 14).
+- Seeding moved to `--migrate` and made a re-sync (Task 8).
+
+**Still to be written into tasks before implementation starts:**
+
+| Outstanding | From | Where it belongs |
+| --- | --- | --- |
+| Forced password-change page and flow | S7 | New task after Task 11 |
+| `/setup` unique index plus caught violation, replacing the count-then-insert race | S6 | Task 9 |
+| `RoleSeeder.SeedAsync` called from the `--migrate` path in `Program.cs` | C1 | Task 7 |
+| `users.read` on the user list, `users.manage` on mutations | C2 | Task 13 |
+| English and German `.resx` entries for every page this epic adds | C4 | New task before Task 16 |
+| HSTS, Content Security Policy, and the Playwright test that fails if the policy blocks the app's own assets | C5 | Task 7 and Task 15 |
+| Structured authentication event logging, plus the `_msg`-emitting JSON formatter shipped but not selected | C7 | New task |
+| Playwright: a permitted user reaches an authorized page; a locked user's existing session stops working | S1, S2 | Task 15 |
+| Enrolment reuses the existing authenticator key rather than resetting it | M3 | Task 10 |
+
+The last two Playwright tests matter most. The first is the only check that would have caught S2 — Task 3's unit tests construct a principal with the claims already present and pass either way. The second is what makes "lock" mean something.
+
 ## Baseline before this plan starts
 
 `main` at the harness completion: unit 26, architecture 14, integration 6, compliance 10, UI 4. Build clean, `dotnet format` clean, CI green on GitHub.
@@ -693,12 +722,14 @@ public sealed class PermissionPolicyProviderTests
     [Fact]
     public void Every_declared_constant_is_present_in_the_catalogue()
     {
+        // Two permissions, both with a named enforcement site. roles.read and
+        // roles.manage were removed by the spec review: a permission constant with
+        // nothing enforcing it is speculative surface, and E02b adds them together
+        // with the role-management UI that will enforce them.
         Permissions.All.Should().BeEquivalentTo(
         [
             Permissions.UsersRead,
             Permissions.UsersManage,
-            Permissions.RolesRead,
-            Permissions.RolesManage,
         ]);
     }
 }
@@ -784,18 +815,17 @@ namespace Fakturenn.Modules.Identity.Authorization;
 public static class Permissions
 {
     // public const Fields
+    /// <summary>Enforced on the user list at <c>GET /admin/users</c>.</summary>
     public const string UsersRead = "users.read";
+
+    /// <summary>Enforced on every mutating administrative endpoint.</summary>
     public const string UsersManage = "users.manage";
-    public const string RolesRead = "roles.read";
-    public const string RolesManage = "roles.manage";
 
     // public static readonly Fields
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         UsersRead,
         UsersManage,
-        RolesRead,
-        RolesManage,
     };
 }
 
@@ -957,6 +987,14 @@ public sealed class ApplicationUser : IdentityUser<Guid>, IAuditable
     /// page — see <c>EnrolmentGateMiddleware</c>.
     /// </summary>
     public bool MustEnrolTotp { get; set; }
+
+    /// <summary>
+    /// Set when somebody other than the user chose the current password: an
+    /// administrator creating the account, or an operator running
+    /// <c>--reset-password</c>. Forces a change at next sign-in so the credential
+    /// stops being shared the moment it is first used.
+    /// </summary>
+    public bool MustChangePassword { get; set; }
 
     // IAuditable, filled by AuditSaveChangesInterceptor
     public DateTimeOffset CreatedAt { get; set; }
@@ -1732,10 +1770,20 @@ public static class IdentityConfiguration
             })
             .AddEntityFrameworkStores<IdentityDbContext>()
             .AddDefaultTokenProviders()
-            .AddSignInManager();
+            .AddSignInManager()
+            // Without this the permission handler reads a claim nothing writes, and
+            // every authorized endpoint returns 403. See Task 8.
+            .AddClaimsPrincipalFactory<PermissionClaimsPrincipalFactory>();
 
         builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
             .AddIdentityCookies();
+
+        // Identity rotates the security stamp on password and two-factor changes but
+        // NOT on lockout, and the default validation interval is thirty minutes. A
+        // locked user would keep a working session for half an hour. One minute also
+        // bounds how stale a cookie's cached permission claims can be.
+        builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+            options.ValidationInterval = TimeSpan.FromMinutes(1));
 
         builder.Services.ConfigureApplicationCookie(options =>
         {
@@ -1754,14 +1802,36 @@ public static class IdentityConfiguration
 
         // Lockout alone would make the login endpoint a user-enumeration oracle:
         // a locked account answers differently from an unknown one under load.
+        //
+        // Partitioned on username PLUS client IP. IP alone is useless behind a shared
+        // address and a self-DoS behind a proxy; username alone lets one attacker
+        // spray many accounts freely. The client IP is only meaningful because
+        // forwarded-header trust is configured -- see AddForwardedHeaderTrust.
+        //
+        // Accepted trade-off: this limiter is in-memory per replica, so with N
+        // replicas the effective limit is N x PermitLimit. Solving that needs shared
+        // state this project does not otherwise require. Lockout is a database column
+        // and therefore the durable control; the limiter blunts enumeration.
         builder.Services.AddRateLimiter(options =>
         {
-            options.AddFixedWindowLimiter("account", limiter =>
+            options.AddPolicy("account", context =>
             {
-                limiter.PermitLimit = 10;
-                limiter.Window = TimeSpan.FromMinutes(1);
-                limiter.QueueLimit = 0;
+                string user = context.Request.HasFormContentType
+                    ? context.Request.Form["email"].ToString().Trim().ToLowerInvariant()
+                    : string.Empty;
+                string address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    $"{user}|{address}",
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 10,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                    });
             });
+
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         });
     }
 }
@@ -1769,7 +1839,120 @@ public static class IdentityConfiguration
 
 `SecurePolicy` is `SameAsRequest` rather than `Always` because the reference Compose deployment serves plain HTTP on localhost; forcing `Always` would silently drop the cookie and make sign-in fail with no error. TLS termination is a deployment concern documented in `DEPLOYMENT-BASELINE.md`.
 
-Add `using Fakturenn.Infrastructure.Persistence;` and `using Fakturenn.SharedKernel;`.
+Add `using Fakturenn.Infrastructure.Persistence;`, `using Fakturenn.SharedKernel;`, `using System.Threading.RateLimiting;` and `using Microsoft.AspNetCore.RateLimiting;`.
+
+- [ ] **Step 2b: Forwarded-header trust**
+
+The rate limiter above partitions on client IP. Behind a reverse proxy every request carries the proxy's address unless forwarded headers are trusted, which collapses every client into one partition. This is not optional decoration.
+
+`src/Fakturenn.Web/ForwardedHeaderTrust.cs`:
+
+```csharp
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
+
+namespace Fakturenn.Web;
+
+/// <summary>
+/// Configures which proxies may set <c>X-Forwarded-*</c>.
+/// <para>
+/// Trust is expressed as delimiter-separated strings rather than configuration
+/// arrays, because .NET binds arrays by index: an environment variable can overwrite
+/// individual elements of a list from appsettings.json but cannot replace the list.
+/// An operator who wants exactly two trusted proxies and nothing inherited cannot say
+/// so with an array. One string in one variable can be replaced wholesale.
+/// </para>
+/// </summary>
+public static class ForwardedHeaderTrust
+{
+    private static readonly char[] _separators = [',', ';'];
+
+    public static void AddForwardedHeaderTrust(this WebApplicationBuilder builder, ILogger logger)
+    {
+        string? proxyList = builder.Configuration["Network:KnownProxies"];
+        string? networkList = builder.Configuration["Network:KnownNetworks"];
+        int forwardLimit = builder.Configuration.GetValue("Network:ForwardLimit", 1);
+
+        bool configured = !string.IsNullOrWhiteSpace(proxyList) || !string.IsNullOrWhiteSpace(networkList);
+
+        // Parse eagerly rather than inside the Configure callback: a trust list that
+        // binds but whose entries are all unparseable must fail at startup, not have
+        // the middleware silently fall back to loopback and drop every forwarded
+        // header at request time. A typo would otherwise surface months later as an
+        // unexplained http:// redirect.
+        List<IPAddress> proxies = Parse(proxyList, IPAddress.TryParse, "KnownProxy", logger);
+        List<IPNetwork> networks = Parse(networkList, IPNetwork.TryParse, "KnownNetwork", logger);
+
+        if (proxies.Count == 0 && networks.Count == 0)
+        {
+            if (configured)
+            {
+                throw new InvalidDataException(
+                    "Network:KnownProxies/KnownNetworks were set but no entry could be parsed.");
+            }
+
+            // Not set is a decision, not an error: no reverse proxy in front. X-Forwarded-*
+            // stay ignored, which is the safe direction -- the application trusts only what
+            // it observes itself.
+            logger.LogWarning(
+                "ForwardedHeaders: no trust configured, X-Forwarded-* headers are ignored");
+            return;
+        }
+
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            options.ForwardLimit = forwardLimit;
+
+            // Replace, do not extend: the middleware ships loopback defaults, and an
+            // explicit trust list should be exactly what the operator asked for.
+            options.KnownProxies.Clear();
+            options.KnownIPNetworks.Clear();
+            proxies.ForEach(options.KnownProxies.Add);
+            networks.ForEach(options.KnownIPNetworks.Add);
+        });
+
+        // Log resolved VALUES, not counts. A count of one looks identical whether the
+        // operator chose that entry or inherited it.
+        logger.LogInformation(
+            "ForwardedHeaders: trusting proxies [{Proxies}], networks [{Networks}], ForwardLimit {ForwardLimit}",
+            string.Join(", ", proxies),
+            string.Join(", ", networks),
+            forwardLimit);
+    }
+
+    private delegate bool TryParse<T>(string value, out T result);
+
+    private static List<T> Parse<T>(string? value, TryParse<T> tryParse, string label, ILogger logger)
+    {
+        List<T> parsed = [];
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return parsed;
+        }
+
+        foreach (string token in value.Split(
+                     _separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (tryParse(token, out T? result) && result is not null)
+            {
+                parsed.Add(result);
+            }
+            else
+            {
+                logger.LogWarning("Ignoring invalid ForwardedHeaders {Label} {Value}", label, token);
+            }
+        }
+
+        return parsed;
+    }
+}
+```
+
+`app.UseForwardedHeaders();` must run **before** `app.UseAuthentication();` — the authentication cookie's `Secure` decision and the rate limiter both depend on the corrected scheme and address.
+
+Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
 
 The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
 
@@ -1897,21 +2080,29 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Role seeding, permission catalogue validation, and the last-administrator guard
+### Task 8: The claims factory, role seeding, and permission catalogue validation
+
+**This task contains the defect the spec review found.** `PermissionAuthorizationHandler` (Task 3) reads claims of type `fakturenn.permission`. Before this task, **nothing wrote them** — every `[Authorize(Policy = ...)]` would have denied, including the administrator's own `/admin/users`, and it would have surfaced as a 403 rather than an error. Task 3's unit tests construct a principal with the claims already present, so they pass either way. Only the end-to-end test in Task 15 catches it.
 
 **Files:**
 
+- Create: `src/Fakturenn.Modules.Identity/Authorization/PermissionClaimsPrincipalFactory.cs`
 - Create: `src/Fakturenn.Modules.Identity/Persistence/RoleSeeder.cs`, `PermissionCatalogValidator.cs`, `AdministratorGuard.cs`
 - Create: `tests/Fakturenn.Modules.Identity.UnitTests/PermissionCatalogValidatorTests.cs`, `AdministratorGuardTests.cs`
-- Create: `tests/Fakturenn.IntegrationTests/RoleSeedingTests.cs`
+- Create: `tests/Fakturenn.IntegrationTests/RoleSeedingTests.cs`, `PermissionClaimsFactoryTests.cs`
 
 **Interfaces:**
 
 - Consumes: Tasks 3, 4
 - Produces:
-  - `RoleSeeder` — `static Task SeedAsync(IdentityDbContext context, CancellationToken cancellationToken)`; creates the `Administrator` role with `IsSystemRole = true` holding every permission in `Permissions.All`; idempotent
+  - `PermissionClaimsPrincipalFactory : UserClaimsPrincipalFactory<ApplicationUser>` — adds one `fakturenn.permission` claim per permission the user's roles grant
+  - `RoleSeeder` — `static Task SeedAsync(IdentityDbContext context, CancellationToken cancellationToken)`; ensures the `Administrator` role exists with `IsSystemRole = true` and **re-syncs** it to every permission in `Permissions.All`; idempotent
   - `PermissionCatalogValidator` — `static IReadOnlyList<string> FindUnknownPermissions(IEnumerable<string> stored)`
   - `AdministratorGuard` — `static bool WouldRemoveLastAdministrator(int administratorCount, bool targetIsAdministrator)`
+
+**Seeding runs from `--migrate`, not at startup.** Startup seeding races on the unique role-name index when more than one replica starts together; `--migrate` already runs exactly once by design. Task 7's `Program.cs` wiring calls it after the contexts are migrated.
+
+**Seeding is a re-sync, not create-if-absent.** When a later epic adds a permission constant, an existing installation's `Administrator` role must gain it. The catalogue validator catches stored permissions the code does not define; nothing else would catch permissions the code defines and the database lacks.
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -2082,6 +2273,124 @@ public static class RoleSeeder
     }
 }
 ```
+
+- [ ] **Step 3a: Write the claims factory**
+
+`src/Fakturenn.Modules.Identity/Authorization/PermissionClaimsPrincipalFactory.cs`:
+
+```csharp
+using System.Security.Claims;
+using Fakturenn.Modules.Identity.Domain;
+using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace Fakturenn.Modules.Identity.Authorization;
+
+/// <summary>
+/// Stamps the permissions a user's roles grant into their principal, as claims of
+/// type <see cref="PermissionClaims.Type"/>.
+/// <para>
+/// Without this, <c>PermissionAuthorizationHandler</c> reads a claim nothing ever
+/// writes and every authorized endpoint returns 403 — including the administrator's
+/// own. That is not hypothetical: it is what this plan specified until a spec review
+/// caught it.
+/// </para>
+/// <para>
+/// Claims are a cached authorization decision. Identity re-runs this factory at each
+/// security-stamp validation, so the staleness window after a role change is bounded
+/// by <c>SecurityStampValidatorOptions.ValidationInterval</c>, which Task 7 sets to
+/// one minute. The alternative — a database lookup per request — was rejected in the
+/// spec for a staleness window the stamp interval already bounds.
+/// </para>
+/// </summary>
+public sealed class PermissionClaimsPrincipalFactory(
+    UserManager<ApplicationUser> userManager,
+    IOptions<IdentityOptions> options,
+    IdentityDbContext db)
+    : UserClaimsPrincipalFactory<ApplicationUser>(userManager, options)
+{
+    protected override async Task<ClaimsIdentity> GenerateClaimsAsync(ApplicationUser user)
+    {
+        ClaimsIdentity identity = await base.GenerateClaimsAsync(user);
+
+        List<string> permissions = await db.UserRoles
+            .Where(userRole => userRole.UserId == user.Id)
+            .Join(
+                db.RolePermissions,
+                userRole => userRole.RoleId,
+                rolePermission => rolePermission.RoleId,
+                (_, rolePermission) => rolePermission.Permission)
+            .Distinct()
+            .ToListAsync();
+
+        foreach (string permission in permissions)
+        {
+            identity.AddClaim(new Claim(PermissionClaims.Type, permission));
+        }
+
+        return identity;
+    }
+}
+```
+
+- [ ] **Step 3b: Write the claims factory integration test**
+
+`tests/Fakturenn.IntegrationTests/PermissionClaimsFactoryTests.cs`:
+
+```csharp
+using System.Security.Claims;
+using AwesomeAssertions;
+using Fakturenn.Modules.Identity.Authorization;
+using Fakturenn.Modules.Identity.Domain;
+using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+
+namespace Fakturenn.IntegrationTests;
+
+public sealed class PermissionClaimsFactoryTests(PostgresFixture postgres) : IClassFixture<PostgresFixture>
+{
+    [Fact]
+    public async Task A_user_holding_the_administrator_role_receives_every_permission_as_a_claim()
+    {
+        await using IdentityDbContext db = postgres.CreateIdentityContext();
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await RoleSeeder.SeedAsync(db, TestContext.Current.CancellationToken);
+
+        ApplicationUser user = await postgres.CreateUserAsync("claims@example.test");
+        Guid roleId = await db.Roles
+            .Where(role => role.Name == RoleSeeder.AdministratorRoleName)
+            .Select(role => role.Id)
+            .SingleAsync(TestContext.Current.CancellationToken);
+        db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId });
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        ClaimsPrincipal principal = await postgres.CreatePrincipalAsync(user);
+
+        principal.Claims
+            .Where(claim => claim.Type == PermissionClaims.Type)
+            .Select(claim => claim.Value)
+            .Should().BeEquivalentTo(Permissions.All);
+    }
+
+    [Fact]
+    public async Task A_user_holding_no_role_receives_no_permission_claims()
+    {
+        await using IdentityDbContext db = postgres.CreateIdentityContext();
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+
+        ApplicationUser user = await postgres.CreateUserAsync("noroles@example.test");
+
+        ClaimsPrincipal principal = await postgres.CreatePrincipalAsync(user);
+
+        principal.Claims.Should().NotContain(claim => claim.Type == PermissionClaims.Type);
+    }
+}
+```
+
+`PostgresFixture` gains `CreateIdentityContext()`, `CreateUserAsync(string email)` and `CreatePrincipalAsync(ApplicationUser user)`, the last building a service provider with `AddIdentityCore` plus `AddClaimsPrincipalFactory<PermissionClaimsPrincipalFactory>()` so the test exercises the real registration path rather than calling the factory directly.
 
 - [ ] **Step 4: Write the seeding integration test**
 
@@ -3185,7 +3494,8 @@ public static class OperatorCommands
     public static async Task<int?> TryRunAsync(string[] args, WebApplication app)
     {
         string? command = args.FirstOrDefault(argument => argument.StartsWith("--", StringComparison.Ordinal)
-            && argument is "--create-admin" or "--reset-password" or "--reset-mfa" or "--list-users");
+            && argument is "--create-admin" or "--reset-password" or "--reset-mfa"
+                        or "--unlock-user" or "--list-users");
 
         if (command is null)
         {
@@ -3201,6 +3511,10 @@ public static class OperatorCommands
 
         return command switch
         {
+            // Exists because AdministratorGuard prevents stripping the last
+            // administrator's permissions but not LOCKING them. Without an unlock
+            // path the guard protects the wrong thing.
+            "--unlock-user" => await UnlockUserAsync(users, email),
             "--list-users" => await ListUsersAsync(db),
             "--create-admin" => await CreateAdminAsync(users, db, email),
             "--reset-password" => await ResetPasswordAsync(users, email),
