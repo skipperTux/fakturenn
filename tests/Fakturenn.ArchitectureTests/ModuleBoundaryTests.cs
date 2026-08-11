@@ -24,6 +24,8 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.Infrastructure.Storage",
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
+            "Fakturenn.Modules.Identity",
+            "Fakturenn.Modules.Identity.Contracts",
         ]);
 
         // The assembly list alone is not enough: a typo in any of FakturennArchitecture's regexes
