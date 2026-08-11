@@ -26,6 +26,32 @@
 - No secrets in the repository. No password may ever be passed as a command-line argument.
 - Design principles: TDD where a test can meaningfully come first; SOLID, KISS, YAGNI.
 
+## Revised against the 2026-08-11 spec review
+
+The spec was revised against `docs/superpowers/reviews/2026-08-11-e02a-identity-foundation-spec-review.md` — 19 findings, all dispositioned — and this plan is now aligned with it. Where they disagree, the spec wins.
+
+What the review changed, and where each landed:
+
+| Finding | Change | Task |
+| --- | --- | --- |
+| S1 | Security-stamp rotation with a one-minute validation interval | 7, 13, 14 |
+| S2 | The claims factory — nothing wrote the claims the handler reads | 8 |
+| S3 | `--unlock-user`, and `--reset-password` clears lockout | 14 |
+| S4 | Password policy bound from configuration, no third-party scorer | 7 |
+| S5 | Rate limiting partitioned on username plus client IP | 7 |
+| S6 | Unique index plus caught violation on `/setup` | 9 |
+| S7 | `MustChangePassword` and the forced-change flow | 4, 11 |
+| C1 | Seeding from `--migrate`, as a re-sync | 7, 8 |
+| C2 | `roles.read` and `roles.manage` removed; `users.read` given a site | 3, 13 |
+| C3 | Sign-out, forced change, ten recovery codes, remember-machine rejected | 11 |
+| C4 | English and German resources | 17 |
+| C5 | Forwarded headers, HSTS, Content Security Policy with its test | 7, 15 |
+| C6 | Confirmed-email requirement off | 7 |
+| C7 | Authentication event logging and the `_msg` formatter | 16 |
+| M1–M5 | Cross-references, data model, enrolment idempotency, accepted risks | spec |
+
+**The two tests that exist because of the review** are in Task 15: an administrator reaching an authorized page, and a locked user's existing session ceasing to work. The first catches S2, which every unit test passed over because they construct a principal with the claims already present.
+
 ## Baseline before this plan starts
 
 `main` at the harness completion: unit 26, architecture 14, integration 6, compliance 10, UI 4. Build clean, `dotnet format` clean, CI green on GitHub.
@@ -693,12 +719,14 @@ public sealed class PermissionPolicyProviderTests
     [Fact]
     public void Every_declared_constant_is_present_in_the_catalogue()
     {
+        // Two permissions, both with a named enforcement site. roles.read and
+        // roles.manage were removed by the spec review: a permission constant with
+        // nothing enforcing it is speculative surface, and E02b adds them together
+        // with the role-management UI that will enforce them.
         Permissions.All.Should().BeEquivalentTo(
         [
             Permissions.UsersRead,
             Permissions.UsersManage,
-            Permissions.RolesRead,
-            Permissions.RolesManage,
         ]);
     }
 }
@@ -784,18 +812,17 @@ namespace Fakturenn.Modules.Identity.Authorization;
 public static class Permissions
 {
     // public const Fields
+    /// <summary>Enforced on the user list at <c>GET /admin/users</c>.</summary>
     public const string UsersRead = "users.read";
+
+    /// <summary>Enforced on every mutating administrative endpoint.</summary>
     public const string UsersManage = "users.manage";
-    public const string RolesRead = "roles.read";
-    public const string RolesManage = "roles.manage";
 
     // public static readonly Fields
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         UsersRead,
         UsersManage,
-        RolesRead,
-        RolesManage,
     };
 }
 
@@ -957,6 +984,14 @@ public sealed class ApplicationUser : IdentityUser<Guid>, IAuditable
     /// page — see <c>EnrolmentGateMiddleware</c>.
     /// </summary>
     public bool MustEnrolTotp { get; set; }
+
+    /// <summary>
+    /// Set when somebody other than the user chose the current password: an
+    /// administrator creating the account, or an operator running
+    /// <c>--reset-password</c>. Forces a change at next sign-in so the credential
+    /// stops being shared the moment it is first used.
+    /// </summary>
+    public bool MustChangePassword { get; set; }
 
     // IAuditable, filled by AuditSaveChangesInterceptor
     public DateTimeOffset CreatedAt { get; set; }
@@ -1722,7 +1757,24 @@ public static class IdentityConfiguration
         builder.Services.AddIdentityCore<ApplicationUser>(options =>
             {
                 options.User.RequireUniqueEmail = true;
+                // Defaults only. The Configure<IdentityOptions> call after this block
+                // binds the "Identity" configuration section over the top, so an
+                // operator can tighten or loosen the policy without a rebuild.
+                //
+                // These rules are known to be insufficient on their own -- Passwort1234
+                // satisfies all of them. Three strength scorers were evaluated and none
+                // earned a dependency in the sign-in path; see the spec's section 8.
+                // The password is one factor of two, and mandatory TOTP, lockout and
+                // rate limiting are what carry the weight.
                 options.Password.RequiredLength = 12;
+                options.Password.RequireUppercase = true;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireDigit = true;
+                options.Password.RequiredUniqueChars = 4;
+
+                // The one Identity default deliberately flipped off: requiring
+                // punctuation mostly produces an exclamation mark on the end.
+                options.Password.RequireNonAlphanumeric = false;
 
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
                 options.Lockout.MaxFailedAccessAttempts = 5;
@@ -1732,10 +1784,20 @@ public static class IdentityConfiguration
             })
             .AddEntityFrameworkStores<IdentityDbContext>()
             .AddDefaultTokenProviders()
-            .AddSignInManager();
+            .AddSignInManager()
+            // Without this the permission handler reads a claim nothing writes, and
+            // every authorized endpoint returns 403. See Task 8.
+            .AddClaimsPrincipalFactory<PermissionClaimsPrincipalFactory>();
 
         builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
             .AddIdentityCookies();
+
+        // Identity rotates the security stamp on password and two-factor changes but
+        // NOT on lockout, and the default validation interval is thirty minutes. A
+        // locked user would keep a working session for half an hour. One minute also
+        // bounds how stale a cookie's cached permission claims can be.
+        builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+            options.ValidationInterval = TimeSpan.FromMinutes(1));
 
         builder.Services.ConfigureApplicationCookie(options =>
         {
@@ -1754,14 +1816,36 @@ public static class IdentityConfiguration
 
         // Lockout alone would make the login endpoint a user-enumeration oracle:
         // a locked account answers differently from an unknown one under load.
+        //
+        // Partitioned on username PLUS client IP. IP alone is useless behind a shared
+        // address and a self-DoS behind a proxy; username alone lets one attacker
+        // spray many accounts freely. The client IP is only meaningful because
+        // forwarded-header trust is configured -- see AddForwardedHeaderTrust.
+        //
+        // Accepted trade-off: this limiter is in-memory per replica, so with N
+        // replicas the effective limit is N x PermitLimit. Solving that needs shared
+        // state this project does not otherwise require. Lockout is a database column
+        // and therefore the durable control; the limiter blunts enumeration.
         builder.Services.AddRateLimiter(options =>
         {
-            options.AddFixedWindowLimiter("account", limiter =>
+            options.AddPolicy("account", context =>
             {
-                limiter.PermitLimit = 10;
-                limiter.Window = TimeSpan.FromMinutes(1);
-                limiter.QueueLimit = 0;
+                string user = context.Request.HasFormContentType
+                    ? context.Request.Form["email"].ToString().Trim().ToLowerInvariant()
+                    : string.Empty;
+                string address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    $"{user}|{address}",
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 10,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                    });
             });
+
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         });
     }
 }
@@ -1769,51 +1853,436 @@ public static class IdentityConfiguration
 
 `SecurePolicy` is `SameAsRequest` rather than `Always` because the reference Compose deployment serves plain HTTP on localhost; forcing `Always` would silently drop the cookie and make sign-in fail with no error. TLS termination is a deployment concern documented in `DEPLOYMENT-BASELINE.md`.
 
-Add `using Fakturenn.Infrastructure.Persistence;` and `using Fakturenn.SharedKernel;`.
+Add `using Fakturenn.Infrastructure.Persistence;`, `using Fakturenn.SharedKernel;`, `using System.Threading.RateLimiting;` and `using Microsoft.AspNetCore.RateLimiting;`.
 
-The `InvoicesDbContext` registration is deliberately left alone: the Invoices module has no auditable entity yet, so adding the interceptor there now would be configuration with nothing to configure. E09 adds it when the first invoice entity implements `IAuditable`.
+- [ ] **Step 2b: Forwarded-header trust**
 
-- [ ] **Step 2a: Implement the current-user accessor**
+The rate limiter above partitions on client IP. Behind a reverse proxy every request carries the proxy's address unless forwarded headers are trusted, which collapses every client into one partition. This is not optional decoration.
 
-`src/Fakturenn.Web/HttpContextCurrentUserAccessor.cs`:
+`src/Fakturenn.Web/ForwardedHeaderTrust.cs`:
 
 ```csharp
-using System.Security.Claims;
-using Fakturenn.SharedKernel;
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Fakturenn.Web;
 
 /// <summary>
-/// Resolves who is acting from the current request, or null when there is no
-/// request — migrations, seeding, background work and the operator entrypoints all
-/// run without one, and the interceptor records those as the system actor.
+/// Configures which proxies may set <c>X-Forwarded-*</c>.
 /// <para>
-/// The claim order puts <c>preferred_username</c> first so that adding generic OIDC
-/// later, per ADR-008, needs no change here. Local Identity does not issue that
-/// claim, so today the name claim is the one that answers.
+/// Trust is expressed as delimiter-separated strings rather than configuration
+/// arrays, because .NET binds arrays by index: an environment variable can overwrite
+/// individual elements of a list from appsettings.json but cannot replace the list.
+/// An operator who wants exactly two trusted proxies and nothing inherited cannot say
+/// so with an array. One string in one variable can be replaced wholesale.
 /// </para>
 /// </summary>
-public sealed class HttpContextCurrentUserAccessor(IHttpContextAccessor httpContextAccessor)
-    : ICurrentUserAccessor
+public static class ForwardedHeaderTrust
 {
-    public string? UserName
-    {
-        get
-        {
-            ClaimsPrincipal? user = httpContextAccessor.HttpContext?.User;
+    private static readonly char[] _separators = [',', ';'];
 
-            if (user?.Identity?.IsAuthenticated != true)
+    public static void AddForwardedHeaderTrust(this WebApplicationBuilder builder, ILogger logger)
+    {
+        string? proxyList = builder.Configuration["Network:KnownProxies"];
+        string? networkList = builder.Configuration["Network:KnownNetworks"];
+        int forwardLimit = builder.Configuration.GetValue("Network:ForwardLimit", 1);
+
+        bool configured = !string.IsNullOrWhiteSpace(proxyList) || !string.IsNullOrWhiteSpace(networkList);
+
+        // ASPNETCORE_FORWARDEDHEADERS_ENABLED clears both trust lists and enables
+        // XForwardedFor|XForwardedProto, which honours forwarded headers from ANY
+        // source. It is widely suggested for cloud environments where proxy addresses
+        // rotate, so an operator may set it without realising it overrides everything
+        // configured here. Warn loudly rather than let it pass silently.
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("ASPNETCORE_FORWARDEDHEADERS_ENABLED"),
+                "true",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning(
+                "ASPNETCORE_FORWARDEDHEADERS_ENABLED is set. It clears the forwarded-header trust "
+                + "lists and accepts X-Forwarded-* from any source, overriding Network:KnownProxies "
+                + "and Network:KnownNetworks. Unset it and configure trust explicitly.");
+        }
+
+        // Parse eagerly rather than inside the Configure callback: a trust list that
+        // binds but whose entries are all unparseable must fail at startup, not have
+        // the middleware silently fall back to loopback and drop every forwarded
+        // header at request time. A typo would otherwise surface months later as an
+        // unexplained http:// redirect.
+        List<IPAddress> proxies = Parse(proxyList, IPAddress.TryParse, "KnownProxy", logger);
+        List<IPNetwork> networks = Parse(networkList, IPNetwork.TryParse, "KnownNetwork", logger);
+
+        if (proxies.Count == 0 && networks.Count == 0)
+        {
+            if (configured)
             {
-                return null;
+                throw new InvalidDataException(
+                    "Network:KnownProxies/KnownNetworks were set but no entry could be parsed.");
             }
 
-            return user.FindFirst("preferred_username")?.Value
-                ?? user.FindFirst(ClaimTypes.Name)?.Value
-                ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            // Not set is a decision, not an error: no reverse proxy in front. X-Forwarded-*
+            // stay ignored, which is the safe direction -- the application trusts only what
+            // it observes itself.
+            logger.LogWarning(
+                "ForwardedHeaders: no trust configured, X-Forwarded-* headers are ignored");
+            return;
         }
+
+        // Clearing BOTH lists is documented as the way to disable trust validation
+        // entirely and honour forwarded headers from any source -- see the ASP.NET
+        // Core 8.0.17 / 9.0.6 breaking change "Forwarded headers middleware ignores
+        // X-Forwarded-* headers from unknown proxies". This code must therefore never
+        // clear and leave empty. The guard above returns before reaching here when
+        // nothing parsed, so by this point at least one entry exists; assert it rather
+        // than rely on a reader tracing the control flow.
+        if (proxies.Count == 0 && networks.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Refusing to clear the forwarded-header trust lists with nothing to replace them: "
+                + "empty lists disable trust validation and honour headers from any source.");
+        }
+
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            options.ForwardLimit = forwardLimit;
+
+            // Replace, do not extend: the middleware ships loopback defaults, and an
+            // explicit trust list should be exactly what the operator asked for.
+            options.KnownProxies.Clear();
+            options.KnownIPNetworks.Clear();
+            proxies.ForEach(options.KnownProxies.Add);
+            networks.ForEach(options.KnownIPNetworks.Add);
+        });
+
+        // Log resolved VALUES, not counts. A count of one looks identical whether the
+        // operator chose that entry or inherited it.
+        logger.LogInformation(
+            "ForwardedHeaders: trusting proxies [{Proxies}], networks [{Networks}], ForwardLimit {ForwardLimit}",
+            string.Join(", ", proxies),
+            string.Join(", ", networks),
+            forwardLimit);
+    }
+
+    private delegate bool TryParse<T>(string value, out T result);
+
+    private static List<T> Parse<T>(string? value, TryParse<T> tryParse, string label, ILogger logger)
+    {
+        List<T> parsed = [];
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return parsed;
+        }
+
+        foreach (string token in value.Split(
+                     _separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (tryParse(token, out T? result) && result is not null)
+            {
+                parsed.Add(result);
+            }
+            else
+            {
+                logger.LogWarning("Ignoring invalid ForwardedHeaders {Label} {Value}", label, token);
+            }
+        }
+
+        return parsed;
     }
 }
 ```
+
+`app.UseForwardedHeaders();` must run **before** `app.UseAuthentication();` — the authentication cookie's `Secure` decision and the rate limiter both depend on the corrected scheme and address.
+
+- [ ] **Step 2b-ii: RFC 7239 `Forwarded` support**
+
+**ASP.NET Core does not support RFC 7239.** Verified against `Microsoft.AspNetCore.HttpOverrides` 10.0.10: the `ForwardedHeaders` enum is `XForwardedFor | XForwardedHost | XForwardedProto | XForwardedPrefix`, and while `ForwardedForHeaderName` lets you rename the header, the parser still expects X-Forwarded-For's comma-separated list rather than `for=…;proto=…;host=…` parameter syntax.
+
+`Forwarded` is the standardised header, so it must work. The approach is a **translation shim, not a reimplementation**: parse `Forwarded`, synthesise the equivalent `X-Forwarded-*` headers, and let the built-in middleware evaluate trust as it already does. Trust remains anchored on the connection's peer address, so translating the input format grants nothing that was not already granted.
+
+`src/Fakturenn.Web/ForwardedHeaderNormalizer.cs`:
+
+```csharp
+using System.Diagnostics.CodeAnalysis;
+using System.Net;
+
+namespace Fakturenn.Web;
+
+/// <summary>
+/// Translates an RFC 7239 <c>Forwarded</c> header into the <c>X-Forwarded-*</c>
+/// headers ASP.NET Core understands, so the standardised header works without
+/// reimplementing trust evaluation.
+/// <para>
+/// This grants nothing. The built-in middleware still requires the connection's peer
+/// address to match a configured proxy or network before it honours any forwarded
+/// header, and that check runs after this translation.
+/// </para>
+/// </summary>
+public static class ForwardedHeaderNormalizer
+{
+    public static void UseRfc7239Forwarded(this IApplicationBuilder app) =>
+        app.Use(async (context, next) =>
+        {
+            // X-Forwarded-For wins when both are present. Whichever header the trusted
+            // proxy sets, it must strip the inbound copy -- that requirement is
+            // identical for both -- so precedence is about not changing behaviour for
+            // the far more widely deployed header, not about safety.
+            if (!context.Request.Headers.TryGetValue("Forwarded", out var forwarded)
+                || context.Request.Headers.ContainsKey("X-Forwarded-For"))
+            {
+                await next();
+                return;
+            }
+
+            List<string> fors = [];
+            string? proto = null;
+            string? host = null;
+
+            // A Forwarded header is a comma-separated chain of elements, each a
+            // semicolon-separated list of parameters. Order matters: element one is
+            // the closest to the client, same as X-Forwarded-For.
+            foreach (string element in string.Join(',', forwarded.ToArray()).Split(','))
+            {
+                foreach (string parameter in element.Split(';'))
+                {
+                    int equals = parameter.IndexOf('=', StringComparison.Ordinal);
+                    if (equals < 0)
+                    {
+                        continue;
+                    }
+
+                    string name = parameter[..equals].Trim().ToLowerInvariant();
+                    string value = Unquote(parameter[(equals + 1)..].Trim());
+
+                    switch (name)
+                    {
+                        case "for" when TryReadNode(value, out string? node):
+                            fors.Add(node);
+                            break;
+                        case "proto":
+                            proto ??= value;
+                            break;
+                        case "host":
+                            host ??= value;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+
+            if (fors.Count > 0)
+            {
+                context.Request.Headers["X-Forwarded-For"] = string.Join(", ", fors);
+            }
+
+            if (proto is not null)
+            {
+                context.Request.Headers["X-Forwarded-Proto"] = proto;
+            }
+
+            if (host is not null)
+            {
+                context.Request.Headers["X-Forwarded-Host"] = host;
+            }
+
+            await next();
+        });
+
+    private static string Unquote(string value) =>
+        value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
+
+    /// <summary>
+    /// Extracts an address from an RFC 7239 node identifier, rejecting the ones that
+    /// are not addresses at all.
+    /// </summary>
+    private static bool TryReadNode(string value, [NotNullWhen(true)] out string? address)
+    {
+        address = null;
+
+        // RFC 7239 section 6.3 permits obfuscated identifiers such as "_hidden", and
+        // section 6.2 permits the literal "unknown". Neither is an address; passing
+        // either through as one would produce a garbage X-Forwarded-For entry that the
+        // built-in parser then silently discards, which looks identical to the header
+        // being absent.
+        if (value.Length == 0 || value[0] == '_' || value.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // IPv6 is bracketed and may carry a port: [2001:db8::1]:8080
+        if (value[0] == '[')
+        {
+            int close = value.IndexOf(']', StringComparison.Ordinal);
+            if (close < 0)
+            {
+                return false;
+            }
+
+            string inner = value[1..close];
+            if (!IPAddress.TryParse(inner, out _))
+            {
+                return false;
+            }
+
+            address = value[..(close + 1)];
+            return true;
+        }
+
+        // IPv4 may carry a port: 192.0.2.1:1234
+        int colon = value.IndexOf(':', StringComparison.Ordinal);
+        string candidate = colon >= 0 ? value[..colon] : value;
+
+        if (!IPAddress.TryParse(candidate, out _))
+        {
+            return false;
+        }
+
+        address = candidate;
+        return true;
+    }
+}
+```
+
+Register it **immediately before** `app.UseForwardedHeaders()`, so the built-in middleware sees the synthesised headers:
+
+```csharp
+        app.UseRfc7239Forwarded();
+        app.UseForwardedHeaders();
+```
+
+- [ ] **Step 2b-iii: Test the parser against the RFC's awkward cases**
+
+The straightforward case is not where this breaks. Each of these is a real form permitted by RFC 7239:
+
+```csharp
+    [Theory]
+    // The RFC's own examples.
+    [InlineData("for=\"_gazonk\"", null)]                                  // obfuscated: not an address
+    [InlineData("for=unknown", null)]                                      // literal unknown
+    [InlineData("for=192.0.2.60;proto=http;by=203.0.113.43", "192.0.2.60")]
+    [InlineData("for=192.0.2.43, for=198.51.100.17", "192.0.2.43, 198.51.100.17")]
+    // Quoting, ports, IPv6 -- CLAUDE.md requires both address families work.
+    [InlineData("for=\"[2001:db8:cafe::17]:4711\"", "[2001:db8:cafe::17]")]
+    [InlineData("for=\"192.0.2.1:1234\"", "192.0.2.1")]
+    [InlineData("For=192.0.2.60", "192.0.2.60")]                           // parameter names are case-insensitive
+    [InlineData("proto=https", null)]                                      // no for= at all
+    [InlineData("garbage", null)]
+    public void Forwarded_is_translated_to_X_Forwarded_For(string header, string? expected)
+    {
+        // ...assert the synthesised X-Forwarded-For, or its absence when expected is null
+    }
+```
+
+Two behaviours worth asserting separately:
+
+- **An obfuscated or unknown node yields no entry rather than a malformed one.** Passing `_gazonk` through as an address produces an `X-Forwarded-For` the built-in parser silently discards, which is indistinguishable from the header never arriving — and that is precisely the kind of failure that gets diagnosed as "forwarded headers don't work" months later.
+- **`X-Forwarded-For` present means `Forwarded` is ignored entirely**, with no merging. Merging two chains of different provenance is how you construct an address list that never existed.
+
+- [ ] **Step 2e: HSTS and a Content Security Policy**
+
+In `FakturennWebApplication.Build`, after `UseForwardedHeaders` and before `UseAuthentication`:
+
+```csharp
+        if (!app.Environment.IsDevelopment())
+        {
+            // Production only. A Strict-Transport-Security header served over plain
+            // HTTP from a local run poisons the browser for localhost across every
+            // other project on the machine, and it cannot be cleared per-site.
+            app.UseHsts();
+        }
+
+        app.Use(async (context, next) =>
+        {
+            // Blazor Server needs its own script and the WebSocket back to the origin.
+            // 'unsafe-inline' for styles is required by MudBlazor's component styles;
+            // scripts do NOT get it, which is the half that matters for injection.
+            context.Response.Headers["Content-Security-Policy"] =
+                "default-src 'self'; "
+                + "script-src 'self'; "
+                + "style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data:; "
+                + "font-src 'self'; "
+                + "connect-src 'self' ws: wss:; "
+                + "frame-ancestors 'none'; "
+                + "base-uri 'self'; "
+                + "form-action 'self'";
+
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+
+            await next();
+        });
+```
+
+**This policy is a guess until a test proves it.** A too-strict CSP breaks Blazor in ways that look like unrelated bugs — a page that renders but never becomes interactive, a form that posts nothing, a stylesheet that silently does not apply. Task 15 carries the test that fails if the policy blocks the application's own assets. Do not tune the policy by clicking around; tune it against that test.
+
+If the test shows Blazor needs `'unsafe-eval'` or an inline script hash, add the narrowest thing that works and **record why in a comment** — a CSP nobody can explain gets widened by the next person who hits a symptom.
+
+Unit-test the three states against `Parse`: unset returns empty and warns, a valid list returns its entries, and a list where nothing parses throws. That last one is the case the eager parse exists for.
+
+- [ ] **Step 2c: Bind the password policy from configuration**
+
+The policy is configuration, not code. Immediately after `AddIdentityCore`, bind the `Identity` section over the defaults so an operator can adjust it without a rebuild:
+
+```csharp
+        builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection("Identity"));
+```
+
+and add to `src/Fakturenn.Web/appsettings.json`:
+
+```json
+  "Identity": {
+    "Password": {
+      "RequiredLength": 12,
+      "RequireUppercase": true,
+      "RequireLowercase": true,
+      "RequireDigit": true,
+      "RequireNonAlphanumeric": false,
+      "RequiredUniqueChars": 4
+    }
+  },
+```
+
+No third-party strength scorer is used. Three were evaluated during design and none earned a dependency in the sign-in path: every `zxcvbn` .NET port is unmaintained, the maintained alternative's score is length-dominated and cannot separate a weak seasonal password from a strong short one, and its entropy mode produced no usable value. The reasoning and the measurements are in the spec's section 8; do not re-litigate it here, and do not add a scorer without redoing that comparison.
+
+- [ ] **Step 2d: Pin the policy with a test**
+
+Assert the options resolved from the **real host composition**. A test over a hand-built options object would assert only that the test sets what the test sets — and the point is to catch a default silently reasserting itself:
+
+```csharp
+    [Fact]
+    public void The_password_policy_matches_the_documented_defaults()
+    {
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+        IdentityOptions options = app.Services.GetRequiredService<IOptions<IdentityOptions>>().Value;
+
+        options.Password.RequiredLength.Should().Be(12);
+        options.Password.RequireUppercase.Should().BeTrue();
+        options.Password.RequireLowercase.Should().BeTrue();
+        options.Password.RequireDigit.Should().BeTrue();
+        options.Password.RequiredUniqueChars.Should().Be(4);
+
+        // The one Identity default deliberately flipped off.
+        options.Password.RequireNonAlphanumeric.Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_password_policy_can_be_overridden_by_configuration()
+    {
+        // The value of binding the section is that a deployment can tighten it.
+        // If this stops working, the appsettings block becomes decoration.
+        WebApplication app = FakturennWebApplication.Build(
+            ["--urls", "http://127.0.0.1:0", "--Identity:Password:RequiredLength", "20"]);
+
+        app.Services.GetRequiredService<IOptions<IdentityOptions>>()
+            .Value.Password.RequiredLength.Should().Be(20);
+    }
+```
+
+The second test is the one that matters. A `Configure` call that silently fails to bind leaves the defaults in place and looks identical to a working one.
 
 - [ ] **Step 3: Call it and add the middleware**
 
@@ -1858,6 +2327,32 @@ In `Program.cs`, replace the single-factory array:
     ];
 ```
 
+- [ ] **Step 4a: Seed the Administrator role from the `--migrate` path**
+
+Immediately after `DatabaseMigrator.RunAsync` returns, and only when it succeeded:
+
+```csharp
+    // Seeding runs here, not at application startup. Startup seeding races on the
+    // unique role-name index when more than one replica starts together, and
+    // --migrate already runs exactly once by design.
+    //
+    // RoleSeeder.SeedAsync is a re-sync, not create-if-absent: an installation
+    // upgraded to a version that defines a new permission constant gains the grant.
+    // The catalogue validator catches stored permissions the code does not define;
+    // nothing else would catch permissions the code defines and the database lacks.
+    if (exitCode == 0)
+    {
+        await using AsyncServiceScope seedScope = app.Services.CreateAsyncScope();
+        IdentityDbContext seedContext =
+            seedScope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        await RoleSeeder.SeedAsync(seedContext, CancellationToken.None);
+        migrationLogger.LogInformation("Seeded system roles.");
+    }
+```
+
+Verify against a real database: run `--migrate` twice and confirm the `Administrator` role exists exactly once afterwards, holding every permission in `Permissions.All`. Then delete one `RolePermission` row by SQL, run `--migrate` again, and confirm the grant returns — that is the re-sync behaviour, and a create-if-absent implementation would leave the row missing.
+
 - [ ] **Step 5: Verify against a real database**
 
 ```bash
@@ -1897,21 +2392,29 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Role seeding, permission catalogue validation, and the last-administrator guard
+### Task 8: The claims factory, role seeding, and permission catalogue validation
+
+**This task contains the defect the spec review found.** `PermissionAuthorizationHandler` (Task 3) reads claims of type `fakturenn.permission`. Before this task, **nothing wrote them** — every `[Authorize(Policy = ...)]` would have denied, including the administrator's own `/admin/users`, and it would have surfaced as a 403 rather than an error. Task 3's unit tests construct a principal with the claims already present, so they pass either way. Only the end-to-end test in Task 15 catches it.
 
 **Files:**
 
+- Create: `src/Fakturenn.Modules.Identity/Authorization/PermissionClaimsPrincipalFactory.cs`
 - Create: `src/Fakturenn.Modules.Identity/Persistence/RoleSeeder.cs`, `PermissionCatalogValidator.cs`, `AdministratorGuard.cs`
 - Create: `tests/Fakturenn.Modules.Identity.UnitTests/PermissionCatalogValidatorTests.cs`, `AdministratorGuardTests.cs`
-- Create: `tests/Fakturenn.IntegrationTests/RoleSeedingTests.cs`
+- Create: `tests/Fakturenn.IntegrationTests/RoleSeedingTests.cs`, `PermissionClaimsFactoryTests.cs`
 
 **Interfaces:**
 
 - Consumes: Tasks 3, 4
 - Produces:
-  - `RoleSeeder` — `static Task SeedAsync(IdentityDbContext context, CancellationToken cancellationToken)`; creates the `Administrator` role with `IsSystemRole = true` holding every permission in `Permissions.All`; idempotent
+  - `PermissionClaimsPrincipalFactory : UserClaimsPrincipalFactory<ApplicationUser>` — adds one `fakturenn.permission` claim per permission the user's roles grant
+  - `RoleSeeder` — `static Task SeedAsync(IdentityDbContext context, CancellationToken cancellationToken)`; ensures the `Administrator` role exists with `IsSystemRole = true` and **re-syncs** it to every permission in `Permissions.All`; idempotent
   - `PermissionCatalogValidator` — `static IReadOnlyList<string> FindUnknownPermissions(IEnumerable<string> stored)`
   - `AdministratorGuard` — `static bool WouldRemoveLastAdministrator(int administratorCount, bool targetIsAdministrator)`
+
+**Seeding runs from `--migrate`, not at startup.** Startup seeding races on the unique role-name index when more than one replica starts together; `--migrate` already runs exactly once by design. Task 7's `Program.cs` wiring calls it after the contexts are migrated.
+
+**Seeding is a re-sync, not create-if-absent.** When a later epic adds a permission constant, an existing installation's `Administrator` role must gain it. The catalogue validator catches stored permissions the code does not define; nothing else would catch permissions the code defines and the database lacks.
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -2083,6 +2586,124 @@ public static class RoleSeeder
 }
 ```
 
+- [ ] **Step 3a: Write the claims factory**
+
+`src/Fakturenn.Modules.Identity/Authorization/PermissionClaimsPrincipalFactory.cs`:
+
+```csharp
+using System.Security.Claims;
+using Fakturenn.Modules.Identity.Domain;
+using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace Fakturenn.Modules.Identity.Authorization;
+
+/// <summary>
+/// Stamps the permissions a user's roles grant into their principal, as claims of
+/// type <see cref="PermissionClaims.Type"/>.
+/// <para>
+/// Without this, <c>PermissionAuthorizationHandler</c> reads a claim nothing ever
+/// writes and every authorized endpoint returns 403 — including the administrator's
+/// own. That is not hypothetical: it is what this plan specified until a spec review
+/// caught it.
+/// </para>
+/// <para>
+/// Claims are a cached authorization decision. Identity re-runs this factory at each
+/// security-stamp validation, so the staleness window after a role change is bounded
+/// by <c>SecurityStampValidatorOptions.ValidationInterval</c>, which Task 7 sets to
+/// one minute. The alternative — a database lookup per request — was rejected in the
+/// spec for a staleness window the stamp interval already bounds.
+/// </para>
+/// </summary>
+public sealed class PermissionClaimsPrincipalFactory(
+    UserManager<ApplicationUser> userManager,
+    IOptions<IdentityOptions> options,
+    IdentityDbContext db)
+    : UserClaimsPrincipalFactory<ApplicationUser>(userManager, options)
+{
+    protected override async Task<ClaimsIdentity> GenerateClaimsAsync(ApplicationUser user)
+    {
+        ClaimsIdentity identity = await base.GenerateClaimsAsync(user);
+
+        List<string> permissions = await db.UserRoles
+            .Where(userRole => userRole.UserId == user.Id)
+            .Join(
+                db.RolePermissions,
+                userRole => userRole.RoleId,
+                rolePermission => rolePermission.RoleId,
+                (_, rolePermission) => rolePermission.Permission)
+            .Distinct()
+            .ToListAsync();
+
+        foreach (string permission in permissions)
+        {
+            identity.AddClaim(new Claim(PermissionClaims.Type, permission));
+        }
+
+        return identity;
+    }
+}
+```
+
+- [ ] **Step 3b: Write the claims factory integration test**
+
+`tests/Fakturenn.IntegrationTests/PermissionClaimsFactoryTests.cs`:
+
+```csharp
+using System.Security.Claims;
+using AwesomeAssertions;
+using Fakturenn.Modules.Identity.Authorization;
+using Fakturenn.Modules.Identity.Domain;
+using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+
+namespace Fakturenn.IntegrationTests;
+
+public sealed class PermissionClaimsFactoryTests(PostgresFixture postgres) : IClassFixture<PostgresFixture>
+{
+    [Fact]
+    public async Task A_user_holding_the_administrator_role_receives_every_permission_as_a_claim()
+    {
+        await using IdentityDbContext db = postgres.CreateIdentityContext();
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await RoleSeeder.SeedAsync(db, TestContext.Current.CancellationToken);
+
+        ApplicationUser user = await postgres.CreateUserAsync("claims@example.test");
+        Guid roleId = await db.Roles
+            .Where(role => role.Name == RoleSeeder.AdministratorRoleName)
+            .Select(role => role.Id)
+            .SingleAsync(TestContext.Current.CancellationToken);
+        db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId });
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        ClaimsPrincipal principal = await postgres.CreatePrincipalAsync(user);
+
+        principal.Claims
+            .Where(claim => claim.Type == PermissionClaims.Type)
+            .Select(claim => claim.Value)
+            .Should().BeEquivalentTo(Permissions.All);
+    }
+
+    [Fact]
+    public async Task A_user_holding_no_role_receives_no_permission_claims()
+    {
+        await using IdentityDbContext db = postgres.CreateIdentityContext();
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+
+        ApplicationUser user = await postgres.CreateUserAsync("noroles@example.test");
+
+        ClaimsPrincipal principal = await postgres.CreatePrincipalAsync(user);
+
+        principal.Claims.Should().NotContain(claim => claim.Type == PermissionClaims.Type);
+    }
+}
+```
+
+`PostgresFixture` gains `CreateIdentityContext()`, `CreateUserAsync(string email)` and `CreatePrincipalAsync(ApplicationUser user)`, the last building a service provider with `AddIdentityCore` plus `AddClaimsPrincipalFactory<PermissionClaimsPrincipalFactory>()` so the test exercises the real registration path rather than calling the factory directly.
+
 - [ ] **Step 4: Write the seeding integration test**
 
 `tests/Fakturenn.IntegrationTests/RoleSeedingTests.cs`:
@@ -2252,6 +2873,12 @@ public static class AccountEndpoints
         {
             // Re-checked server-side. The page's own guard is a redirect for humans;
             // this is the one that actually closes the endpoint.
+            //
+            // The check is necessary but NOT sufficient: it and the insert are not
+            // atomic, so two concurrent posts -- or a replica racing a --create-admin
+            // Job -- can both pass it. Identity's unique index on NormalizedUserName
+            // is what actually serialises this, and the catch below is what turns the
+            // loser of the race into a clean "already configured" rather than a 500.
             if (await db.Users.AnyAsync(cancellationToken))
             {
                 return Results.NotFound();
@@ -2272,9 +2899,29 @@ public static class AccountEndpoints
                 MustEnrolTotp = true,
             };
 
-            IdentityResult created = await users.CreateAsync(user, password);
+            IdentityResult created;
+            try
+            {
+                created = await users.CreateAsync(user, password);
+            }
+            catch (DbUpdateException)
+            {
+                // Lost the race: another request created the first user between our
+                // count check and this insert, and the unique index rejected ours.
+                // Same answer as a late visitor gets.
+                return Results.Redirect("/account/login");
+            }
+
             if (!created.Succeeded)
             {
+                // Identity itself reports a duplicate user name as a validation
+                // failure rather than an exception, so the race can surface either way
+                // depending on how the store is configured.
+                if (created.Errors.Any(error => error.Code == nameof(IdentityErrorDescriber.DuplicateUserName)))
+                {
+                    return Results.Redirect("/account/login");
+                }
+
                 string message = string.Join(" ", created.Errors.Select(e => e.Description));
                 return Results.Redirect($"/setup?error={Uri.EscapeDataString(message)}");
             }
@@ -2486,6 +3133,13 @@ Add `using Microsoft.AspNetCore.DataProtection;`.
         HttpContext http = HttpContextAccessor.HttpContext!;
         ApplicationUser user = (await Users.GetUserAsync(http.User))!;
 
+        // Reuse an existing key rather than resetting on every visit. A user who
+        // verified a code but left before acknowledging their recovery codes still
+        // has MustEnrolTotp set and comes back here; resetting would silently kill
+        // the entry they already added to their authenticator app, and the next code
+        // they read from it would be rejected with no explanation.
+        //
+        // The key is reset only by --reset-mfa or an administrator's clear-TOTP.
         string? key = await Users.GetAuthenticatorKeyAsync(user);
         if (string.IsNullOrEmpty(key))
         {
@@ -2642,9 +3296,53 @@ Add to `AccountEndpoints.MapAccountEndpoints`:
                 return Results.Redirect("/account/lockout");
             }
 
-            return result.Succeeded
-                ? Results.Redirect("/")
-                : Results.Redirect("/account/login-2fa?error=invalid");
+            if (!result.Succeeded)
+            {
+                return Results.Redirect("/account/login-2fa?error=invalid");
+            }
+
+            // Somebody else chose this password -- an administrator creating the
+            // account, or an operator running --reset-password. Send them to change
+            // it before anything else, so a shared credential stops being shared the
+            // first time it is used.
+            ApplicationUser? signedIn = await signIn.UserManager.GetUserAsync(http.User);
+            return signedIn?.MustChangePassword == true
+                ? Results.Redirect("/account/change-password")
+                : Results.Redirect("/");
+        });
+
+        group.MapPost("/change-password", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            ApplicationUser? user = await users.GetUserAsync(http.User);
+            if (user is null)
+            {
+                return Results.Redirect("/account/login");
+            }
+
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string current = form["currentPassword"].ToString();
+            string replacement = form["newPassword"].ToString();
+
+            IdentityResult changed = await users.ChangePasswordAsync(user, current, replacement);
+            if (!changed.Succeeded)
+            {
+                string message = string.Join(" ", changed.Errors.Select(e => e.Description));
+                return Results.Redirect($"/account/change-password?error={Uri.EscapeDataString(message)}");
+            }
+
+            user.MustChangePassword = false;
+            await users.UpdateAsync(user);
+
+            // ChangePasswordAsync rotates the security stamp, which invalidates every
+            // session including this one. Re-sign-in so the user is not bounced to the
+            // login page immediately after succeeding.
+            await signIn.RefreshSignInAsync(user);
+
+            return Results.Redirect("/");
         });
 
         group.MapPost("/login-recovery", async (
@@ -2774,6 +3472,41 @@ Add to `AccountEndpoints.MapAccountEndpoints`:
     private string? Error { get; set; }
 }
 ```
+
+`src/Fakturenn.Web/Components/Account/ChangePassword.razor`:
+
+```razor
+@page "/account/change-password"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+<PageTitle>Fakturenn — Change your password</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Change your password</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">
+    Your current password was set by somebody else. Choose one only you know.
+</MudText>
+
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="change-password-error">@Error</MudAlert>
+}
+
+<form method="post" action="/account/change-password" data-testid="change-password-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Current password" InputType="InputType.Password" name="currentPassword" Required="true" data-testid="current-password" />
+    <MudTextField T="string" Label="New password" InputType="InputType.Password" name="newPassword" Required="true" data-testid="new-password" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="change-password-submit">
+        Change password
+    </MudButton>
+</form>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+}
+```
+
+The enrolment gate in Task 12 must also allow `/account/change-password`, and must gate on it: a user with `MustChangePassword` set may reach only that page, sign-out, health and static assets — the same shape as `MustEnrolTotp`. Add the path to `EnrolmentGate` and extend its middleware to check both flags, ordering TOTP enrolment first so a new user enrols before changing a password they were given.
 
 `src/Fakturenn.Web/Components/Account/Lockout.razor`:
 
@@ -3082,7 +3815,10 @@ Add `using Fakturenn.Modules.Identity.Authorization;`.
 @using Fakturenn.Modules.Identity.Domain
 @using Fakturenn.Modules.Identity.Persistence
 @using Microsoft.EntityFrameworkCore
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersManage)]
+@* Reading the list needs users.read; every mutation below posts to an endpoint
+   gated on users.manage. Two permissions, two enforcement sites -- which is why
+   users.read survived the spec review's cull and roles.read did not. *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersRead)]
 @inject IdentityDbContext Db
 
 <PageTitle>Fakturenn — Users</PageTitle>
@@ -3185,7 +3921,8 @@ public static class OperatorCommands
     public static async Task<int?> TryRunAsync(string[] args, WebApplication app)
     {
         string? command = args.FirstOrDefault(argument => argument.StartsWith("--", StringComparison.Ordinal)
-            && argument is "--create-admin" or "--reset-password" or "--reset-mfa" or "--list-users");
+            && argument is "--create-admin" or "--reset-password" or "--reset-mfa"
+                        or "--unlock-user" or "--list-users");
 
         if (command is null)
         {
@@ -3201,6 +3938,10 @@ public static class OperatorCommands
 
         return command switch
         {
+            // Exists because AdministratorGuard prevents stripping the last
+            // administrator's permissions but not LOCKING them. Without an unlock
+            // path the guard protects the wrong thing.
+            "--unlock-user" => await UnlockUserAsync(users, email),
             "--list-users" => await ListUsersAsync(db),
             "--create-admin" => await CreateAdminAsync(users, db, email),
             "--reset-password" => await ResetPasswordAsync(users, email),
@@ -3598,6 +4339,132 @@ dotnet test --project tests/Fakturenn.UiTests
 
 Expected: 6 passing — the 4 existing plus these 2. Report the duration; the added container start makes this the slowest suite.
 
+- [ ] **Step 4a: The two tests the spec review exists for**
+
+These are not extra coverage. Each one catches a defect that shipped in an earlier draft of this plan and that every other test passed over.
+
+`tests/Fakturenn.UiTests/AuthorizationJourneyTests.cs`:
+
+```csharp
+using AwesomeAssertions;
+using Microsoft.Playwright;
+
+namespace Fakturenn.UiTests;
+
+public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app)
+    : IClassFixture<AuthenticatedWebAppFixture>, IAsyncLifetime
+{
+    private IPlaywright? _playwright;
+    private IBrowser? _browser;
+
+    public async ValueTask InitializeAsync()
+    {
+        _playwright = await Playwright.CreateAsync();
+        _browser = await _playwright.Chromium.LaunchAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_browser is not null)
+        {
+            await _browser.CloseAsync();
+        }
+
+        _playwright?.Dispose();
+    }
+
+    [Fact]
+    public async Task An_administrator_reaches_an_authorized_page()
+    {
+        // The defect this catches: PermissionAuthorizationHandler reads
+        // fakturenn.permission claims, and for one draft of this plan NOTHING wrote
+        // them. Every [Authorize(Policy = ...)] would have returned 403, including
+        // the administrator's own page. The unit tests passed throughout, because
+        // they construct a principal with the claims already present -- they assert
+        // the handler's inputs, not its effect.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!);
+
+        IResponse? response = await page.GotoAsync($"{app.BaseAddress}admin/users");
+
+        response!.Status.Should().Be(200, "the administrator holds users.read");
+        await page.GetByTestId("user-table").WaitForAsync();
+    }
+
+    [Fact]
+    public async Task Locking_a_user_stops_their_existing_session()
+    {
+        // The defect this catches: Identity rotates the security stamp on password
+        // and two-factor changes but NOT on lockout, and the default validation
+        // interval is thirty minutes. Without explicit rotation plus a short
+        // interval, "lock" is a database column that does nothing to anyone already
+        // signed in -- which is not lock.
+        IPage victim = await app.SignInAsAdministratorAsync(_browser!);
+        await victim.GotoAsync($"{app.BaseAddress}admin/users");
+        await victim.GetByTestId("user-table").WaitForAsync();
+
+        await app.LockUserAsync(app.AdminEmail);
+
+        // The stamp validation interval is one minute; poll rather than sleep a flat
+        // minute, so the test is fast when it works and still fails when it does not.
+        bool signedOut = false;
+        for (int attempt = 0; attempt < 40 && !signedOut; attempt++)
+        {
+            await Task.Delay(2000);
+            IResponse? response = await victim.GotoAsync($"{app.BaseAddress}admin/users");
+            signedOut = response!.Url.Contains("/account/login", StringComparison.Ordinal);
+        }
+
+        signedOut.Should().BeTrue(
+            "a locked user's existing cookie must stop working within the stamp validation interval");
+    }
+}
+```
+
+`AuthenticatedWebAppFixture` gains two members:
+
+- `Task<IPage> SignInAsAdministratorAsync(IBrowser browser)` — runs the real setup, enrolment and password-plus-TOTP sign-in once, caches the resulting Playwright `storageState`, and returns a page already carrying it. This is SPIKE-009's "reusable authenticated state" answer, and it must reuse a **genuine** sign-in rather than fabricating a cookie.
+- `Task LockUserAsync(string email)` — locks the account through `UserManager` in the host's own service provider, exactly as the administrative endpoint does, including the explicit `UpdateSecurityStampAsync`. Locking by raw SQL would bypass the stamp rotation and make the test pass for the wrong reason.
+
+- [ ] **Step 4b: Prove the Content Security Policy does not break the application**
+
+A CSP that blocks the app's own assets produces symptoms that read as unrelated bugs: a page renders but never becomes interactive, a form posts nothing, styles silently do not apply. The browser reports each block as a console error, so assert on those rather than on the page looking right.
+
+```csharp
+    [Fact]
+    public async Task The_content_security_policy_blocks_nothing_the_application_needs()
+    {
+        List<string> violations = [];
+
+        IBrowserContext context = await _browser!.NewContextAsync();
+        IPage page = await context.NewPageAsync();
+
+        // Both channels matter: securitypolicyviolation surfaces as a console error,
+        // but a blocked resource also shows up as a failed request.
+        page.Console += (_, message) =>
+        {
+            if (message.Text.Contains("Content Security Policy", StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(message.Text);
+            }
+        };
+
+        await page.GotoAsync($"{app.BaseAddress}account/login");
+        await page.GetByTestId("login-form").WaitForAsync();
+
+        // The response must actually carry the header -- a test that passes because
+        // no policy was sent proves nothing.
+        IResponse? response = await page.GotoAsync($"{app.BaseAddress}account/login");
+        response!.Headers.Should().ContainKey("content-security-policy");
+
+        await page.GetByTestId("login-submit").WaitForAsync();
+
+        violations.Should().BeEmpty(
+            "the policy must not block the application's own scripts, styles or connections");
+    }
+```
+
+Run this against a page that exercises MudBlazor's styles and, once any page opts into `@rendermode InteractiveServer`, against that too — the WebSocket connection is the part `connect-src` governs and it is the most likely thing to be blocked.
+
 - [ ] **Step 5: Prove the journey is load-bearing**
 
 Temporarily change `EnrolTotp.razor`'s endpoint to skip `VerifyTwoFactorTokenAsync` and always accept. Run the suite and confirm the journey **still passes** — then explain in the report why that is expected, and instead mutate `CurrentTotpCode()` to return `"000000"` and confirm the journey **fails**. That is the check that the test computes a genuine code rather than any code being accepted. Revert both.
@@ -3617,7 +4484,215 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 16: Documentation, and closing SPIKE-009 in the record
+### Task 16: Authentication event logging
+
+An operator must be able to answer "is someone attacking this instance" from day one. This is **not** the Audit module — that owns `AuditEvent` as domain data — and not §7's row provenance, which records who changed a row and says nothing about a failed attempt that changed nothing.
+
+**Files:**
+
+- Create: `src/Fakturenn.Infrastructure.Logging/Fakturenn.Infrastructure.Logging.csproj`, `MessageFieldJsonFormatter.cs`
+- Modify: `src/Fakturenn.Web/Components/Account/AccountEndpoints.cs`, `Operations/OperatorCommands.cs`, `Fakturenn.slnx`, `tests/Fakturenn.ArchitectureTests/FakturennArchitecture.cs`
+
+**Interfaces:**
+
+- Produces: `MessageFieldJsonFormatter : ITextFormatter` — writes each event as one JSON object whose rendered message is under `_msg`
+
+- [ ] **Step 1: Emit the events**
+
+Add structured Serilog events at each decision point. Use a stable event name as the first property so queries do not depend on message wording:
+
+```csharp
+    logger.LogInformation("AuthEvent {Event} {Email}", "SignInSucceeded", email);
+    logger.LogWarning("AuthEvent {Event} {Email} {Reason}", "SignInFailed", email, "InvalidCredentials");
+    logger.LogWarning("AuthEvent {Event} {Email}", "AccountLockedOut", email);
+    logger.LogInformation("AuthEvent {Event} {Email}", "TwoFactorSucceeded", email);
+    logger.LogWarning("AuthEvent {Event} {Email}", "TwoFactorFailed", email);
+    logger.LogWarning("AuthEvent {Event} {Email}", "RecoveryCodeUsed", email);
+    logger.LogInformation("AuthEvent {Event} {Email}", "TotpEnrolled", email);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminResetPassword", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminClearedMfa", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Actor} {Target}", "AdminLockedUser", actor, target);
+    logger.LogInformation("AuthEvent {Event} {Target}", "OperatorResetMfa", target);
+```
+
+**No log event may contain a password, a TOTP code, a recovery code, or an authenticator key.** Write a test that runs a sign-in with a known password against an in-memory Serilog sink and asserts the password string appears in no event — an error message that helpfully includes the input is how secrets reach log aggregators.
+
+Sign-in failure logs the email that was attempted. That is deliberate and is not the enumeration concern: the *response* to the user stays identical for unknown account and wrong password; only the operator's own log distinguishes them.
+
+- [ ] **Step 2: The `_msg` formatter**
+
+```bash
+dotnet new classlib --output src/Fakturenn.Infrastructure.Logging --name Fakturenn.Infrastructure.Logging
+dotnet add src/Fakturenn.Infrastructure.Logging package Serilog
+dotnet sln Fakturenn.slnx add src/Fakturenn.Infrastructure.Logging/Fakturenn.Infrastructure.Logging.csproj
+dotnet add tests/Fakturenn.ArchitectureTests reference src/Fakturenn.Infrastructure.Logging
+```
+
+`MessageFieldJsonFormatter` writes one JSON object per event with the rendered message under `_msg`, the timestamp, the level, and every structured property as its own field.
+
+```csharp
+using System.Globalization;
+using Serilog.Events;
+using Serilog.Formatting;
+
+namespace Fakturenn.Infrastructure.Logging;
+
+/// <summary>
+/// One JSON object per event, with the rendered message under <c>_msg</c>.
+/// <para>
+/// Some log stores take a line's headline text from a field of exactly that name and
+/// render a placeholder when it is absent, leaving the real text one click away in
+/// every row. That cannot be fixed outside the application, so the formatter ships
+/// here — but it is NOT selected by default. The human-readable console formatter
+/// stays the default and an operator selects this one through Serilog configuration.
+/// </para>
+/// <para>
+/// The type and assembly name are part of the contract: configuration names them.
+/// Renaming either is a breaking change for a deployment that has adopted it.
+/// </para>
+/// </summary>
+public sealed class MessageFieldJsonFormatter : ITextFormatter
+{
+    public void Format(LogEvent logEvent, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(logEvent);
+        ArgumentNullException.ThrowIfNull(output);
+
+        output.Write("{\"_time\":\"");
+        output.Write(logEvent.Timestamp.ToString("O", CultureInfo.InvariantCulture));
+        output.Write("\",\"level\":\"");
+        output.Write(logEvent.Level);
+        output.Write("\",\"_msg\":");
+        WriteJsonString(logEvent.RenderMessage(CultureInfo.InvariantCulture), output);
+
+        foreach ((string name, LogEventPropertyValue value) in logEvent.Properties)
+        {
+            output.Write(',');
+            WriteJsonString(name, output);
+            output.Write(':');
+            WriteJsonString(value.ToString(null, CultureInfo.InvariantCulture).Trim('"'), output);
+        }
+
+        if (logEvent.Exception is not null)
+        {
+            output.Write(",\"exception\":");
+            WriteJsonString(logEvent.Exception.ToString(), output);
+        }
+
+        output.WriteLine('}');
+    }
+
+    private static void WriteJsonString(string value, TextWriter output) =>
+        output.Write(System.Text.Json.JsonSerializer.Serialize(value));
+}
+```
+
+Do not select it in `appsettings.json`. Document in `DEPLOYMENT-BASELINE.md` how an operator switches to it:
+
+```json
+"Serilog": { "WriteTo": [ { "Name": "Console", "Args": {
+  "formatter": "Fakturenn.Infrastructure.Logging.MessageFieldJsonFormatter, Fakturenn.Infrastructure.Logging" } } ] }
+```
+
+- [ ] **Step 3: Test the formatter**
+
+Assert that output parses as JSON, that `_msg` holds the **rendered** message rather than the template, and that structured properties survive as their own fields. A formatter that emits the template with `{Email}` unsubstituted looks correct in a code review and is useless in a log store.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/Fakturenn.Infrastructure.Logging src/Fakturenn.Web tests Fakturenn.slnx Directory.Packages.props
+git commit --message "feat(identity): add authentication event logging
+
+Structured events for sign-in, lockout, two-factor and every administrative and
+CLI action, so an operator can answer 'is someone attacking this instance' on day
+one. A test asserts no event carries a password, TOTP code or recovery code.
+
+Ships a formatter that emits the rendered message under _msg but does not select
+it, so a log store can be adopted by configuration rather than by a code change.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 17: English and German resources
+
+`PLAN-v0.1.md`'s Definition of Done requires complete English and German resources per epic. This task runs after the pages exist, so every string is known rather than guessed.
+
+**Files:**
+
+- Modify: `src/Fakturenn.Web/Resources/SharedResource.resx`, `SharedResource.de.resx`
+- Modify: every page under `Components/Account/` and `Components/Admin/`
+
+- [ ] **Step 1: Extract every literal**
+
+Walk each page added by this epic — `Setup`, `Login`, `LoginWith2fa`, `LoginWithRecoveryCode`, `EnrolTotp`, `RecoveryCodes`, `ChangePassword`, `Lockout`, `AccessDenied`, `Admin/Users` — and replace user-visible literals with `@Localizer["Key"]`, injecting `IStringLocalizer<SharedResource>`.
+
+Include the error strings returned by endpoints. A German user who mistypes a password and receives an English sentence has an untranslated application, however well the page itself is translated.
+
+Keys follow the existing convention: `Account_Login_Title`, `Account_Login_InvalidCredentials`, `Setup_CreateAdministrator`, and so on.
+
+- [ ] **Step 2: Do not translate the operator surface**
+
+Log messages, CLI output and exception text stay English. They are read by operators and pasted into issue trackers, and a translated log line is harder to search, not easier. Only user-facing UI text is localized.
+
+- [ ] **Step 3: Prove both cultures render**
+
+Extend the Playwright suite: the existing German assertion covers the home page, so add one for a page this epic adds — the sign-in page is the natural choice, since it is the first thing any user sees.
+
+```csharp
+    [Fact]
+    public async Task The_sign_in_page_renders_in_German_for_a_German_browser()
+    {
+        IPage page = await NewPageAsync("de-DE");
+
+        await page.GotoAsync($"{app.BaseAddress}account/login");
+
+        string? title = await page.GetByTestId("login-title").TextContentAsync();
+        title.Should().Be("Anmelden");
+    }
+```
+
+- [ ] **Step 4: Check for missing keys**
+
+Assert that `SharedResource.de.resx` contains a translation for every key in `SharedResource.resx`. A missing key silently falls back to English, which looks like a working application in review and a half-translated one to a German user.
+
+```csharp
+    [Fact]
+    public void Every_English_resource_key_has_a_German_translation()
+    {
+        HashSet<string> english = ReadKeys("Resources/SharedResource.resx");
+        HashSet<string> german = ReadKeys("Resources/SharedResource.de.resx");
+
+        english.Except(german).Should().BeEmpty("every key must be translated");
+        german.Except(english).Should().BeEmpty("a German key with no English source is a leftover");
+    }
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/Fakturenn.Web tests
+git commit --message "feat(identity): localize every page this epic adds
+
+English and German resources for setup, sign-in, two-factor, recovery codes,
+enrolment, password change and user administration, including the error strings
+endpoints return -- an English error on a German page is an untranslated
+application.
+
+A test asserts the two resource files have identical key sets: a missing key
+falls back to English silently, which reads as working in review and as
+half-translated to a German user.
+
+Operator-facing text -- logs, CLI output, exceptions -- stays English on purpose.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 18: Documentation, and closing SPIKE-009 in the record
 
 **Files:**
 
