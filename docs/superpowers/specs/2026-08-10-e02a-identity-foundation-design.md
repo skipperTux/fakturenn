@@ -396,6 +396,13 @@ The hard part is what a password meter *does to the user*. A meter that says "st
 
 A warning that fires only when it is confident tells the user something true. A meter that always shows something tells them something reassuring, which is worse than silence. If this is built, the KeePassXC health-check approach is the reference for the estimator's shape — implemented from its published description rather than its source, which keeps it clear of GPL entanglement, since algorithms are not copyrightable and only expression is.
 
+Sources for whoever picks this up:
+
+- [What is password entropy?](https://proton.me/blog/what-is-password-entropy) — the concept and why bits, not adjectives.
+- [How to calculate entropy](https://generatepasswords.org/how-to-calculate-entropy/) — the arithmetic, which is the small part.
+- [Why password strength meters are not so great after all](https://generatepasswords.org/why-password-strength-meters-are-not-so-great-after-all/) — the argument this backlog item is built on, and the reason it specifies a warning rather than a meter.
+- [How KeePassXC's password health check works](https://keepassxc.org/blog/2020-08-15-keepassxc-password-healthcheck/) — the reference implementation's approach, in prose.
+
 ### Lockout, sessions, and rate limiting
 
 Lockout: five failures, fifteen-minute window.
