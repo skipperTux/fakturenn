@@ -270,6 +270,40 @@ mechanisms, on purpose:
   load-bearing, regenerate against the mutated model first, then observe which
   test actually fails. Task 4 did this for `RolePermission`'s composite key.
 
+## Host and forwarded headers
+
+- `IPNetwork` is ambiguous. `System.Net.IPNetwork` is the real one;
+  `Microsoft.AspNetCore.HttpOverrides.IPNetwork` is obsolete and still resolves.
+  Use a `using` alias rather than hoping the right one wins.
+- `ForwardedHeadersOptions.KnownIPNetworks` is backed by `DualIPNetworkList`,
+  which implements the generic enumerable for **both** `IPNetwork` types plus
+  the non-generic one. An assertion library reaches the non-generic path and
+  compares against the *obsolete* type, so a direct assertion fails for reasons
+  that have nothing to do with the values. Call `.ToArray()` before asserting.
+- `CA1848` and `CA1873` are build errors here, so log calls in the host go
+  through `[LoggerMessage]` partial methods — see `DatabaseMigrator` for the
+  shape. An `IsEnabled` guard does **not** satisfy CA1873; hoist any
+  `string.Join` or similar argument into a local instead.
+- ASP.NET Core has no RFC 7239 support. `ForwardedHeaders` covers only
+  `XForwardedFor|XForwardedHost|XForwardedProto|XForwardedPrefix`, and renaming
+  the header via `ForwardedForHeaderName` does not help, because the parser
+  still expects X-Forwarded-For's comma-separated list rather than
+  `for=…;proto=…` parameter syntax. `ForwardedHeaderNormalizer` translates
+  `Forwarded` into the `X-Forwarded-*` headers and lets the built-in middleware
+  evaluate trust unchanged. It grants nothing: trust is still anchored on the
+  connection's peer address.
+- In `ForwardedHeaderNormalizer.TryReadNode`, only the length check is
+  load-bearing. `IPAddress.TryParse` already rejects RFC 7239's obfuscated
+  (`_gazonk`) and `unknown` node forms — measured by deleting each predicate
+  separately and watching nothing go red. The predicates are kept as
+  documentation; do not cite them as the mechanism.
+- Clearing `KnownProxies` **and** `KnownIPNetworks` and leaving both empty is
+  the documented way to disable trust validation entirely and honour
+  `X-Forwarded-*` from any source. The code must never clear without adding
+  entries back. The guard that enforces this is an early `return`, not the
+  `InvalidOperationException` below it — that throw is unreachable by
+  construction and is an assertion for the reader, not the mechanism.
+
 ## Containerisation
 
 - There is no Dockerfile, deliberately — the image is built with

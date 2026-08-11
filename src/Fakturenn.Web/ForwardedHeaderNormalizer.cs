@@ -100,10 +100,14 @@ public static class ForwardedHeaderNormalizer
         address = null;
 
         // RFC 7239 section 6.3 permits obfuscated identifiers such as "_hidden", and
-        // section 6.2 permits the literal "unknown". Neither is an address; passing
-        // either through as one would produce a garbage X-Forwarded-For entry that the
-        // built-in parser then silently discards, which looks identical to the header
-        // being absent.
+        // section 6.2 permits the literal "unknown". Neither is an address.
+        //
+        // Only the length check is load-bearing, and it guards the value[0] access
+        // below. The other two predicates are documentation: IPAddress.TryParse
+        // already rejects both forms, which was verified by deleting each one
+        // separately and watching nothing go red. They are kept because naming the
+        // two RFC constructs is worth more to a reader than the branch costs, but
+        // do not mistake them for the mechanism -- the parse is.
         if (value.Length == 0 || value[0] == '_' || value.Equals("unknown", StringComparison.OrdinalIgnoreCase))
         {
             return false;
