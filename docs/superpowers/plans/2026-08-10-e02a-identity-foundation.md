@@ -48,7 +48,6 @@ Already reworked into the tasks below:
 | English and German `.resx` entries for every page this epic adds | C4 | New task before Task 16 |
 | HSTS, Content Security Policy, and the Playwright test that fails if the policy blocks the app's own assets | C5 | Task 7 and Task 15 |
 | Structured authentication event logging, plus the `_msg`-emitting JSON formatter shipped but not selected | C7 | New task |
-| Playwright: a permitted user reaches an authorized page; a locked user's existing session stops working | S1, S2 | Task 15 |
 
 The last two Playwright tests matter most. The first is the only check that would have caught S2 — Task 3's unit tests construct a principal with the claims already present and pass either way. The second is what makes "lock" mean something.
 
@@ -4004,6 +4003,92 @@ dotnet test --project tests/Fakturenn.UiTests
 ```
 
 Expected: 6 passing — the 4 existing plus these 2. Report the duration; the added container start makes this the slowest suite.
+
+- [ ] **Step 4a: The two tests the spec review exists for**
+
+These are not extra coverage. Each one catches a defect that shipped in an earlier draft of this plan and that every other test passed over.
+
+`tests/Fakturenn.UiTests/AuthorizationJourneyTests.cs`:
+
+```csharp
+using AwesomeAssertions;
+using Microsoft.Playwright;
+
+namespace Fakturenn.UiTests;
+
+public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app)
+    : IClassFixture<AuthenticatedWebAppFixture>, IAsyncLifetime
+{
+    private IPlaywright? _playwright;
+    private IBrowser? _browser;
+
+    public async ValueTask InitializeAsync()
+    {
+        _playwright = await Playwright.CreateAsync();
+        _browser = await _playwright.Chromium.LaunchAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_browser is not null)
+        {
+            await _browser.CloseAsync();
+        }
+
+        _playwright?.Dispose();
+    }
+
+    [Fact]
+    public async Task An_administrator_reaches_an_authorized_page()
+    {
+        // The defect this catches: PermissionAuthorizationHandler reads
+        // fakturenn.permission claims, and for one draft of this plan NOTHING wrote
+        // them. Every [Authorize(Policy = ...)] would have returned 403, including
+        // the administrator's own page. The unit tests passed throughout, because
+        // they construct a principal with the claims already present -- they assert
+        // the handler's inputs, not its effect.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!);
+
+        IResponse? response = await page.GotoAsync($"{app.BaseAddress}admin/users");
+
+        response!.Status.Should().Be(200, "the administrator holds users.read");
+        await page.GetByTestId("user-table").WaitForAsync();
+    }
+
+    [Fact]
+    public async Task Locking_a_user_stops_their_existing_session()
+    {
+        // The defect this catches: Identity rotates the security stamp on password
+        // and two-factor changes but NOT on lockout, and the default validation
+        // interval is thirty minutes. Without explicit rotation plus a short
+        // interval, "lock" is a database column that does nothing to anyone already
+        // signed in -- which is not lock.
+        IPage victim = await app.SignInAsAdministratorAsync(_browser!);
+        await victim.GotoAsync($"{app.BaseAddress}admin/users");
+        await victim.GetByTestId("user-table").WaitForAsync();
+
+        await app.LockUserAsync(app.AdminEmail);
+
+        // The stamp validation interval is one minute; poll rather than sleep a flat
+        // minute, so the test is fast when it works and still fails when it does not.
+        bool signedOut = false;
+        for (int attempt = 0; attempt < 40 && !signedOut; attempt++)
+        {
+            await Task.Delay(2000);
+            IResponse? response = await victim.GotoAsync($"{app.BaseAddress}admin/users");
+            signedOut = response!.Url.Contains("/account/login", StringComparison.Ordinal);
+        }
+
+        signedOut.Should().BeTrue(
+            "a locked user's existing cookie must stop working within the stamp validation interval");
+    }
+}
+```
+
+`AuthenticatedWebAppFixture` gains two members:
+
+- `Task<IPage> SignInAsAdministratorAsync(IBrowser browser)` — runs the real setup, enrolment and password-plus-TOTP sign-in once, caches the resulting Playwright `storageState`, and returns a page already carrying it. This is SPIKE-009's "reusable authenticated state" answer, and it must reuse a **genuine** sign-in rather than fabricating a cookie.
+- `Task LockUserAsync(string email)` — locks the account through `UserManager` in the host's own service provider, exactly as the administrative endpoint does, including the explicit `UpdateSecurityStampAsync`. Locking by raw SQL would bypass the stamp rotation and make the test pass for the wrong reason.
 
 - [ ] **Step 5: Prove the journey is load-bearing**
 
