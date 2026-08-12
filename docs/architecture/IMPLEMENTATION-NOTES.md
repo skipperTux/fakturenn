@@ -346,6 +346,22 @@ mechanisms, on purpose:
   `InvalidOperationException` below it — that throw is unreachable by
   construction and is an assertion for the reader, not the mechanism.
 
+## Testing the entrypoint
+
+- `Program.cs` is top-level statements, so **anything wired there is unreachable
+  from an in-process test.** A test over the class alone stays green when the
+  call site is deleted, which is exactly the mutation that matters. The only way
+  to cover it is to run the built assembly as a subprocess --
+  `dotnet Fakturenn.Web.dll --migrate` -- and assert on the exit code and the log
+  output. `tests/Fakturenn.IntegrationTests/MigrateEntrypointTests.cs` is the
+  worked example; Task 8 proved it by deleting the
+  `PermissionCatalogValidator.FindUnknownPermissions` call and watching that one
+  test, and only that test, go red.
+- Operator entrypoints added later (`--reset-password` and friends) have the same
+  property. Test them the same way rather than extracting the body into a
+  testable class and asserting on that -- extracting the body leaves the
+  *dispatch* untested, and the dispatch is the part that silently disappears.
+
 ## Containerisation
 
 - There is no Dockerfile, deliberately — the image is built with
