@@ -31,6 +31,20 @@ adding the underlying *why*.
   it does not catch a BOM (or a missing trailing newline) on a project-root
   file like a `.csproj` or `global.json`-style file. Check generated files by
   hand after scaffolding a new project.
+- **The integration suite can exhaust this host's inotify instances.**
+  `fs.inotify.max_user_instances` is 128 and a desktop session spends most of
+  it (editors, Docker/Podman, chat clients). Every `WebApplication.CreateBuilder`
+  adds a configuration file watcher, and the suite builds several hosts — the
+  fixtures plus every `MigrateEntrypointTests` subprocess. Over the limit,
+  `FileSystemWatcher.StartRaisingEvents` throws `IOException("The configured
+  user limit (128) on the number of inotify instances has been reached")` from
+  inside `FakturennWebApplication.Build`, and whole classes fail for a reason
+  that has nothing to do with them. Run the integration suite with
+  `DOTNET_USE_POLLING_FILE_WATCHER=1`, which uses polling instead of inotify.
+  This is the first thing to check when the integration suite fails
+  inexplicably in bulk; it is the likeliest explanation for the intermittent
+  `MigrateEntrypointTests` failures recorded during Task 9, and it is a
+  property of this workstation, not of CI.
 
 ## Build and analyzer behaviour
 
@@ -377,6 +391,42 @@ mechanisms, on purpose:
   entries back. The guard that enforces this is an early `return`, not the
   `InvalidOperationException` below it — that throw is unreachable by
   construction and is an assertion for the reader, not the mechanism.
+
+## Static SSR pages, account forms and cookies
+
+- **A Blazor static-SSR page endpoint answers POST as well as GET.** Mapping a
+  minimal-API `MapPost` on a page's own route therefore produces two candidates
+  with identical precedence, and every post fails with
+  `AmbiguousMatchException` — not at startup, at request time. The E02a plan
+  specified `GET /account/enrol-totp` and `POST /account/enrol-totp`, and that
+  pairing cannot work. The convention in this application is that **a form's
+  action is never its page route**: `/setup` posts to `/account/setup`, and
+  `/account/enrol-totp` posts to `/account/enrol-totp/verify`. Spec section 8's
+  flow diagram lists the page routes, not the endpoint routes.
+- `CookieOptions` has **no** `SecurePolicy`. That property is on `CookieBuilder`,
+  which configures a whole scheme's cookie; a one-off `Response.Cookies.Append`
+  takes `CookieOptions`, whose equivalent is the boolean `Secure`. The
+  `SameAsRequest` behaviour the application cookie uses is written out by hand as
+  `Secure = http.Request.IsHttps`. Setting it unconditionally would silently drop
+  the cookie on the reference Compose deployment, which serves plain HTTP.
+- `Response.Cookies.Append` URL-escapes the value, so a delimiter inside it
+  survives a round trip escaped. Useful when asserting that a value is protected:
+  the codes are joined with `;`, and a `;` reaching the cookie means the join was
+  written out rather than the ciphertext. Data Protection payloads are base64url,
+  whose alphabet contains no `;`, so that assertion cannot false-positive.
+- Naming a loop variable `code` in a `.razor` file breaks the build: `@code` in
+  markup is parsed as the `@code` directive (RZ2005/RZ1017), wherever it appears
+  on the line.
+- **A show-once cookie can only be proved with a real cookie store.** The
+  mechanism is a `Set-Cookie` deletion, so a test that simply declines to resend
+  the cookie passes whether or not the deletion exists. `SetupHostFixture`'s
+  `CreateClient(CookieContainer)` overload exists for this; deleting the
+  `Cookies.Delete` call reddens the show-once test only because the container
+  honours the expiry.
+- **Do not assert on a guessed Identity recovery-code alphabet.** An earlier
+  version of `EnrolTotpTests` matched `[BCDFGHJKMNPQRTVWXY2346789]{5}-…`, which
+  omits `5`, and silently found six of ten codes. The alphabet is an internal
+  detail of `UserManager`; extract the codes from the rendered markup instead.
 
 ## Testing the entrypoint
 

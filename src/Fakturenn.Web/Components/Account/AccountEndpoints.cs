@@ -1,5 +1,7 @@
+using System.Security.Cryptography;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -25,6 +27,28 @@ public static class AccountEndpoints
     /// </para>
     /// </summary>
     private const long SetupLockKey = 0x464B544E53455455L;
+
+    /// <summary>
+    /// Carries the freshly generated recovery codes from the enrolment post to the page
+    /// that displays them.
+    /// <para>
+    /// A cookie rather than <c>TempData</c> or session state, because neither exists in
+    /// this application and adding server-side session state for one redirect would be a
+    /// dependency the rest of the design does not need. The value is data-protected, so
+    /// what crosses the wire and sits in the browser's cookie jar is ciphertext.
+    /// </para>
+    /// </summary>
+    private const string RecoveryCookieName = "fakturenn_recovery";
+
+    /// <summary>
+    /// The purpose string is part of the key derivation. Changing it makes an
+    /// already-issued cookie undecryptable, which for this cookie means a user loses the
+    /// only display of their recovery codes. Do not edit it.
+    /// </summary>
+    private const string RecoveryProtectorPurpose = "Fakturenn.RecoveryCodeDisplay.v1";
+
+    /// <summary>Ten, per the spec. Shown once, each usable once.</summary>
+    private const int RecoveryCodeCount = 10;
 
     public static void MapAccountEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -143,5 +167,116 @@ public static class AccountEndpoints
                 },
                 cancellationToken);
         });
+
+        // "/enrol-totp/verify", not "/enrol-totp". A Blazor static-SSR page endpoint
+        // accepts POST as well as GET, so mapping this handler on the page's own route
+        // produces two candidates with identical precedence and every post fails with
+        // AmbiguousMatchException. The same reason the setup page at "/setup" posts to
+        // "/account/setup": in this application a form's action is never its page route.
+        group.MapPost("/enrol-totp/verify", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            ApplicationUser? user = await users.GetUserAsync(http.User);
+            if (user is null)
+            {
+                return Results.Redirect("/account/login");
+            }
+
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+
+            // Authenticator apps group the digits; a user copying from one brings the
+            // grouping with them.
+            string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
+
+            bool valid = await users.VerifyTwoFactorTokenAsync(
+                user, TokenOptions.DefaultAuthenticatorProvider, code);
+
+            if (!valid)
+            {
+                // Nothing is written on a failure. MustEnrolTotp in particular stays set:
+                // it is the flag the enrolment gate reads, so clearing it on anything
+                // short of a verified code would make the gate decorative.
+                return Results.Redirect("/account/enrol-totp?error=invalid");
+            }
+
+            await users.SetTwoFactorEnabledAsync(user, true);
+            user.MustEnrolTotp = false;
+            await users.UpdateAsync(user);
+
+            IEnumerable<string>? codes =
+                await users.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount);
+
+            StashRecoveryCodes(http, codes ?? []);
+
+            return Results.Redirect("/account/recovery-codes");
+        });
     }
+
+    /// <summary>
+    /// Reads the stashed recovery codes and clears the cookie, so they are displayed
+    /// exactly once.
+    /// <para>
+    /// The deletion happens <b>before</b> the unprotect, deliberately: a cookie that
+    /// cannot be unprotected -- tampered with, or encrypted under a key ring this instance
+    /// no longer has -- would otherwise survive and fail identically on every subsequent
+    /// request. Clearing first means the failure is self-healing.
+    /// </para>
+    /// </summary>
+    internal static string[] TakeRecoveryCodes(HttpContext http)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+
+        if (!http.Request.Cookies.TryGetValue(RecoveryCookieName, out string? protectedValue))
+        {
+            return [];
+        }
+
+        http.Response.Cookies.Delete(RecoveryCookieName);
+
+        try
+        {
+            return CreateRecoveryProtector(http)
+                .Unprotect(protectedValue)
+                .Split(';', StringSplitOptions.RemoveEmptyEntries);
+        }
+        catch (CryptographicException)
+        {
+            // An empty display, not a 500. The codes are already on the account; the page
+            // says so, and the recovery path is an administrator forcing re-enrolment.
+            return [];
+        }
+    }
+
+    private static void StashRecoveryCodes(HttpContext http, IEnumerable<string> codes)
+    {
+        http.Response.Cookies.Append(
+            RecoveryCookieName,
+            CreateRecoveryProtector(http).Protect(string.Join(';', codes)),
+            new CookieOptions
+            {
+                HttpOnly = true,
+
+                // Strict rather than Lax: nothing links into this page from elsewhere, so
+                // there is no cross-site navigation to accommodate.
+                SameSite = SameSiteMode.Strict,
+
+                // The equivalent of the authentication cookie's SameAsRequest policy,
+                // written out because CookieOptions has no SecurePolicy -- that lives on
+                // CookieBuilder, which configures a scheme rather than one Append call.
+                // Marking it Secure unconditionally would silently drop the cookie on the
+                // reference Compose deployment, which serves plain HTTP on localhost.
+                Secure = http.Request.IsHttps,
+
+                // Long enough to survive the redirect and a slow page load, short enough
+                // that an abandoned enrolment does not leave the codes retrievable.
+                MaxAge = TimeSpan.FromMinutes(5),
+            });
+    }
+
+    private static IDataProtector CreateRecoveryProtector(HttpContext http) =>
+        http.RequestServices
+            .GetRequiredService<IDataProtectionProvider>()
+            .CreateProtector(RecoveryProtectorPurpose);
 }

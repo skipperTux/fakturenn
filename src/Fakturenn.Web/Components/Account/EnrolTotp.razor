@@ -1,0 +1,85 @@
+@page "/account/enrol-totp"
+@using System.Text
+@using Fakturenn.Modules.Identity.Domain
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Identity
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject UserManager<ApplicationUser> Users
+@inject IHttpContextAccessor HttpContextAccessor
+@inject NavigationManager Navigation
+
+<PageTitle>Fakturenn — Set up two-factor authentication</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Set up two-factor authentication</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">
+    Two-factor authentication is required. Add the key below to an authenticator app,
+    then enter the six-digit code it shows.
+</MudText>
+
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="enrol-error">That code was not accepted.</MudAlert>
+}
+
+<MudPaper Class="pa-4 mb-4">
+    <MudText Typo="Typo.caption">Manual entry key</MudText>
+    <MudText Typo="Typo.h6" data-testid="totp-key">@_formattedKey</MudText>
+</MudPaper>
+
+<form method="post" action="/account/enrol-totp/verify" data-testid="enrol-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Authenticator code" name="code" Required="true" data-testid="enrol-code" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="enrol-submit">
+        Verify and enable
+    </MudButton>
+</form>
+
+@code {
+    private string _formattedKey = string.Empty;
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        HttpContext http = HttpContextAccessor.HttpContext!;
+
+        ApplicationUser? user = await Users.GetUserAsync(http.User);
+        if (user is null)
+        {
+            // The [Authorize] attribute is the guard; this covers the narrow case of a
+            // still-valid cookie for a user who no longer exists, which would otherwise
+            // be a null dereference and a 500.
+            Navigation.NavigateTo("/account/login", replace: true);
+            return;
+        }
+
+        // Reuse an existing key rather than resetting on every visit. A user who verified
+        // a code but left before acknowledging their recovery codes still has
+        // MustEnrolTotp set and comes back here; resetting would silently kill the entry
+        // they already added to their authenticator app, and the next code they read from
+        // it would be rejected with no explanation.
+        //
+        // The key is reset only by --reset-mfa or an administrator's clear-TOTP.
+        string? key = await Users.GetAuthenticatorKeyAsync(user);
+        if (string.IsNullOrEmpty(key))
+        {
+            await Users.ResetAuthenticatorKeyAsync(user);
+            key = await Users.GetAuthenticatorKeyAsync(user);
+        }
+
+        _formattedKey = FormatKey(key ?? string.Empty);
+    }
+
+    private static string FormatKey(string key)
+    {
+        var builder = new StringBuilder();
+        for (int i = 0; i < key.Length; i += 4)
+        {
+            builder.Append(key.AsSpan(i, Math.Min(4, key.Length - i))).Append(' ');
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+}

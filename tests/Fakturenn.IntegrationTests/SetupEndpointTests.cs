@@ -11,7 +11,8 @@ namespace Fakturenn.IntegrationTests;
 /// mints an administrator. Every test here drives it over HTTP through the real
 /// pipeline; none of them constructs the handler or a <c>UserManager</c> directly.
 /// </summary>
-public sealed class SetupEndpointTests(SetupHostFixture host) : IClassFixture<SetupHostFixture>
+[Collection(RealHost.Name)]
+public sealed class SetupEndpointTests(SetupHostFixture host)
 {
     private const string ValidPassword = "Korrekt-Pferd-42";
 

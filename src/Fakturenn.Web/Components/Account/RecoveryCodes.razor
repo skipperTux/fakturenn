@@ -1,0 +1,47 @@
+@page "/account/recovery-codes"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject IHttpContextAccessor HttpContextAccessor
+
+<PageTitle>Fakturenn — Recovery codes</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Recovery codes</MudText>
+
+@if (_codes.Length == 0)
+{
+    <MudAlert Severity="Severity.Info" data-testid="recovery-empty">
+        These codes are shown once. If you no longer have them, an administrator can clear
+        your two-factor setup, which issues a fresh set when you enrol again.
+    </MudAlert>
+}
+else
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Store these now. They are shown once and cannot be displayed again.
+        Each code works a single time.
+    </MudAlert>
+
+    <MudPaper Class="pa-4" data-testid="recovery-codes">
+        @* Not named "code": @code at the start of a razor expression is the directive. *@
+        @foreach (string recoveryCode in _codes)
+        {
+            <MudText Typo="Typo.body1">@recoveryCode</MudText>
+        }
+    </MudPaper>
+}
+
+<MudButton Href="/" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="recovery-continue">
+    Continue
+</MudButton>
+
+@code {
+    private string[] _codes = [];
+
+    // Reading consumes: the helper clears the cookie, so a reload or a back-navigation
+    // lands on the empty branch above. That is the intended "shown once" behaviour, and
+    // its cost is real -- a user who leaves this page without writing the codes down
+    // cannot get them back. The codes still work; nothing displays them again. E02a has
+    // no regeneration page on purpose, so the recovery path is an administrator clearing
+    // two-factor setup, which forces re-enrolment and issues a fresh set.
+    protected override void OnInitialized() =>
+        _codes = AccountEndpoints.TakeRecoveryCodes(HttpContextAccessor.HttpContext!);
+}

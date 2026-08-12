@@ -1,9 +1,17 @@
+using System.Net;
+using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Web;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Testcontainers.PostgreSql;
 
 namespace Fakturenn.IntegrationTests;
@@ -34,6 +42,10 @@ public sealed class SetupHostFixture : IAsyncLifetime
     public string BaseAddress { get; private set; } = string.Empty;
 
     public string ConnectionString => _container.GetConnectionString();
+
+    /// <summary>The running host's container, so a test can borrow its real services.</summary>
+    public IServiceProvider Services =>
+        _app?.Services ?? throw new InvalidOperationException("The host has not been started.");
 
     public async ValueTask InitializeAsync()
     {
@@ -117,6 +129,114 @@ public sealed class SetupHostFixture : IAsyncLifetime
         {
             BaseAddress = new Uri(BaseAddress),
         };
+
+    /// <summary>
+    /// A client that keeps cookies in the supplied container, the way a browser does.
+    /// <para>
+    /// The container is not a convenience. The recovery-code cookie is show-once because
+    /// the server sends a deletion for it; a test that simply declined to resend the
+    /// cookie would pass whether or not that deletion exists. Only a store that honours
+    /// the <c>Set-Cookie</c> expiry can tell the two apart.
+    /// </para>
+    /// </summary>
+    public HttpClient CreateClient(CookieContainer cookies) =>
+        new(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = true,
+            CookieContainer = cookies,
+        })
+        {
+            BaseAddress = new Uri(BaseAddress),
+        };
+
+    /// <summary>
+    /// Creates a user through the host's own <see cref="UserManager{TUser}"/>, so the
+    /// security stamp, the normalised names and the password hasher are the ones the
+    /// running application uses rather than a second set built for the test.
+    /// </summary>
+    public async Task<ApplicationUser> CreateUserAsync(string email, CancellationToken cancellationToken)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        var user = new ApplicationUser
+        {
+            Id = Guid.CreateVersion7(),
+            UserName = email,
+            Email = email,
+            DisplayName = email,
+            CreatedAt = DateTimeOffset.UtcNow,
+            MustEnrolTotp = true,
+        };
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IdentityResult result = await users.CreateAsync(user);
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Could not create the test user: {string.Join("; ", result.Errors.Select(error => error.Description))}");
+        }
+
+        return user;
+    }
+
+    /// <summary>
+    /// Mints the application's real authentication cookie for a user.
+    /// <para>
+    /// Sign-in does not exist until Task 11, so there is no endpoint to post credentials
+    /// to yet. Rather than fake authentication with a test scheme — which would prove
+    /// nothing about the pipeline that actually guards these pages — this asks the host
+    /// for the same claims factory and the same <see cref="CookieAuthenticationOptions"/>
+    /// the cookie handler uses, and protects the ticket with the host's own key ring.
+    /// The result is a cookie the running application accepts because it is the cookie
+    /// the running application would have issued.
+    /// </para>
+    /// <para>
+    /// <c>IssuedUtc</c> is set to now on purpose: the security-stamp validator revalidates
+    /// only after its one-minute interval has elapsed, so a freshly issued ticket keeps
+    /// these tests independent of how long the suite has been running.
+    /// </para>
+    /// </summary>
+    public async Task<Cookie> CreateAuthenticationCookieAsync(ApplicationUser user)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        IUserClaimsPrincipalFactory<ApplicationUser> factory =
+            scope.ServiceProvider.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
+        ClaimsPrincipal principal = await factory.CreateAsync(user);
+
+        CookieAuthenticationOptions options = scope.ServiceProvider
+            .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(IdentityConstants.ApplicationScheme);
+
+        AuthenticationTicket ticket = new(principal, IdentityConstants.ApplicationScheme);
+        ticket.Properties.IssuedUtc = DateTimeOffset.UtcNow;
+        ticket.Properties.ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1);
+
+        return new Cookie(options.Cookie.Name!, options.TicketDataFormat.Protect(ticket), "/");
+    }
+
+    /// <summary>
+    /// How many recovery codes the account currently holds, read through the host's
+    /// <see cref="UserManager{TUser}"/> so the encrypted column is decrypted with the
+    /// host's key ring rather than the test's.
+    /// </summary>
+    public async Task<int> CountRecoveryCodesAsync(Guid userId)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await users.FindByIdAsync(userId.ToString())
+            ?? throw new InvalidOperationException($"No user with id {userId}.");
+
+        return await users.CountRecoveryCodesAsync(user);
+    }
 
     private DataProtectionDbContext CreateDataProtectionContext() =>
         new(new DbContextOptionsBuilder<DataProtectionDbContext>()
