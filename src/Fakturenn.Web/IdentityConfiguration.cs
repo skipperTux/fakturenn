@@ -129,10 +129,10 @@ public static class IdentityConfiguration
         // Lockout alone would make the login endpoint a user-enumeration oracle:
         // a locked account answers differently from an unknown one under load.
         //
-        // Partitioned on username PLUS client IP. IP alone is useless behind a shared
-        // address and a self-DoS behind a proxy; username alone lets one attacker
-        // spray many accounts freely. The client IP is only meaningful because
-        // forwarded-header trust is configured -- see AddForwardedHeaderTrust.
+        // Partitioned on identity PLUS client IP -- see AccountRateLimitPartition for how
+        // the identity is resolved and why it is never the address alone. IP alone is
+        // useless behind a shared address and a self-DoS behind a proxy; identity alone
+        // lets one attacker spray many accounts freely.
         //
         // Accepted trade-off: this limiter is in-memory per replica, so with N
         // replicas the effective limit is N x PermitLimit. Solving that needs shared
@@ -141,24 +141,14 @@ public static class IdentityConfiguration
         builder.Services.AddRateLimiter(options =>
         {
             options.AddPolicy("account", context =>
-            {
-                // Upper-cased rather than lower-cased only because CA1308 rejects the
-                // other direction. The partition key needs one consistent folding, not
-                // a particular one.
-                string user = context.Request.HasFormContentType
-                    ? context.Request.Form["email"].ToString().Trim().ToUpperInvariant()
-                    : string.Empty;
-                string address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-                return RateLimitPartition.GetFixedWindowLimiter(
-                    $"{user}|{address}",
+                RateLimitPartition.GetFixedWindowLimiter(
+                    AccountRateLimitPartition.KeyFor(context),
                     _ => new FixedWindowRateLimiterOptions
                     {
                         PermitLimit = 10,
                         Window = TimeSpan.FromMinutes(1),
                         QueueLimit = 0,
-                    });
-            });
+                    }));
 
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         });

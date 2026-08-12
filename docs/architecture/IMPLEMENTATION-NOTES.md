@@ -428,6 +428,63 @@ mechanisms, on purpose:
   omits `5`, and silently found six of ten codes. The alphabet is an internal
   detail of `UserManager`; extract the codes from the rendered markup instead.
 
+## Identity, sign-in and lockout
+
+- **The `account` rate limiter partitions on identity plus client address, and
+  never on the address alone.** `AccountRateLimitPartition.KeyFor` resolves the
+  best identity available, in this order: the signed-in user's id claim
+  (`UseAuthentication` runs before `UseRateLimiter`, so the application cookie is
+  already a principal); the user id inside Identity's two-factor cookie,
+  unprotected through `CookieAuthenticationOptions.TicketDataFormat` for the
+  `Identity.TwoFactorUserId` scheme; the `email` form field; then nothing.
+  **Any endpoint added to the `/account` group inherits this key — do not write a
+  new partitioner.**
+  - The first version read only the `email` form field, which only
+    `/login/submit` and `/setup` carry. `/login-2fa/submit`,
+    `/login-recovery/submit`, `/change-password/submit` and `/logout` therefore
+    keyed on the address alone. That is a **self-DoS**, and worse than it looks
+    because the documented safe default configures no forwarded-header trust: every
+    client behind a reverse proxy or a NAT then presents the proxy's address, so one
+    ten-per-minute budget covers every user of the instance. A small office behind
+    one address would lock itself out of its own second factor, with no
+    configuration mistake to point at.
+  - Measured both ways. Two users behind one address, six failing
+    `/change-password/submit` posts each: with the identity key every response is
+    302; reverting the key to `$"|{address}"` turns the second user's six into 429
+    and takes eleven other tests with it, which is the same instance-wide
+    contention the defect causes in production.
+  - The address stays in the key so one compromised account cannot exhaust
+    another user's budget, and address-only remains the fallback for a caller with
+    no identity at all — that case is genuinely anonymous and the address is the
+    only thing left.
+  - The two-factor **ticket** is unprotected rather than its ciphertext being used
+    as the key: a re-issued cookie is a different string for the same user, so
+    keying on the ciphertext would let a caller reset their own budget by posting
+    the password again. `SecureDataFormat.Unprotect` answers null for a value it
+    cannot read, so a tampered cookie falls through instead of throwing inside the
+    limiter — covered by a test, because a throw there would be a 500 on an
+    unauthenticated endpoint.
+  - The user id lives under **`ClaimTypes.Name`** in the two-factor scheme, not
+    under `IdentityOptions.ClaimsIdentity.UserIdClaimType` (`NameIdentifier`), which
+    is what the application cookie uses. `SignInManager` writes and reads it that
+    way. Verified against a live ticket, not taken from documentation.
+- **`AccessFailedCount` is not a running record of failed attempts.**
+  `UserManager.AccessFailedAsync` increments it, and when the count reaches
+  `MaxFailedAccessAttempts` it sets `LockoutEnd` **and resets the counter to zero in
+  the same call**. So a locked-out account reads `AccessFailedCount = 0`, exactly
+  when a reader most expects it to read 5. An administration page or an audit view
+  that shows "failed attempts" from this column would show `0` at the moment it
+  matters; use `LockoutEnd` to answer "is this account locked", and log the
+  attempts if a count is genuinely wanted. Measured in E02a Task 11 — an assertion
+  of `Be(5)` failed with `found 0`.
+- `SignInManager.SignInWithClaimsAsync` assigns `HttpContext.User` as well as
+  writing the cookie to the response, so a handler **can** read
+  `UserManager.GetUserAsync(http.User)` immediately after a successful
+  `TwoFactorAuthenticatorSignInAsync` and get the user back. This is not the
+  behaviour the response-cookie mechanism suggests, and it was measured rather than
+  assumed: rewriting the handler to capture the two-factor user *before* the sign-in
+  left every test green, so both forms work.
+
 ## Testing the entrypoint
 
 - `Program.cs` is top-level statements, so **anything wired there is unreachable

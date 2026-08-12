@@ -1,10 +1,8 @@
-using System.Globalization;
 using System.Net;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Microsoft.EntityFrameworkCore;
-using OtpNet;
 
 namespace Fakturenn.IntegrationTests;
 
@@ -40,9 +38,9 @@ public sealed class SignInTests(SetupHostFixture host)
         (ApplicationUser user, string _) = await EnrolledUserAsync("password-only@example.test");
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.11"));
+        using HttpClient client = host.CreateClient(cookies);
 
-        using (HttpResponseMessage response = await PostPasswordAsync(client, user.UserName!, Password))
+        using (HttpResponseMessage response = await SignInHelper.PostPasswordAsync(client, user.UserName!, Password))
         {
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/account/login-2fa");
@@ -67,11 +65,11 @@ public sealed class SignInTests(SetupHostFixture host)
         (ApplicationUser user, string key) = await EnrolledUserAsync("both-factors@example.test");
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.12"));
+        using HttpClient client = host.CreateClient(cookies);
 
         await PasswordStepAsync(client, user.UserName!);
 
-        using (HttpResponseMessage response = await PostCodeAsync(client, "/account/login-2fa/submit", CurrentCode(key)))
+        using (HttpResponseMessage response = await SignInHelper.PostCodeAsync(client, "/account/login-2fa/submit", SignInHelper.CurrentCode(key)))
         {
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/");
@@ -89,11 +87,11 @@ public sealed class SignInTests(SetupHostFixture host)
         (ApplicationUser user, string key) = await EnrolledUserAsync("wrong-code@example.test");
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.13"));
+        using HttpClient client = host.CreateClient(cookies);
 
         await PasswordStepAsync(client, user.UserName!);
 
-        using (HttpResponseMessage response = await PostCodeAsync(client, "/account/login-2fa/submit", WrongCode(key)))
+        using (HttpResponseMessage response = await SignInHelper.PostCodeAsync(client, "/account/login-2fa/submit", SignInHelper.WrongCode(key)))
         {
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/account/login-2fa?error=invalid");
@@ -110,12 +108,12 @@ public sealed class SignInTests(SetupHostFixture host)
         string spent = codes[0];
 
         CookieContainer first = new();
-        using (HttpClient client = host.CreateClient(first, From("127.0.0.14")))
+        using (HttpClient client = host.CreateClient(first))
         {
             await PasswordStepAsync(client, user.UserName!);
 
             using HttpResponseMessage response =
-                await PostCodeAsync(client, "/account/login-recovery/submit", spent);
+                await SignInHelper.PostCodeAsync(client, "/account/login-recovery/submit", spent);
 
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/");
@@ -130,12 +128,12 @@ public sealed class SignInTests(SetupHostFixture host)
         // A second, independent sign-in offering the same code. Anything that accepts it
         // has turned a one-shot credential into a reusable password.
         CookieContainer second = new();
-        using (HttpClient client = host.CreateClient(second, From("127.0.0.14")))
+        using (HttpClient client = host.CreateClient(second))
         {
             await PasswordStepAsync(client, user.UserName!);
 
             using HttpResponseMessage response =
-                await PostCodeAsync(client, "/account/login-recovery/submit", spent);
+                await SignInHelper.PostCodeAsync(client, "/account/login-recovery/submit", spent);
 
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/account/login-recovery?error=invalid");
@@ -152,26 +150,26 @@ public sealed class SignInTests(SetupHostFixture host)
         // reports LockedOut for that same attempt rather than the next one.
         (ApplicationUser user, string _) = await EnrolledUserAsync("lockout@example.test");
 
-        using HttpClient client = host.CreateClient(new CookieContainer(), From("127.0.0.15"));
+        using HttpClient client = host.CreateClient();
 
         for (int attempt = 1; attempt < 5; attempt++)
         {
             using HttpResponseMessage response =
-                await PostPasswordAsync(client, user.UserName!, "Falsch-Pferd-99");
+                await SignInHelper.PostPasswordAsync(client, user.UserName!, "Falsch-Pferd-99");
 
             response.Headers.Location?.OriginalString.Should().Be(
                 "/account/login?error=invalid",
                 $"attempt {attempt} is below the limit");
         }
 
-        using (HttpResponseMessage fifth = await PostPasswordAsync(client, user.UserName!, "Falsch-Pferd-99"))
+        using (HttpResponseMessage fifth = await SignInHelper.PostPasswordAsync(client, user.UserName!, "Falsch-Pferd-99"))
         {
             fifth.StatusCode.Should().Be(HttpStatusCode.Found);
             fifth.Headers.Location?.OriginalString.Should().Be("/account/lockout");
         }
 
         // The durable half. A lock that the correct password walks through is not a lock.
-        using (HttpResponseMessage correct = await PostPasswordAsync(client, user.UserName!, Password))
+        using (HttpResponseMessage correct = await SignInHelper.PostPasswordAsync(client, user.UserName!, Password))
         {
             correct.Headers.Location?.OriginalString.Should().Be("/account/lockout");
         }
@@ -196,14 +194,14 @@ public sealed class SignInTests(SetupHostFixture host)
         // password. Compared byte for byte rather than asserted to be "similar".
         (ApplicationUser known, string _) = await EnrolledUserAsync("known@example.test");
 
-        using HttpClient client = host.CreateClient(new CookieContainer(), From("127.0.0.16"));
+        using HttpClient client = host.CreateClient();
 
         using HttpResponseMessage unknown =
-            await PostPasswordAsync(client, "no-such-account@example.test", Password);
+            await SignInHelper.PostPasswordAsync(client, "no-such-account@example.test", Password);
         string unknownBody = await unknown.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         using HttpResponseMessage wrongPassword =
-            await PostPasswordAsync(client, known.UserName!, "Falsch-Pferd-99");
+            await SignInHelper.PostPasswordAsync(client, known.UserName!, "Falsch-Pferd-99");
         string wrongPasswordBody =
             await wrongPassword.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
@@ -220,12 +218,12 @@ public sealed class SignInTests(SetupHostFixture host)
         await host.SetMustChangePasswordAsync(user.Id, value: true, TestContext.Current.CancellationToken);
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.17"));
+        using HttpClient client = host.CreateClient(cookies);
 
         await PasswordStepAsync(client, user.UserName!);
 
         using HttpResponseMessage response =
-            await PostCodeAsync(client, "/account/login-2fa/submit", CurrentCode(key));
+            await SignInHelper.PostCodeAsync(client, "/account/login-2fa/submit", SignInHelper.CurrentCode(key));
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
         response.Headers.Location?.OriginalString.Should().Be(
@@ -240,8 +238,8 @@ public sealed class SignInTests(SetupHostFixture host)
         await host.SetMustChangePasswordAsync(user.Id, value: true, TestContext.Current.CancellationToken);
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.18"));
-        await SignInAsync(client, user.UserName!, key);
+        using HttpClient client = host.CreateClient(cookies);
+        await SignInHelper.SignInAsync(client, user.UserName!, Password, key);
 
         using (HttpResponseMessage wrongCurrent =
             await PostChangePasswordAsync(client, "Falsch-Pferd-99", ReplacementPassword))
@@ -269,8 +267,8 @@ public sealed class SignInTests(SetupHostFixture host)
         await host.SetMustChangePasswordAsync(user.Id, value: true, TestContext.Current.CancellationToken);
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.19"));
-        await SignInAsync(client, user.UserName!, key);
+        using HttpClient client = host.CreateClient(cookies);
+        await SignInHelper.SignInAsync(client, user.UserName!, Password, key);
 
         using (HttpResponseMessage changed =
             await PostChangePasswordAsync(client, Password, ReplacementPassword))
@@ -303,8 +301,8 @@ public sealed class SignInTests(SetupHostFixture host)
         (ApplicationUser user, string key) = await EnrolledUserAsync("logout@example.test");
 
         CookieContainer cookies = new();
-        using HttpClient client = host.CreateClient(cookies, From("127.0.0.20"));
-        await SignInAsync(client, user.UserName!, key);
+        using HttpClient client = host.CreateClient(cookies);
+        await SignInHelper.SignInAsync(client, user.UserName!, Password, key);
 
         using (HttpResponseMessage response = await client.PostAsync(
             new Uri("/account/logout", UriKind.Relative),
@@ -319,55 +317,10 @@ public sealed class SignInTests(SetupHostFixture host)
         probe.StatusCode.Should().Be(HttpStatusCode.Found, "the session must be gone, not merely redirected away from");
     }
 
-    /// <summary>
-    /// The loopback address a test posts from. Every test uses a different one because the
-    /// account rate limiter partitions on the client address plus the <c>email</c> form
-    /// field, and the second-factor, change-password and sign-out forms carry no e-mail —
-    /// so those endpoints share one ten-per-minute budget per address. Sharing an address
-    /// across the class makes later tests answer 429 for a reason that has nothing to do
-    /// with what they assert. Measured, not assumed: six of these tests failed that way
-    /// before they were separated.
-    /// </summary>
-    private static IPAddress From(string address) => IPAddress.Parse(address);
-
-    private static string CurrentCode(string key) =>
-        new Totp(Base32Encoding.ToBytes(key)).ComputeTotp();
-
-    /// <summary>
-    /// A syntactically valid six-digit code that is not the current one. Derived from the
-    /// real code so it cannot collide with it, including across a window roll.
-    /// </summary>
-    private static string WrongCode(string key) =>
-        ((int.Parse(CurrentCode(key), CultureInfo.InvariantCulture) + 500000) % 1000000)
-            .ToString("D6", CultureInfo.InvariantCulture);
-
     private static IEnumerable<string> CookieNames(CookieContainer cookies) =>
         cookies.GetAllCookies()
             .Where(cookie => !cookie.Expired)
             .Select(cookie => cookie.Name);
-
-    private static async Task<HttpResponseMessage> PostPasswordAsync(
-        HttpClient client,
-        string email,
-        string password)
-    {
-        using FormUrlEncodedContent form = new(
-        [
-            new KeyValuePair<string, string>("email", email),
-            new KeyValuePair<string, string>("password", password),
-        ]);
-
-        return await client.PostAsync(
-            new Uri("/account/login/submit", UriKind.Relative), form, TestContext.Current.CancellationToken);
-    }
-
-    private static async Task<HttpResponseMessage> PostCodeAsync(HttpClient client, string path, string code)
-    {
-        using FormUrlEncodedContent form = new([new KeyValuePair<string, string>("code", code)]);
-
-        return await client.PostAsync(
-            new Uri(path, UriKind.Relative), form, TestContext.Current.CancellationToken);
-    }
 
     private static async Task<HttpResponseMessage> PostChangePasswordAsync(
         HttpClient client,
@@ -391,20 +344,10 @@ public sealed class SignInTests(SetupHostFixture host)
 
     private static async Task PasswordStepAsync(HttpClient client, string email)
     {
-        using HttpResponseMessage response = await PostPasswordAsync(client, email, Password);
+        using HttpResponseMessage response = await SignInHelper.PostPasswordAsync(client, email, Password);
 
         response.Headers.Location?.OriginalString.Should().Be(
             "/account/login-2fa", "the password step must reach the challenge before a test can go further");
-    }
-
-    private static async Task SignInAsync(HttpClient client, string email, string key)
-    {
-        await PasswordStepAsync(client, email);
-
-        using HttpResponseMessage response =
-            await PostCodeAsync(client, "/account/login-2fa/submit", CurrentCode(key));
-
-        response.Headers.Location?.OriginalString.Should().NotBe("/account/login-2fa?error=invalid");
     }
 
     private string? StampClaim(CookieContainer cookies)
