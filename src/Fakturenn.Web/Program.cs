@@ -1,5 +1,8 @@
+using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -32,11 +35,40 @@ if (args.Contains("--migrate"))
             .UseNpgsql(migrationConnectionString)
             .Options);
 
-    // One factory per module-owned DbContext. Today there is only the Invoices module;
-    // a future module with its own DbContext adds one more entry here rather than a
-    // discovery mechanism -- see DatabaseMigrator's remarks for why the signature takes
-    // a list instead of a single hard-coded context.
-    Func<DbContext>[] createMigrationContexts = [CreateMigrationContext];
+    // IdentityDbContext demands an IDataProtectionProvider for the value converter on
+    // AspNetUserTokens.Value. Migrating only builds the model -- the converter's
+    // expressions are compiled, never invoked -- so an ephemeral file-backed provider is
+    // enough, and it deliberately does NOT reach into app.Services: the registered
+    // provider persists its ring through DataProtectionDbContext, whose table may not
+    // exist yet at this point.
+    IdentityDbContext CreateIdentityMigrationContext() =>
+        new(new DbContextOptionsBuilder<IdentityDbContext>()
+                .UseNpgsql(migrationConnectionString)
+                .Options,
+            DataProtectionProvider.Create(
+                new DirectoryInfo(Path.Combine(Path.GetTempPath(), "fakturenn-migrate"))));
+
+    DataProtectionDbContext CreateDataProtectionMigrationContext() =>
+        new(new DbContextOptionsBuilder<DataProtectionDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
+    // One factory per context that owns migrations. A future module with its own
+    // DbContext adds one more entry here rather than a discovery mechanism -- see
+    // DatabaseMigrator's remarks for why the signature takes a list instead of a single
+    // hard-coded context.
+    //
+    // The Data Protection context is listed first for readability, not correctness: the
+    // order was measured by putting Identity first against a clean database, and all
+    // three migrations still applied. Nothing in a migration protects or unprotects a
+    // value, and the provider above is file-backed anyway, so no ordering constraint
+    // between these three exists today.
+    Func<DbContext>[] createMigrationContexts =
+    [
+        CreateDataProtectionMigrationContext,
+        CreateIdentityMigrationContext,
+        CreateMigrationContext,
+    ];
 
     int exitCode = await DatabaseMigrator.RunAsync(createMigrationContexts, databaseOptions, migrationLogger);
 
