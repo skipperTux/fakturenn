@@ -69,7 +69,11 @@ the build, not the review:
    assembly. This is what keeps E-Invoice-EU adapter types out of the domain.
 5. `Fakturenn.Modules.X` must not reference `Fakturenn.Modules.Y`. It may
    reference `Fakturenn.Modules.Y.Contracts`.
-6. No dependency cycles between `Fakturenn.Modules.*` assemblies.
+6. No dependency cycles between **namespace slices** under `Fakturenn.Modules.*`.
+   The rule is `Slices().Matching("Fakturenn.Modules.(*)")`, and `(*)` captures the
+   whole remaining namespace — so `Fakturenn.Modules.Identity.Authorization` and
+   `Fakturenn.Modules.Identity.Persistence` are two separate slices. It therefore
+   constrains namespaces *within* one module as well as across modules.
 
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
@@ -80,13 +84,22 @@ or `.Documents*` eventually appears, the rule does not newly switch on — it
 gets **narrower**, carving out an exemption for the one assembly now allowed
 to use the library.
 
-Rules 5 and 6 are the ones that are genuinely vacuous today: rule 5 compares
-`ModuleNameOf(origin) != ModuleNameOf(target)`, which cannot be satisfied
-while `Fakturenn.Modules.Invoices` is the only module — there is no second
-module to depend on. Rule 6 needs two modules to have a cycle between; one
-module means one slice, so there is nothing to cycle. Both become binding the
-moment a second `Fakturenn.Modules.*` assembly appears. Do not delete a rule
-because it currently matches nothing.
+Rules 5 and 6 are binding too. Rule 5 compares
+`ModuleNameOf(origin) != ModuleNameOf(target)`, which needs a second module to
+be satisfiable; `Fakturenn.Modules.Identity` supplied one in E02a Task 1, so it
+has constrained real code ever since. Rule 6 was **never** vacuous:
+`Fakturenn.Modules.Invoices` has carried three namespaces — and therefore three
+slices — since it existed.
+
+Rule 6 fired for the first time in E02a Task 8, on
+`Identity.Authorization` ↔ `Identity.Persistence`: the planned layout put the
+pure `PermissionCatalogValidator` under `Persistence/` while
+`PermissionClaimsPrincipalFactory`, which needs `IdentityDbContext`, sat under
+`Authorization/`. It was a real cycle, not a false positive, and it was resolved
+by moving the validator into `Authorization/` and the claims factory into
+`Persistence/` — leaving `Persistence → Authorization` in one direction only,
+with `Authorization` as the pure policy vocabulary. Do not delete a rule because
+it currently matches nothing.
 
 ## Design principles
 

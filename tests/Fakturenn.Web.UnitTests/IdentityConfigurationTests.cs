@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using Fakturenn.Modules.Identity.Domain;
+using Fakturenn.Modules.Identity.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,6 +15,28 @@ namespace Fakturenn.Web.UnitTests;
 /// </summary>
 public sealed class IdentityConfigurationTests
 {
+    [Fact]
+    public void The_claims_principal_factory_is_the_permission_factory()
+    {
+        // The single most consequential registration in this epic, and the one a unit
+        // test over PermissionClaimsPrincipalFactory cannot prove: that test passes
+        // whether or not AddClaimsPrincipalFactory names the type. Without the
+        // registration, Identity uses its stock factory, nothing writes a
+        // fakturenn.permission claim, PermissionAuthorizationHandler reads a claim that
+        // is never there, and every [Authorize(Policy = ...)] endpoint answers 403 --
+        // including the administrator's own page -- with every unit test still green.
+        //
+        // Resolved from a scope rather than the root provider because Identity
+        // registers the factory as scoped.
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+        using IServiceScope scope = app.Services.CreateScope();
+
+        IUserClaimsPrincipalFactory<ApplicationUser> factory =
+            scope.ServiceProvider.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
+
+        factory.Should().BeOfType<PermissionClaimsPrincipalFactory>();
+    }
+
     [Fact]
     public void The_password_policy_matches_the_documented_defaults()
     {

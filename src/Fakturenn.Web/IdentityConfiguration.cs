@@ -82,7 +82,16 @@ public static class IdentityConfiguration
             })
             .AddEntityFrameworkStores<IdentityDbContext>()
             .AddDefaultTokenProviders()
-            .AddSignInManager();
+            .AddSignInManager()
+
+            // Without this line Identity keeps its stock factory, nothing writes a
+            // fakturenn.permission claim, and PermissionAuthorizationHandler reads a
+            // claim that is never present -- so every [Authorize(Policy = ...)]
+            // endpoint answers 403, including the administrator's own page, while
+            // every unit test stays green because they construct principals with the
+            // claims already there. IdentityConfigurationTests resolves the factory
+            // from the real host to keep that from happening silently again.
+            .AddClaimsPrincipalFactory<PermissionClaimsPrincipalFactory>();
 
         // The policy is configuration, not code: bound over the defaults set above so a
         // deployment can tighten it without a rebuild.

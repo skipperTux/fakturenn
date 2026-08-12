@@ -1,4 +1,5 @@
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web;
@@ -72,8 +73,69 @@ if (args.Contains("--migrate"))
 
     int exitCode = await DatabaseMigrator.RunAsync(createMigrationContexts, databaseOptions, migrationLogger);
 
+    // Seeding runs here, not at application startup. Startup seeding races on the
+    // unique role-name index when more than one replica starts together, and
+    // --migrate already runs exactly once by design.
+    //
+    // RoleSeeder.SeedAsync is a re-sync, not create-if-absent: an installation
+    // upgraded to a version that defines a new permission constant gains the grant.
+    // The catalogue validator catches stored permissions the code does not define;
+    // nothing else would catch permissions the code defines and the database lacks.
+    //
+    // The registered context is used rather than the migration one above, so the audit
+    // interceptor stamps the seeded rows. No request is in flight, so
+    // ICurrentUserAccessor reports nobody and AuditStamp resolves the actor to
+    // "system" -- which is the truth about who created these rows.
+    if (exitCode == 0)
+    {
+        await using AsyncServiceScope seedScope = app.Services.CreateAsyncScope();
+        IdentityDbContext seedContext =
+            seedScope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        await RoleSeeder.SeedAsync(seedContext, CancellationToken.None);
+        MigrationSeedLog.SeededSystemRoles(migrationLogger);
+
+        // A stored permission the code does not define grants nothing, and granting
+        // nothing looks exactly like a working configuration until someone is denied
+        // access they believe they have. Blocking the deployment here rather than at
+        // startup keeps the application's deliberate ability to start without a
+        // database: a startup-time query would have taken that away.
+        List<string> stored = await seedContext.RolePermissions
+            .AsNoTracking()
+            .Select(rolePermission => rolePermission.Permission)
+            .Distinct()
+            .ToListAsync(CancellationToken.None);
+
+        IReadOnlyList<string> unknown = PermissionCatalogValidator.FindUnknownPermissions(stored);
+        if (unknown.Count > 0)
+        {
+            // Joined into a local: CA1873 is an error here, and an IsEnabled guard
+            // does not satisfy it.
+            string offending = string.Join(", ", unknown);
+            MigrationSeedLog.UnknownPermissionsStored(migrationLogger, offending);
+            exitCode = 1;
+        }
+    }
+
     Environment.ExitCode = exitCode;
     return;
 }
 
 await app.RunAsync();
+
+/// <summary>
+/// Logging for the seeding step of the <c>--migrate</c> entrypoint. A source-generated
+/// delegate rather than a direct <c>LogInformation</c> call because CA1848 is an error
+/// in this repository.
+/// </summary>
+internal static partial class MigrationSeedLog
+{
+    [LoggerMessage(Level = LogLevel.Information, Message = "Seeded system roles.")]
+    public static partial void SeededSystemRoles(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "Stored role permissions that this version does not define: {OffendingPermissions}. "
+            + "They grant nothing. Refusing to complete the migration.")]
+    public static partial void UnknownPermissionsStored(ILogger logger, string offendingPermissions);
+}
