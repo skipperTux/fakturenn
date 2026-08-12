@@ -262,6 +262,38 @@ mechanisms, on purpose:
   auto-generated. Those two need stripping by hand after every regenerate, or
   the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
   `head -c3 <file> | od -An -tx1` — `ef bb bf` means the BOM is still there.
+- **A unique index serialises only rows that collide on the indexed value, so it
+  is not a general check-then-act guard.** E02a Task 9's `POST /account/setup`
+  shipped a comment claiming Identity's unique index on `NormalizedUserName`
+  serialised concurrent first-run posts. Measured: four concurrent posts with
+  **distinct** e-mail addresses produced **four administrators** (reproduced in an
+  integration test and with concurrent `curl` against real PostgreSQL), while the
+  same four posts sharing **one** address produced exactly one user. The index was
+  doing real work in the case nobody attacks and none in the case that matters.
+  When a guard has to cover "at most one row in this table, whatever its
+  contents", the mechanism is a lock, not an index — Task 9 uses
+  `pg_advisory_xact_lock` on a fixed key as the first statement inside the
+  transaction, because it is transaction-scoped (released on commit or rollback,
+  no cleanup path) and records no state, so an instance that ends up with zero
+  users correctly reopens `/setup` instead of staying bricked behind a marker row.
+- **An explicit transaction on a `DbContext` configured with
+  `EnableRetryOnFailure` must go through `Database.CreateExecutionStrategy()`.**
+  `BeginTransactionAsync` otherwise throws `InvalidOperationException` telling you
+  to use the configured execution strategy. Both `IdentityDbContext` and
+  `InvoicesDbContext` enable the retry, so every explicit transaction in the
+  application needs the `strategy.ExecuteAsync(async token => { ... })` wrapper.
+  Do not remove the retry to avoid the wrapper — it is a deliberate feature (see
+  the runtime/`--migrate` split above). Note the delegate can re-run: build the
+  entities *inside* it rather than closing over objects a first attempt mutated.
+- **Wrapping a handler in a transaction can serialise it by accident, which
+  manufactures a false green.** Task 9's race test passed with the advisory lock
+  deleted, until the cause was found: the racers were also the first writers to
+  `RoleSeeder`, so the first one's uncommitted unique-index entry on the role name
+  blocked the others, then failed them with a duplicate key — rolling back their
+  *user* inserts too. The fix was to make the fixture seed the roles first, which
+  is what `--migrate` does before the instance ever serves traffic. When a
+  concurrency test goes green, delete the guard and confirm it goes red; if it
+  stays green, the serialisation is coming from somewhere you did not intend.
 - A change to keys, schema name or column facets is caught only by EF's
   `PendingModelChangesWarning`, which fails *every* test in the suite on the
   migration guard rather than the one test that cares. That makes it useless

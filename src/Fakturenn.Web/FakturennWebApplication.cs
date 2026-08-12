@@ -1,5 +1,6 @@
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
+using Fakturenn.Web.Components.Account;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -163,6 +164,8 @@ public static class FakturennWebApplication
         {
             Predicate = registration => registration.Tags.Contains("ready"),
         });
+
+        app.MapAccountEndpoints();
 
         app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 

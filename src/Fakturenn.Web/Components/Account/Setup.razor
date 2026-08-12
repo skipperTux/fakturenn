@@ -1,0 +1,56 @@
+@page "/setup"
+@using Fakturenn.Modules.Identity.Persistence
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IdentityDbContext Db
+@inject NavigationManager Navigation
+
+<PageTitle>Fakturenn — Setup</PageTitle>
+
+@if (_alreadyConfigured)
+{
+    <MudText Typo="Typo.h5">Already configured</MudText>
+}
+else
+{
+    <MudText Typo="Typo.h4" GutterBottom="true">Create the first administrator</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4">
+        This page is available only while no account exists. It disappears permanently
+        once the first administrator is created.
+    </MudText>
+
+    @if (Error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="setup-error">@Error</MudAlert>
+    }
+
+    <form method="post" action="/account/setup" data-testid="setup-form">
+        <AntiforgeryToken />
+        <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="setup-email" />
+        <MudTextField T="string" Label="Display name" name="displayName" Required="true" data-testid="setup-display-name" />
+        <MudTextField T="string" Label="Password" InputType="InputType.Password" name="password" Required="true" data-testid="setup-password" />
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="setup-submit">
+            Create administrator
+        </MudButton>
+    </form>
+}
+
+@code {
+    private bool _alreadyConfigured;
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _alreadyConfigured = await Db.Users.AnyAsync();
+
+        if (_alreadyConfigured)
+        {
+            // A user-count query, not a configuration flag: a flag can be left on,
+            // a populated table cannot.
+            Navigation.NavigateTo("/account/login", replace: true);
+        }
+    }
+}
