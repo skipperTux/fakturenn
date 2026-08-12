@@ -151,6 +151,14 @@ public static class FakturennWebApplication
 
         app.UseAuthentication();
         app.UseAuthorization();
+
+        // After authentication, so HttpContext.User is populated, and before any endpoint
+        // runs, so a user who still owes TOTP enrolment or a forced password change never
+        // gets a page rendered for them. Before UseRateLimiter as well: a gated user being
+        // bounced back to their obligation must not spend the "account" budget they need to
+        // discharge it.
+        app.UseMiddleware<EnrolmentGateMiddleware>();
+
         app.UseRateLimiter();
 
         app.UseAntiforgery();

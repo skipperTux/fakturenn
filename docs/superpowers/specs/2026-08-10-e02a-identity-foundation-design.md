@@ -333,6 +333,14 @@ administration
 
 Every `/setup` and `/account/*` page is static SSR posting a real form. The rest of the application stays Interactive Server.
 
+### The enrolment gate
+
+Both "forced" states above are forced by **middleware running on every request**, not by the redirect the sign-in handler issues. A redirect is a suggestion: a user carrying `MustChangePassword` who types any other URL walks straight past it. The gate reads the flags for the signed-in user on each request and confines them to the page that discharges the outstanding obligation.
+
+When a user carries **both** flags — which is the normal state of an account an administrator has just created — **TOTP enrolment goes first**, then the password change. Sending them to choose a new password first would have them pick that password while the account still has only one factor; enrolling first means the replacement credential is chosen by an account already protected by two.
+
+The gate acts only on a request that resolves to a real user. Anonymous callers pass through untouched, or sign-in itself would be closed.
+
 ### Guards and state
 
 `/setup` is guarded by a user-count query, not a configuration flag. A flag can be left on; a populated table cannot.

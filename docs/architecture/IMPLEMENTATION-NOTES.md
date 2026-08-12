@@ -485,6 +485,62 @@ mechanisms, on purpose:
   assumed: rewriting the handler to capture the two-factor user *before* the sign-in
   left every test green, so both forms work.
 
+## The enrolment gate
+
+`EnrolmentGateMiddleware` (`src/Fakturenn.Web`) plus the pure path predicate
+`EnrolmentGate.IsAllowedWhilePendingObligations`
+(`src/Fakturenn.Modules.Identity/Authorization`). Added in E02a Task 12.
+
+- **Every destination the gate redirects to must be on the allowlist.** Both
+  `MustEnrolTotp` and `MustChangePassword` are enforced, so **both**
+  `/account/enrol-totp` and `/account/change-password` are allowed. Dropping either
+  one is not a "blocked page" — it is an **infinite redirect loop**, because the gate
+  answers its own redirect with the same redirect. Measured by deleting the
+  change-password entry: `/ -> /account/change-password -> /account/change-password
+  -> /account/change-password -> ...`. A test asserting only "blocked pages redirect"
+  stays green through this, which is why
+  `EnrolmentGateTests.The_forced_password_change_settles_on_a_page_rather_than_looping`
+  follows the chain and fails on a repeated path instead of inspecting one hop.
+- **Order when both flags are set: TOTP enrolment first, password change second.**
+  An administrator-created account carries both. Enrolling first means the
+  replacement password is chosen by an account that already has two factors.
+- **`/_blazor` is deliberately NOT allowlisted, and that is a decision, not an
+  oversight.** `AddInteractiveServerRenderMode()` is registered and
+  `MapRazorComponents` runs after the gate, so circuit requests do reach it and are
+  redirected. This is harmless today only because **no component declares a render
+  mode** — `<Routes />` has none — so no circuit is ever negotiated. The moment
+  somebody adds `@rendermode InteractiveServer`, a gated user's page will load and
+  nothing on it will work, which looks like a broken component rather than a gate
+  decision. Failing closed is still correct: allowlisting the circuit endpoint would
+  let a gated user render any interactive page server-side and bypass the gate
+  entirely. Whoever introduces interactivity has to decide what a half-enrolled
+  user's circuit may do.
+- **Static-asset allowlist entries would be dead code, and this was measured against
+  a `dotnet publish` output rather than the test host.** Instrumenting the gate to
+  log every path it sees: `/app.css`, `/_framework/blazor.web.js` and
+  `/_content/MudBlazor/MudBlazor.min.css` all answered 200 and **never appeared in
+  the log** — `UseStaticFiles` runs before `UseAuthentication`, and therefore before
+  the gate, and short-circuits them. `/favicon.ico` and `/css/app.css` *do* reach the
+  gate, but only because nothing serves them (this application has neither), so
+  entries for them would convert a redirect into a 404 and nothing more. All four
+  prefixes from the original plan were therefore removed.
+- **The integration host is NOT representative for static files.** It is built from
+  the test project's content root, which has no `wwwroot`, and it runs as Production
+  so `UseStaticWebAssets` never loads the manifest either. Every asset request there
+  falls through to the gate and is redirected — the opposite of a deployment. Do not
+  write an integration test asserting "a gated user still gets the stylesheet"; it
+  will fail, and fixing it by re-adding the allowlist entries would pin the test
+  host's artefact instead of the application's behaviour.
+- **The `IsAuthenticated` early return is a performance guard, not the correctness
+  guard.** Deleting it leaves all 60 integration tests green, and the honest reason is
+  that `UserManager.GetUserAsync` answers null for an anonymous principal and the
+  gate's null branch then declines to act — something else was providing the
+  guarantee. What the early return actually buys is one avoided database round trip
+  per anonymous request. The mutation that *does* redden is treating a null user as
+  gated, and it reddens **30 of 60**, including every `SignInTests` and
+  `SetupEndpointTests` case: a gate that acts on anonymous callers closes sign-in and
+  first-run setup, which is the whole application.
+
 ## Testing the entrypoint
 
 - `Program.cs` is top-level statements, so **anything wired there is unreachable
