@@ -56,25 +56,45 @@ Targets:
 
 Set `Network:KnownProxies` or `Network:KnownNetworks` to the proxy in front.
 With neither set, forwarded headers are ignored entirely and the application
-trusts only the peer address it observes itself.
+trusts only the peer address it observes itself. That is the safe default, not
+a failure — configure trust before expecting any forwarded header to have an
+effect.
 
-Fakturenn reads either `X-Forwarded-*` or the RFC 7239 `Forwarded` header. **A
-proxy that emits `Forwarded` must be configured to put a real address in
-`for=`.** RFC 7239 section 6.2 makes an obfuscated identifier such as
-`for=_YQuN68tm6` the default form, and an obfuscated identifier carries no
-address at all: Fakturenn cannot see the client, and per-client account rate
-limiting degrades to per-proxy — every client behind that proxy shares one
-budget.
-
-For YARP, this is the `Forwarded` request transform's `ForFormat`. It defaults
-to `Random`. Use `Ip`, `IpAndPort` or `IpAndRandomPort` instead. Enabling that
-transform at all also switches YARP's `X-Forwarded` transforms **off**, so
-there is no fallback header — the obfuscated `for=` is everything the
-application receives.
+`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are the primary
+path. Every reverse proxy emits them and ASP.NET Core consumes them natively;
+any proxy will do. Fakturenn additionally understands the RFC 7239 `Forwarded`
+header, which ASP.NET Core itself does not.
 
 Whichever header the proxy sets, it must strip the inbound copy of it.
 Fakturenn ignores `Forwarded` whenever `X-Forwarded-For` is present rather than
 merging two chains of different provenance.
+
+### If the proxy is configured to emit `Forwarded`
+
+**The `for=` element must carry a real address.** RFC 7239 section 6.3 defines
+an obfuscated identifier such as `for=_YQuN68tm6`, and section 8.3 recommends
+it as a default configuration; an obfuscated identifier carries no address at
+all. Fakturenn then falls back to the peer address, and per-client account rate
+limiting degrades to per-proxy — every client behind that proxy shares one
+budget.
+
+Implementations differ on this, so check the one in use rather than assuming:
+
+- HAProxy 2.8 and later emits `Forwarded` first-class via `option forwarded`.
+  The bare form expands to `proto for` and puts a real address in `for=`, so
+  the default is already correct. It is set in `defaults`, `listen` or
+  `backend`, and ignored in a `frontend`.
+- YARP's `Forwarded` request transform defaults its `ForFormat` to `Random`,
+  which is an obfuscated identifier. Use `Ip`, `IpAndPort` or `IpAndRandomPort`
+  instead.
+
+Note the independence trap: emitting `Forwarded` does not imply emitting
+`X-Forwarded-*` beside it, so there may be no fallback. HAProxy's
+`option forwarded` is independent of `option forwardfor` — enabling only the
+former sends `Forwarded` and no `X-Forwarded-For` at all. YARP goes further and
+switches its `X-Forwarded` transforms **off** when the `Forwarded` transform is
+enabled. In both cases the `for=` element is everything the application
+receives.
 
 ## Migrations
 

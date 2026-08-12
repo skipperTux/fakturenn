@@ -284,44 +284,61 @@ mechanisms, on purpose:
   through `[LoggerMessage]` partial methods — see `DatabaseMigrator` for the
   shape. An `IsEnabled` guard does **not** satisfy CA1873; hoist any
   `string.Join` or similar argument into a local instead.
-- ASP.NET Core has no RFC 7239 support. `ForwardedHeaders` covers only
-  `XForwardedFor|XForwardedHost|XForwardedProto|XForwardedPrefix`, and renaming
-  the header via `ForwardedForHeaderName` does not help, because the parser
-  still expects X-Forwarded-For's comma-separated list rather than
-  `for=…;proto=…` parameter syntax. `ForwardedHeaderNormalizer` translates
-  `Forwarded` into the `X-Forwarded-*` headers and lets the built-in middleware
-  evaluate trust unchanged. It grants nothing: trust is still anchored on the
-  connection's peer address.
+- The state of the RFC 7239 ecosystem, checked against primary sources. Do not
+  re-research this, and do not repeat the corrected claims:
+  - **ASP.NET Core cannot consume `Forwarded`.** `ForwardedHeaders` covers only
+    `XForwardedFor|XForwardedHost|XForwardedProto|XForwardedPrefix`, and
+    renaming the header via `ForwardedForHeaderName` does not help, because the
+    parser still expects X-Forwarded-For's comma-separated list rather than
+    `for=…;proto=…` parameter syntax. dotnet/aspnetcore#5978 ("Support the
+    `Forwarded` header") was filed 2016-01-27 and is still open, milestone
+    Backlog, labelled `severity-minor`. The shim is permanent, not a stopgap.
+  - **HAProxy ≥ 2.8 (June 2023) is the only first-class emitter** among widely
+    deployed open-source proxies. Opt-in via `option forwarded`; the bare form
+    expands to `proto for` and emits `forwarded: proto=http;for=127.0.0.1` — a
+    **real address**. Set in `defaults`/`listen`/`backend`, ignored in
+    `frontend`, and **independent of `option forwardfor`**: enabling only the
+    standards-compliant one sends no `X-Forwarded-*` at all.
+  - nginx, ingress-nginx, Traefik, Caddy, Apache httpd and Envoy do **not**
+    emit it first-class. Traefik specifically does not — corrected against the
+    `traefik v3.3.0` source after the opposite was asserted here.
+  - **No proxy consumes `Forwarded`** for client-IP determination. HAProxy is
+    the partial exception: it ships `rfc7239_field`, `rfc7239_is_valid`,
+    `rfc7239_n2nn` and `rfc7239_n2np` converters for explicit parsing, but does
+    not use the header for its own client IP automatically.
+  - The obfuscation hazard is therefore **implementation-specific, not
+    general**. RFC 7239 section 8.3 recommends an obfuscated default and YARP
+    follows it (`ForFormat` defaults to `Random`); HAProxy does not. Neither
+    one generalises to "emitters obfuscate by default".
+- `ForwardedHeaderNormalizer` translates `Forwarded` into the `X-Forwarded-*`
+  headers and lets the built-in middleware evaluate trust unchanged. It grants
+  nothing: trust is still anchored on the connection's peer address.
 - In `ForwardedHeaderNormalizer.TryReadNode`, only the length check is
   load-bearing. `IPAddress.TryParse` already rejects RFC 7239's obfuscated
   (`_gazonk`) and `unknown` node forms — measured by deleting each predicate
   separately and watching nothing go red. The predicates are kept as
   documentation; do not cite them as the mechanism.
-- The shim is permanent, not a stopgap. dotnet/aspnetcore#5978 ("Support the
-  `Forwarded` header") was filed 2016-01-27 and is still open, milestone
-  Backlog, labelled `severity-minor`. Do not re-research this.
-- Measured against every form YARP's `Forwarded` request transform emits —
-  `tests/Fakturenn.Web.UnitTests/ForwardedHeaderYarpFormatTests.cs`:
-  - `Ip`, `IpAndPort`, `IpAndRandomPort` translate, both address families.
-    `IpAndRandomPort` (`for="[::1]:_jDw5Cf3tQ"`) works because the bracket
-    parse cuts everything after `]`, so an obfuscated *port* is discarded like
-    any other port.
-  - `Random`, `RandomAndPort`, `RandomAndRandomPort`, `Unknown`,
-    `UnknownAndPort`, `UnknownAndRandomPort` produce no `X-Forwarded-For`.
-    Correctly so — none of them contains an address. `Random` is YARP's
-    default, which is the operational finding recorded in
-    `docs/operations/DEPLOYMENT-BASELINE.md`: a default `Forwarded` transform
-    leaves `Connection.RemoteIpAddress` at the proxy, and the account rate
-    limiter partitions on that.
-  - Parameter order within an element is irrelevant; YARP emits
-    `proto=…;host=…;for=…;by=…` and all three we want are read. `by=` is
-    ignored — trust is anchored on the peer address, so a self-reported
-    identity adds nothing.
+- Measured against the RFC's node grammar (`nodename [":" node-port]`, either
+  half possibly obfuscated), anchored on HAProxy's real output —
+  `tests/Fakturenn.Web.UnitTests/ForwardedHeaderNodeFormTests.cs`:
+  - Address-bearing nodenames translate in both families, with or without a
+    port, and with an obfuscated *port* (`for="[::1]:_jDw5Cf3tQ"`) — the
+    bracket parse cuts everything after `]`, so an obfuscated port is discarded
+    like any other port.
+  - Obfuscated nodenames (section 6.3) and the literal `unknown` (section 6.2)
+    produce no `X-Forwarded-For`, with or without a port. Correctly so — none
+    of them contains an address. The operational consequence is recorded in
+    `docs/operations/DEPLOYMENT-BASELINE.md`: `Connection.RemoteIpAddress`
+    stays at the proxy, and the account rate limiter partitions on that.
+  - Parameter order within an element is irrelevant; `proto=…;host=…;for=…;by=…`
+    reads all three we want. `by=` is ignored — trust is anchored on the peer
+    address, so a self-reported identity adds nothing.
 - The precedence rule ("`X-Forwarded-For` present ⇒ `Forwarded` ignored
   entirely") is a tie-break, not a precondition. A request carrying only
-  `Forwarded` is honoured end to end — verified, because YARP's `Forwarded`
-  transform disables its `X-Forwarded` transforms, making that the normal case
-  rather than an edge one.
+  `Forwarded` is honoured end to end — verified, and the normal case rather
+  than an edge one, because an emitter of `Forwarded` need not send
+  `X-Forwarded-*` beside it (HAProxy's independence above; YARP's `Forwarded`
+  transform disables its `X-Forwarded` transforms).
 - Clearing `KnownProxies` **and** `KnownIPNetworks` and leaving both empty is
   the documented way to disable trust validation entirely and honour
   `X-Forwarded-*` from any source. The code must never clear without adding
