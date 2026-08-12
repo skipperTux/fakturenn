@@ -52,6 +52,30 @@ Targets:
 - K3s
 - RKE2
 
+## Reverse proxy and forwarded headers
+
+Set `Network:KnownProxies` or `Network:KnownNetworks` to the proxy in front.
+With neither set, forwarded headers are ignored entirely and the application
+trusts only the peer address it observes itself.
+
+Fakturenn reads either `X-Forwarded-*` or the RFC 7239 `Forwarded` header. **A
+proxy that emits `Forwarded` must be configured to put a real address in
+`for=`.** RFC 7239 section 6.2 makes an obfuscated identifier such as
+`for=_YQuN68tm6` the default form, and an obfuscated identifier carries no
+address at all: Fakturenn cannot see the client, and per-client account rate
+limiting degrades to per-proxy — every client behind that proxy shares one
+budget.
+
+For YARP, this is the `Forwarded` request transform's `ForFormat`. It defaults
+to `Random`. Use `Ip`, `IpAndPort` or `IpAndRandomPort` instead. Enabling that
+transform at all also switches YARP's `X-Forwarded` transforms **off**, so
+there is no fallback header — the obfuscated `for=` is everything the
+application receives.
+
+Whichever header the proxy sets, it must strip the inbound copy of it.
+Fakturenn ignores `Forwarded` whenever `X-Forwarded-For` is present rather than
+merging two chains of different provenance.
+
 ## Migrations
 
 Migrations never run automatically at startup — more than one replica starting

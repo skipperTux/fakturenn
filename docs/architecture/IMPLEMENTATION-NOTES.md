@@ -297,6 +297,31 @@ mechanisms, on purpose:
   (`_gazonk`) and `unknown` node forms — measured by deleting each predicate
   separately and watching nothing go red. The predicates are kept as
   documentation; do not cite them as the mechanism.
+- The shim is permanent, not a stopgap. dotnet/aspnetcore#5978 ("Support the
+  `Forwarded` header") was filed 2016-01-27 and is still open, milestone
+  Backlog, labelled `severity-minor`. Do not re-research this.
+- Measured against every form YARP's `Forwarded` request transform emits —
+  `tests/Fakturenn.Web.UnitTests/ForwardedHeaderYarpFormatTests.cs`:
+  - `Ip`, `IpAndPort`, `IpAndRandomPort` translate, both address families.
+    `IpAndRandomPort` (`for="[::1]:_jDw5Cf3tQ"`) works because the bracket
+    parse cuts everything after `]`, so an obfuscated *port* is discarded like
+    any other port.
+  - `Random`, `RandomAndPort`, `RandomAndRandomPort`, `Unknown`,
+    `UnknownAndPort`, `UnknownAndRandomPort` produce no `X-Forwarded-For`.
+    Correctly so — none of them contains an address. `Random` is YARP's
+    default, which is the operational finding recorded in
+    `docs/operations/DEPLOYMENT-BASELINE.md`: a default `Forwarded` transform
+    leaves `Connection.RemoteIpAddress` at the proxy, and the account rate
+    limiter partitions on that.
+  - Parameter order within an element is irrelevant; YARP emits
+    `proto=…;host=…;for=…;by=…` and all three we want are read. `by=` is
+    ignored — trust is anchored on the peer address, so a self-reported
+    identity adds nothing.
+- The precedence rule ("`X-Forwarded-For` present ⇒ `Forwarded` ignored
+  entirely") is a tie-break, not a precondition. A request carrying only
+  `Forwarded` is honoured end to end — verified, because YARP's `Forwarded`
+  transform disables its `X-Forwarded` transforms, making that the normal case
+  rather than an edge one.
 - Clearing `KnownProxies` **and** `KnownIPNetworks` and leaving both empty is
   the documented way to disable trust validation entirely and honour
   `X-Forwarded-*` from any source. The code must never clear without adding
