@@ -66,6 +66,43 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
     }
 
     [Fact]
+    public async Task Enrolment_refreshes_the_session_so_the_stamp_rotation_does_not_sign_the_user_out()
+    {
+        // SetTwoFactorEnabledAsync rotates the security stamp, and Task 7B deliberately
+        // set SecurityStampValidatorOptions.ValidationInterval to one minute so a locked
+        // user cannot keep a working session for half an hour. Together those would sign
+        // a user out about a minute after they finished enrolling.
+        //
+        // The mechanism is a claim: the cookie carries the stamp it was issued under, and
+        // the validator signs the session out when that claim no longer matches the stored
+        // stamp. Asserting on the claim proves the property now instead of waiting for the
+        // validator to act on it.
+        (ApplicationUser user, CookieContainer cookies) = await SignedInUserAsync("refresh@example.test");
+
+        using HttpClient client = host.CreateClient(cookies);
+        string key = await ReadAuthenticatorKeyAsync(client);
+
+        string before = await host.ReadSecurityStampAsync(user.Id, TestContext.Current.CancellationToken);
+
+        using (HttpResponseMessage posted = await PostCodeAsync(client, CurrentCode(key)))
+        {
+            posted.StatusCode.Should().Be(HttpStatusCode.Found);
+        }
+
+        string after = await host.ReadSecurityStampAsync(user.Id, TestContext.Current.CancellationToken);
+        after.Should().NotBe(
+            before,
+            "enabling two-factor authentication rotates the stamp -- without that rotation this test would prove nothing");
+
+        Cookie session = cookies.GetAllCookies()
+            .Single(candidate => candidate.Name == host.ApplicationCookieName && !candidate.Expired);
+
+        host.ReadSecurityStampClaim(session.Value).Should().Be(
+            after,
+            "the session must be re-issued under the new stamp, or the validator ends it within the minute");
+    }
+
+    [Fact]
     public async Task The_recovery_codes_reach_the_browser_only_as_ciphertext()
     {
         (_, CookieContainer cookies) = await SignedInUserAsync("cookie@example.test");

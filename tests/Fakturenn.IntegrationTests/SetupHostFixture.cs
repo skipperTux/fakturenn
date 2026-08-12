@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Modules.Identity.Domain;
@@ -151,11 +152,75 @@ public sealed class SetupHostFixture : IAsyncLifetime
         };
 
     /// <summary>
+    /// A cookie-keeping client whose connections originate from <paramref name="client"/>,
+    /// an address inside the loopback <c>127.0.0.0/8</c> block that Linux assigns to
+    /// <c>lo</c> in its entirety.
+    /// <para>
+    /// This exists because the <c>account</c> rate limiter partitions on
+    /// <c>Connection.RemoteIpAddress</c> plus the <c>email</c> form field, and the
+    /// second-factor, change-password and sign-out forms carry no e-mail — so for those
+    /// endpoints the partition is the client address alone, and ten posts a minute is the
+    /// budget for every caller sharing it. Without a distinct source address per test the
+    /// suite exhausts one partition and later tests answer 429.
+    /// </para>
+    /// <para>
+    /// Distinct addresses are the honest arrangement rather than a workaround: these tests
+    /// are logically distinct clients. Defeating the limiter — raising the permit count or
+    /// exempting the endpoints — would stop the suite exercising the pipeline it claims to
+    /// exercise.
+    /// </para>
+    /// </summary>
+    public HttpClient CreateClient(CookieContainer cookies, IPAddress client) =>
+        new(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = true,
+            CookieContainer = cookies,
+            ConnectCallback = async (context, cancellationToken) =>
+            {
+                Socket socket = new(client.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                {
+                    NoDelay = true,
+                };
+
+                try
+                {
+                    socket.Bind(new IPEndPoint(client, 0));
+                    await socket.ConnectAsync(context.DnsEndPoint, cancellationToken);
+
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            },
+        })
+        {
+            BaseAddress = new Uri(BaseAddress),
+        };
+
+    /// <summary>
     /// Creates a user through the host's own <see cref="UserManager{TUser}"/>, so the
     /// security stamp, the normalised names and the password hasher are the ones the
     /// running application uses rather than a second set built for the test.
     /// </summary>
-    public async Task<ApplicationUser> CreateUserAsync(string email, CancellationToken cancellationToken)
+    public Task<ApplicationUser> CreateUserAsync(string email, CancellationToken cancellationToken) =>
+        CreateUserAsync(email, password: null, cancellationToken);
+
+    /// <inheritdoc cref="CreateUserAsync(string, CancellationToken)"/>
+    /// <param name="email">The user name and e-mail address.</param>
+    /// <param name="password">
+    /// The password, hashed by the host's configured hasher and validated by the host's
+    /// configured policy — so a password this method accepts is one the sign-in endpoint
+    /// will accept too.
+    /// </param>
+    /// <param name="cancellationToken">The test's cancellation token.</param>
+    public async Task<ApplicationUser> CreateUserAsync(
+        string email,
+        string? password,
+        CancellationToken cancellationToken)
     {
         await using AsyncServiceScope scope = Services.CreateAsyncScope();
 
@@ -174,7 +239,10 @@ public sealed class SetupHostFixture : IAsyncLifetime
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        IdentityResult result = await users.CreateAsync(user);
+        IdentityResult result = password is null
+            ? await users.CreateAsync(user)
+            : await users.CreateAsync(user, password);
+
         if (!result.Succeeded)
         {
             throw new InvalidOperationException(
@@ -182,6 +250,102 @@ public sealed class SetupHostFixture : IAsyncLifetime
         }
 
         return user;
+    }
+
+    /// <summary>
+    /// Puts a user in the state sign-in expects of an enrolled account: an authenticator
+    /// key, <c>TwoFactorEnabled</c> set, and the enrolment flag cleared. Returns the
+    /// base32 key so the test can compute real RFC 6238 codes from it.
+    /// <para>
+    /// Driven through the host's <see cref="UserManager{TUser}"/> rather than by writing
+    /// columns, so the security stamp rotates exactly as it does in production.
+    /// </para>
+    /// </summary>
+    public async Task<string> EnableTwoFactorAsync(Guid userId)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await FindAsync(users, userId);
+
+        await users.ResetAuthenticatorKeyAsync(user);
+        await users.SetTwoFactorEnabledAsync(user, true);
+
+        user.MustEnrolTotp = false;
+        await users.UpdateAsync(user);
+
+        return await users.GetAuthenticatorKeyAsync(user)
+            ?? throw new InvalidOperationException("The authenticator key was not stored.");
+    }
+
+    /// <summary>Issues recovery codes through the host, and returns them in plaintext.</summary>
+    public async Task<string[]> GenerateRecoveryCodesAsync(Guid userId, int count)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await FindAsync(users, userId);
+
+        IEnumerable<string> codes =
+            await users.GenerateNewTwoFactorRecoveryCodesAsync(user, count)
+            ?? throw new InvalidOperationException("No recovery codes were issued.");
+
+        return [.. codes];
+    }
+
+    /// <summary>
+    /// Sets <c>MustChangePassword</c> by column update rather than through
+    /// <see cref="UserManager{TUser}"/>, so the security stamp is left alone — a test
+    /// arranging this flag must not incidentally invalidate the cookie it is about to use.
+    /// </summary>
+    public async Task SetMustChangePasswordAsync(Guid userId, bool value, CancellationToken cancellationToken)
+    {
+        await using IdentityDbContext context = CreateIdentityContext();
+
+        await context.Users
+            .Where(user => user.Id == userId)
+            .ExecuteUpdateAsync(
+                update => update.SetProperty(user => user.MustChangePassword, value),
+                cancellationToken);
+    }
+
+    /// <summary>The user's current security stamp, read straight from the store.</summary>
+    public async Task<string> ReadSecurityStampAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        await using IdentityDbContext context = CreateIdentityContext();
+
+        return await context.Users.AsNoTracking()
+            .Where(user => user.Id == userId)
+            .Select(user => user.SecurityStamp!)
+            .SingleAsync(cancellationToken);
+    }
+
+    /// <summary>The name of the application authentication cookie this host issues.</summary>
+    public string ApplicationCookieName => ApplicationCookieOptions().Cookie.Name!;
+
+    /// <summary>
+    /// The security-stamp claim carried by an authentication cookie, decrypted with the
+    /// host's own ticket format.
+    /// <para>
+    /// This is the mechanism the one-minute
+    /// <c>SecurityStampValidatorOptions.ValidationInterval</c> checks: on the next
+    /// revalidation the handler compares this claim against the user's stored stamp and
+    /// signs the session out when they differ. Reading the claim proves the property
+    /// without waiting a minute for the validator to act on it.
+    /// </para>
+    /// </summary>
+    public string? ReadSecurityStampClaim(string protectedCookieValue)
+    {
+        AuthenticationTicket? ticket = ApplicationCookieOptions().TicketDataFormat
+            .Unprotect(protectedCookieValue);
+
+        IdentityOptions identity = Services.GetRequiredService<IOptions<IdentityOptions>>().Value;
+
+        return ticket?.Principal.FindFirstValue(identity.ClaimsIdentity.SecurityStampClaimType);
     }
 
     /// <summary>
@@ -209,9 +373,7 @@ public sealed class SetupHostFixture : IAsyncLifetime
             scope.ServiceProvider.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
         ClaimsPrincipal principal = await factory.CreateAsync(user);
 
-        CookieAuthenticationOptions options = scope.ServiceProvider
-            .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
-            .Get(IdentityConstants.ApplicationScheme);
+        CookieAuthenticationOptions options = ApplicationCookieOptions();
 
         AuthenticationTicket ticket = new(principal, IdentityConstants.ApplicationScheme);
         ticket.Properties.IssuedUtc = DateTimeOffset.UtcNow;
@@ -237,6 +399,14 @@ public sealed class SetupHostFixture : IAsyncLifetime
 
         return await users.CountRecoveryCodesAsync(user);
     }
+
+    private static async Task<ApplicationUser> FindAsync(UserManager<ApplicationUser> users, Guid userId) =>
+        await users.FindByIdAsync(userId.ToString())
+        ?? throw new InvalidOperationException($"No user with id {userId}.");
+
+    private CookieAuthenticationOptions ApplicationCookieOptions() =>
+        Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(IdentityConstants.ApplicationScheme);
 
     private DataProtectionDbContext CreateDataProtectionContext() =>
         new(new DbContextOptionsBuilder<DataProtectionDbContext>()

@@ -1,0 +1,29 @@
+@page "/account/login-2fa"
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+
+<PageTitle>Fakturenn — Two-factor authentication</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Two-factor authentication</MudText>
+
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="twofa-error">That code was not accepted.</MudAlert>
+}
+
+<form method="post" action="/account/login-2fa/submit" data-testid="twofa-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Authenticator code" name="code" Required="true" data-testid="twofa-code" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="twofa-submit">
+        Verify
+    </MudButton>
+</form>
+
+<MudLink Href="/account/login-recovery" Class="mt-4" data-testid="twofa-use-recovery">
+    Use a recovery code instead
+</MudLink>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+}

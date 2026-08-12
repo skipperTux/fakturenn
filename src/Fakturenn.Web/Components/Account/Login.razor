@@ -1,0 +1,44 @@
+@page "/account/login"
+@using Fakturenn.Modules.Identity.Persistence
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IdentityDbContext Db
+@inject NavigationManager Navigation
+
+<PageTitle>Fakturenn — Sign in</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Sign in</MudText>
+
+@if (Error is not null)
+{
+    @* One message for both an unknown account and a wrong password. Naming which one
+       failed would make this page an account oracle. *@
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="login-error">
+        That email address and password combination was not recognised.
+    </MudAlert>
+}
+
+<form method="post" action="/account/login/submit" data-testid="login-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="login-email" />
+    <MudTextField T="string" Label="Password" InputType="InputType.Password" name="password" Required="true" data-testid="login-password" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="login-submit">
+        Sign in
+    </MudButton>
+</form>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // An unconfigured instance has nobody to sign in as. The same user-count query
+        // that guards /setup, read the other way round.
+        if (!await Db.Users.AnyAsync())
+        {
+            Navigation.NavigateTo("/setup", replace: true);
+        }
+    }
+}

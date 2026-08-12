@@ -176,6 +176,7 @@ public static class AccountEndpoints
         group.MapPost("/enrol-totp/verify", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn,
             CancellationToken cancellationToken) =>
         {
             ApplicationUser? user = await users.GetUserAsync(http.User);
@@ -205,12 +206,175 @@ public static class AccountEndpoints
             user.MustEnrolTotp = false;
             await users.UpdateAsync(user);
 
+            // SetTwoFactorEnabledAsync rotates the security stamp, and the validation
+            // interval is one minute (IdentityConfiguration), so without this the user is
+            // signed out roughly a minute after finishing enrolment -- the cookie still
+            // carries the stamp it was issued under, and the validator ends the session
+            // once it no longer matches. Re-issuing the cookie under the new stamp is the
+            // whole fix; the rotation itself is wanted.
+            await signIn.RefreshSignInAsync(user);
+
             IEnumerable<string>? codes =
                 await users.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount);
 
             StashRecoveryCodes(http, codes ?? []);
 
             return Results.Redirect("/account/recovery-codes");
+        });
+
+        // Every route below is the page route plus "/submit", for the reason given above
+        // the enrolment handler: the Blazor page at the same path already answers POST, so
+        // mapping a handler on the page's own route makes every post an
+        // AmbiguousMatchException at request time.
+        group.MapPost("/login/submit", async (
+            HttpContext http,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string email = form["email"].ToString().Trim();
+            string password = form["password"].ToString();
+
+            // lockoutOnFailure: true is what makes the failure counter durable. Lockout is
+            // a database column, so it is the control that survives a restart; the rate
+            // limiter in front of this endpoint only blunts the enumeration oracle that
+            // lockout on its own would create.
+            SignInResult result = await signIn.PasswordSignInAsync(
+                email, password, isPersistent: false, lockoutOnFailure: true);
+
+            if (result.IsLockedOut)
+            {
+                return Results.Redirect("/account/lockout");
+            }
+
+            // Not a session. PasswordSignInAsync issues the two-factor cookie only, and the
+            // application cookie is issued by the handler below once the second factor is
+            // supplied. A user with TwoFactorEnabled set can never reach an authorised page
+            // on a password alone.
+            if (result.RequiresTwoFactor)
+            {
+                return Results.Redirect("/account/login-2fa");
+            }
+
+            if (!result.Succeeded)
+            {
+                // One answer for an unknown account and for a wrong password: identical
+                // status, identical location, identical body. Anything that distinguished
+                // them would let an attacker enumerate valid addresses without ever
+                // guessing a password.
+                return Results.Redirect("/account/login?error=invalid");
+            }
+
+            // Reached only by a user who has not enrolled a second factor yet. They are
+            // signed in so they can reach the enrolment page; the enrolment gate is what
+            // confines them to it.
+            return Results.Redirect("/");
+        });
+
+        group.MapPost("/login-2fa/submit", async (
+            HttpContext http,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+
+            // Authenticator apps group the digits; a user copying from one brings the
+            // grouping with them.
+            string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
+
+            SignInResult result = await signIn.TwoFactorAuthenticatorSignInAsync(
+                code, isPersistent: false, rememberClient: false);
+
+            if (result.IsLockedOut)
+            {
+                return Results.Redirect("/account/lockout");
+            }
+
+            if (!result.Succeeded)
+            {
+                return Results.Redirect("/account/login-2fa?error=invalid");
+            }
+
+            // Somebody else chose this password -- an administrator creating the account,
+            // or an operator running --reset-password. Send them to change it before
+            // anything else, so a shared credential stops being shared the first time it
+            // is used.
+            //
+            // Reading http.User AFTER the sign-in works, and that is not obvious:
+            // Response.Cookies is where the ticket goes, so the request principal would
+            // normally still be anonymous here. SignInManager.SignInWithClaimsAsync also
+            // assigns HttpContext.User, which is what makes this line find the user.
+            // Measured rather than assumed -- reading the two-factor user before the
+            // sign-in instead leaves every test green, so both forms work and this one is
+            // the plan's. Do not "fix" it without re-measuring.
+            ApplicationUser? pending = await signIn.UserManager.GetUserAsync(http.User);
+            return pending?.MustChangePassword == true
+                ? Results.Redirect("/account/change-password")
+                : Results.Redirect("/");
+        });
+
+        group.MapPost("/login-recovery/submit", async (
+            HttpContext http,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
+
+            // TwoFactorRecoveryCodeSignInAsync redeems the code as part of accepting it, so
+            // a code is spent whether or not the user goes on to use the session. Verifying
+            // without redeeming would turn a one-shot credential into a second password.
+            SignInResult result = await signIn.TwoFactorRecoveryCodeSignInAsync(code);
+
+            return result.Succeeded
+                ? Results.Redirect("/")
+                : Results.Redirect("/account/login-recovery?error=invalid");
+        });
+
+        group.MapPost("/change-password/submit", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn,
+            CancellationToken cancellationToken) =>
+        {
+            ApplicationUser? user = await users.GetUserAsync(http.User);
+            if (user is null)
+            {
+                return Results.Redirect("/account/login");
+            }
+
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string current = form["currentPassword"].ToString();
+            string replacement = form["newPassword"].ToString();
+
+            IdentityResult changed = await users.ChangePasswordAsync(user, current, replacement);
+            if (!changed.Succeeded)
+            {
+                // MustChangePassword is deliberately untouched here. Clearing it on
+                // anything short of a successful change would let a user walk past the
+                // forced change by submitting a rejected one.
+                string message = string.Join(" ", changed.Errors.Select(e => e.Description));
+                return Results.Redirect($"/account/change-password?error={Uri.EscapeDataString(message)}");
+            }
+
+            user.MustChangePassword = false;
+            await users.UpdateAsync(user);
+
+            // ChangePasswordAsync rotates the security stamp, which invalidates every
+            // session including this one. Re-sign-in so the user is not bounced to the
+            // login page immediately after succeeding.
+            await signIn.RefreshSignInAsync(user);
+
+            return Results.Redirect("/");
+        });
+
+        // No page at this route, so no "/submit" suffix is needed -- and none is wanted
+        // either, because the sign-out form posts here from the layout on every page.
+        group.MapPost("/logout", async (SignInManager<ApplicationUser> signIn) =>
+        {
+            await signIn.SignOutAsync();
+
+            return Results.Redirect("/account/login");
         });
     }
 

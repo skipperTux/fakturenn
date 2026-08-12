@@ -1,0 +1,9 @@
+@page "/account/lockout"
+
+<PageTitle>Fakturenn — Account locked</PageTitle>
+
+@* No countdown and no account name: this page is reachable by anyone who can guess an
+   address, so it must say nothing an attacker could not already know. *@
+<MudAlert Severity="Severity.Warning" data-testid="lockout-message">
+    This account is temporarily locked after too many failed attempts. Try again later.
+</MudAlert>

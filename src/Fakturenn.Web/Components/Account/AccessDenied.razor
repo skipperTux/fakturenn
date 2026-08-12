@@ -1,0 +1,9 @@
+@page "/account/denied"
+
+<PageTitle>Fakturenn — Access denied</PageTitle>
+
+@* Where ConfigureApplicationCookie's AccessDeniedPath sends an authenticated user who
+   lacks the permission a page requires. *@
+<MudAlert Severity="Severity.Error" data-testid="denied-message">
+    You do not have permission to view that page.
+</MudAlert>
