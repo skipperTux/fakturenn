@@ -283,9 +283,15 @@ public static class OperatorCommands
         // the same call.
         await users.ResetAccessFailedCountAsync(user);
 
-        // No security-stamp rotation here, unlike the locking path. Rotating exists to
-        // end a session that must stop working; unlocking grants access rather than
-        // revoking it, and the sessions the lock ended are already gone.
+        // Rotated on the unlock too, and this is not symmetry for its own sake. An account
+        // locked by FAILED ATTEMPTS never had a rotation at all: Identity's automatic
+        // lockout sets LockoutEnd through UpdateUserAsync and does not touch the stamp, so
+        // a session opened before those failures can still be live at the moment an
+        // operator unlocks the account -- and whoever was guessing the password is exactly
+        // who might be holding it. /account/admin/set-lockout already rotates on both
+        // edges; §10 requires the CLI and the UI not to diverge.
+        await users.UpdateSecurityStampAsync(user);
+
         Console.WriteLine($"Unlocked {email}.");
         return 0;
     }

@@ -1,11 +1,10 @@
+using System.Net;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 
 namespace Fakturenn.IntegrationTests;
 
@@ -35,6 +34,13 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
 
     /// <summary>A caller error — a missing argument, or a refused request.</summary>
     private const int UsageExitCode = 2;
+
+    /// <summary>
+    /// A page that needs nothing but an authenticated user, so a 302 away from it means the
+    /// session ended rather than that a permission was missing. It is also on the enrolment
+    /// gate's allowlist, so an unenrolled account can serve as the subject.
+    /// </summary>
+    private const string SessionProbe = "/account/change-password";
 
     [Fact]
     public async Task Creating_the_first_administrator_sets_both_obligations_and_grants_the_role()
@@ -191,30 +197,22 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
     }
 
     /// <summary>
-    /// Arranged and asserted through the host's <b>key ring</b> and raw SQL rather than
-    /// through <c>UserManager</c> and the fixture's <c>IdentityDbContext</c>.
+    /// Arranged through the host and asserted through the host, the ordinary way.
     /// <para>
-    /// That is not a stylistic preference. <c>IdentityDbContext.OnModelCreating</c>
-    /// captures an <c>IDataProtector</c> into the value converter and EF caches the model
-    /// per context type, so the first context built in a process fixes the ring for every
-    /// later one — and this test process builds two, the host's database-backed ring and
-    /// <c>PostgresFixture</c>'s <c>DataProtectionProvider.Create("Fakturenn.Tests")</c>,
-    /// which lives on disk. Which one wins depends on class scheduling. Every in-process
-    /// test is blind to it because they read back through the same captured protector;
-    /// a subprocess is not, and this one failed with "the key … was not found in the key
-    /// ring" whenever the disk ring won the race. Going straight to the ring the host
-    /// persists to PostgreSQL is what both processes actually agree on.
+    /// This test spent one round trip going through raw SQL and the host's key ring
+    /// instead, to dodge <c>IdentityDbContext</c> sharing one cached model — and therefore
+    /// one <c>IDataProtector</c> — between the host's database-backed ring and
+    /// <c>PostgresFixture</c>'s on-disk one. <c>UserTokenProtectorModelCacheKeyFactory</c>
+    /// fixed that, so the workaround went with it: a token this process writes is now a
+    /// token the subprocess can read, which is what the test was asserting all along.
     /// </para>
     /// </summary>
     [Fact]
     public async Task Resetting_two_factor_clears_the_key_and_the_recovery_codes()
     {
         ApplicationUser user = await CreateUserAsync("reset-mfa@example.test");
-
-        const string OriginalKey = "2W2NZBPUT2YX3LP3SUMMXICIO2INDYYU";
-        await WriteTokenAsync(user.Id, "AuthenticatorKey", OriginalKey);
-        await WriteTokenAsync(user.Id, "RecoveryCodes", "XBK77-435VP;TG5RD-6TJW9;QWVJ8-F983Q");
-        await SetTwoFactorStateAsync(user.Id, twoFactorEnabled: true, mustEnrolTotp: false);
+        string originalKey = await host.EnableTwoFactorAsync(user.Id);
+        await host.GenerateRecoveryCodesAsync(user.Id, 10);
 
         (int exitCode, string output) = await RunAsync(["--reset-mfa", "reset-mfa@example.test"], standardInput: null);
 
@@ -224,13 +222,13 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
 
         stored.TwoFactorEnabled.Should().BeFalse();
         stored.MustEnrolTotp.Should().BeTrue();
-        (await ReadTokenAsync(user.Id, "AuthenticatorKey")).Should().NotBe(OriginalKey);
+        (await host.ReadAuthenticatorKeyAsync(user.Id)).Should().NotBe(originalKey);
 
         // Reached for when a user's second factor may be in somebody else's hands, so no
         // live credential material may survive it. Neither SetTwoFactorEnabledAsync nor
         // ResetAuthenticatorKeyAsync touches the codes -- measured in Task 13 -- which is
         // why the command wipes them explicitly, exactly as /account/admin/clear-mfa does.
-        (await ReadTokenAsync(user.Id, "RecoveryCodes")).Should().BeEmpty();
+        (await host.CountRecoveryCodesAsync(user.Id)).Should().Be(0);
     }
 
     [Fact]
@@ -249,6 +247,54 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
         // permitted, and without an unlock path there is no route back into the instance.
         stored.LockoutEnd.Should().BeNull();
         stored.AccessFailedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Unlocking_a_user_ends_the_session_they_already_hold()
+    {
+        // The case that makes this a rotation rather than a courtesy: an account locked by
+        // FAILED ATTEMPTS never had its stamp rotated, because Identity's automatic lockout
+        // does not touch it. So a session opened before those failures is still live when
+        // the operator unlocks the account -- and whoever was guessing the password is
+        // exactly who might be holding it. LockAsync arranges that state precisely: the
+        // lockout columns move and nothing else does.
+        ApplicationUser user = await CreateUserAsync("unlock-session@example.test");
+
+        // Issued two minutes ago, the only artificial thing here: the stamp validator
+        // revalidates only once its one-minute interval has elapsed since IssuedUtc, so a
+        // cookie minted "now" would sail through the next request whatever the command did.
+        Cookie session = await host.CreateAuthenticationCookieAsync(
+            user, DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        await LockAsync(user.Id, failedAttempts: 5);
+
+        using (HttpClient before = ClientWith(session))
+        {
+            using HttpResponseMessage reachable = await before.GetAsync(
+                SessionProbe, TestContext.Current.CancellationToken);
+
+            reachable.StatusCode.Should().Be(
+                HttpStatusCode.OK,
+                "the session has to work before unlocking can be shown to end it -- automatic "
+                + "lockout leaves it working, which is the whole point");
+        }
+
+        (int exitCode, string output) = await RunAsync(
+            ["--unlock-user", "unlock-session@example.test"], standardInput: null);
+
+        exitCode.Should().Be(0, output);
+
+        // A fresh jar holding the same ticket. A successful revalidation sets ShouldRenew
+        // and the handler reissues the cookie with a current IssuedUtc, so reusing the jar
+        // above would hand this request a freshly issued ticket that skips revalidation
+        // entirely -- and the test would fail against correct code.
+        using HttpClient after = ClientWith(session);
+        using HttpResponseMessage bounced = await after.GetAsync(
+            SessionProbe, TestContext.Current.CancellationToken);
+
+        bounced.StatusCode.Should().Be(HttpStatusCode.Found);
+        LocationPath(bounced).Should().Be(
+            "/account/login", "unlocking must end the session the account already held");
     }
 
     [Fact]
@@ -314,6 +360,24 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
         output.Should().Contain("requires an email address");
     }
 
+    private static string LocationPath(HttpResponseMessage response)
+    {
+        Uri location = response.Headers.Location
+            ?? throw new InvalidOperationException("A redirect with no Location header.");
+
+        return location.IsAbsoluteUri
+            ? location.AbsolutePath
+            : location.OriginalString.Split('?')[0];
+    }
+
+    private HttpClient ClientWith(Cookie session)
+    {
+        CookieContainer cookies = new();
+        cookies.Add(new Uri(host.BaseAddress), session);
+
+        return host.CreateClient(cookies);
+    }
+
     private Task<(int ExitCode, string Output)> RunAsync(string[] arguments, string? standardInput) =>
         HostProcess.RunAsync(
             host.ConnectionString, arguments, standardInput, TestContext.Current.CancellationToken);
@@ -364,68 +428,6 @@ public sealed class OperatorEntrypointTests(SetupHostFixture host)
                 update => update.SetProperty(user => user.DisplayName, displayName),
                 TestContext.Current.CancellationToken);
     }
-
-    /// <summary>
-    /// Sets the two-factor columns directly, so the arrangement moves exactly what a
-    /// completed enrolment moves and nothing else — the security stamp in particular
-    /// stays put.
-    /// </summary>
-    private async Task SetTwoFactorStateAsync(Guid userId, bool twoFactorEnabled, bool mustEnrolTotp)
-    {
-        await using IdentityDbContext context = host.CreateIdentityContext();
-
-        await context.Users
-            .Where(user => user.Id == userId)
-            .ExecuteUpdateAsync(
-                update => update
-                    .SetProperty(user => user.TwoFactorEnabled, twoFactorEnabled)
-                    .SetProperty(user => user.MustEnrolTotp, mustEnrolTotp),
-                TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>Writes a token value protected with the ring the host persists to PostgreSQL.</summary>
-    private async Task WriteTokenAsync(Guid userId, string name, string value)
-    {
-        await using var connection = new NpgsqlConnection(host.ConnectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-
-        await using NpgsqlCommand command = connection.CreateCommand();
-        command.CommandText =
-            """
-            INSERT INTO identity."AspNetUserTokens" ("UserId", "LoginProvider", "Name", "Value")
-            VALUES (@userId, '[AspNetUserStore]', @name, @value)
-            ON CONFLICT ("UserId", "LoginProvider", "Name") DO UPDATE SET "Value" = @value
-            """;
-        command.Parameters.AddWithValue("userId", userId);
-        command.Parameters.AddWithValue("name", name);
-        command.Parameters.AddWithValue("value", TokenProtector().Protect(value));
-
-        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>Reads a token value back through the same ring, or null when there is no row.</summary>
-    private async Task<string?> ReadTokenAsync(Guid userId, string name)
-    {
-        await using var connection = new NpgsqlConnection(host.ConnectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-
-        await using NpgsqlCommand command = connection.CreateCommand();
-        command.CommandText =
-            """
-            SELECT "Value" FROM identity."AspNetUserTokens"
-            WHERE "UserId" = @userId AND "LoginProvider" = '[AspNetUserStore]' AND "Name" = @name
-            """;
-        command.Parameters.AddWithValue("userId", userId);
-        command.Parameters.AddWithValue("name", name);
-
-        object? stored = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
-
-        return stored is string ciphertext ? TokenProtector().Unprotect(ciphertext) : null;
-    }
-
-    private IDataProtector TokenProtector() =>
-        host.Services.GetRequiredService<IDataProtectionProvider>()
-            .CreateProtector(IdentityDbContext.UserTokenProtectorPurpose);
 
     private async Task<ApplicationUser> ReadUserAsync(string email)
     {

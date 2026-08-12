@@ -589,6 +589,75 @@ Task 13.
   *permitted* — that is why `--unlock-user` exists — so `set-lockout` must not call it
   either. It becomes live when E02b adds role management.
 
+## Operator recovery entrypoints
+
+`--create-admin`, `--reset-password`, `--reset-mfa`, `--unlock-user` and
+`--list-users`, dispatched from `Program.cs` through
+`src/Fakturenn.Web/Operations/OperatorCommands.cs`. Added in E02a Task 14.
+
+- **`--create-admin` takes the same advisory lock as `/account/setup`, and the key
+  lives in one place (`src/Fakturenn.Web/SetupLock.cs`) precisely because a
+  *different* key serialises nothing.** The plan's `if (await db.Users.AnyAsync())`
+  is the same check-then-act race Task 9 closed for the web path: measured, four
+  concurrent `--create-admin` subprocesses against an empty instance produced **four
+  administrators**, three runs out of three, and exactly one after the lock was
+  restored. `EnableRetryOnFailure` is on, so the transaction goes through
+  `CreateExecutionStrategy().ExecuteAsync` and the user is built *inside* the
+  delegate, which can re-run.
+- **`--unlock-user` rotates the security stamp, and the reason is not symmetry.**
+  An account locked by **failed attempts** never had a rotation at all: Identity's
+  automatic lockout writes `LockoutEnd` through `UpdateUserAsync` and does not touch
+  the stamp. So a session opened before those failures is still live at the moment an
+  operator unlocks the account — and whoever was guessing the password is exactly who
+  might be holding it. Spec §8 covers "credentials **or lock state**", §10 requires the
+  CLI and `/account/admin/set-lockout` not to diverge, and that endpoint already
+  rotates on both edges. Measured: deleting the one `UpdateSecurityStampAsync` call
+  reddens `OperatorEntrypointTests.Unlocking_a_user_ends_the_session_they_already_hold`
+  and nothing else — the probe answers 200 instead of 302.
+- **No flag reads a password from `args`, and a test asserts both shapes.** argv is
+  visible in `ps` and lands in shell history. `--create-admin x@y <password>` and
+  `--create-admin x@y --password <password>` with nothing on standard input both exit
+  2 and create no user.
+- **`--list-users` prints no secret** — no authenticator key, no recovery code, no
+  password hash. It projects five columns and never materialises
+  `AspNetUserTokens`. A diagnostic reached for when an instance is already in trouble
+  ends up in terminal scrollback and support tickets.
+
+## The Data Protection provider is part of IdentityDbContext's model cache key
+
+`src/Fakturenn.Modules.Identity/Persistence/UserTokenProtectorModelCacheKeyFactory.cs`,
+installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
+
+- **`OnModelCreating` captures an `IDataProtector` into the value converter, and EF
+  caches the compiled model per context type.** Without the factory the **first**
+  `IdentityDbContext` built in a process decides which key ring **every** later
+  instance encrypts with, whatever provider its own constructor was handed.
+- **The symptom is maximally misleading**: `CryptographicException: The key {…} was not
+  found in the key ring`. That reads as a Data Protection fault — a lost ring, a
+  missing `PersistKeysToDbContext`, an unshared key between replicas — and none of
+  those is what happened. The misdirection is most of the cost of this bug.
+- **Production was safe only by accident.** One container means one provider, and
+  `--migrate` builds its own file-backed provider but exits before serving traffic.
+- **Nothing in the suite could see it.** Every in-process test reads a token back
+  through the same captured protector that wrote it, so it round-trips regardless. It
+  surfaced only when Task 14's `--reset-mfa` **subprocess** became a reader that did
+  not share the capture, and only when class scheduling let `PostgresFixture`'s
+  `DataProtectionProvider.Create("Fakturenn.Tests")` — an on-disk ring under
+  `~/.aspnet/DataProtection-Keys` — win the race against the host's database-backed one.
+- **Key on the provider, never on the protector.** `CreateProtector` returns a fresh
+  object per call, so a protector-derived key would differ per context instance and
+  rebuild the model on every instantiation — a correctness fix turned into a
+  performance defect. An `IDataProtectionProvider` is a singleton per DI container, so
+  the cache holds **one model per container**; asserted by
+  `UserTokenProtectorModelCacheTests.One_provider_yields_one_model_however_many_contexts_are_built`.
+- Installed in `OnConfiguring` rather than at each site that builds options — the host,
+  the `--migrate` entrypoint, the design-time factory, two test fixtures — because a
+  forgotten site would reintroduce the defect with no compiler error and no failing test.
+- Removing the `ReplaceService` line reddens
+  `UserTokenProtectorModelCacheTests.Two_providers_in_one_process_each_protect_under_their_own_key_ring`
+  with "Expected a CryptographicException to be thrown, but no exception was thrown" —
+  the second provider silently reading the first's ciphertext, which is the whole defect.
+
 ## Testing the entrypoint
 
 - `Program.cs` is top-level statements, so **anything wired there is unreachable

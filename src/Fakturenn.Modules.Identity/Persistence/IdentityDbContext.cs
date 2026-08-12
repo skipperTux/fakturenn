@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -31,19 +32,36 @@ public sealed class IdentityDbContext(
     /// The Data Protection purpose that protects <c>IdentityUserToken.Value</c>. Part of
     /// the key derivation, so changing it makes every stored second factor undecryptable —
     /// it must never be edited.
-    /// <para>
-    /// A named constant rather than a literal at its one use site so that a reader
-    /// protecting or unprotecting one of these values by hand cannot silently pick a
-    /// different purpose and get ciphertext this context will not accept.
-    /// </para>
     /// </summary>
-    public const string UserTokenProtectorPurpose = "Fakturenn.Identity.UserToken.v1";
+    private const string UserTokenProtectorPurpose = "Fakturenn.Identity.UserToken.v1";
 
     public DbSet<Role> Roles => Set<Role>();
 
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
 
     public DbSet<UserRole> UserRoles => Set<UserRole>();
+
+    /// <summary>
+    /// The provider whose key ring protects <c>IdentityUserToken.Value</c> for this
+    /// instance. Read by <see cref="UserTokenProtectorModelCacheKeyFactory"/>, which needs
+    /// it to keep two providers in one process from sharing one cached model.
+    /// </summary>
+    internal IDataProtectionProvider DataProtectionProvider => dataProtectionProvider;
+
+    /// <summary>
+    /// Installed here rather than at each call site that builds options, because there are
+    /// several — the host, the <c>--migrate</c> entrypoint, the design-time factory and the
+    /// test fixtures — and a forgotten one would silently reintroduce the shared-model
+    /// defect with no compiler error and no failing test.
+    /// </summary>
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+        base.OnConfiguring(optionsBuilder);
+
+        optionsBuilder.ReplaceService<IModelCacheKeyFactory, UserTokenProtectorModelCacheKeyFactory>();
+    }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
