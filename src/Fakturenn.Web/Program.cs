@@ -3,6 +3,7 @@ using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web;
+using Fakturenn.Web.Operations;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -118,6 +119,19 @@ if (args.Contains("--migrate"))
     }
 
     Environment.ExitCode = exitCode;
+    return;
+}
+
+// The operator recovery entrypoints, checked after --migrate and before the host serves
+// anything. They deliberately bypass every control this epic builds -- authentication,
+// the rate limiter, the enrolment gate, the permission policies -- because they exist for
+// the case where those controls have locked the operator out. What keeps that safe is
+// that they are reachable only from a shell on the host, which is why they are dispatched
+// here and never mapped as an endpoint.
+int? operatorExitCode = await OperatorCommands.TryRunAsync(args, app);
+if (operatorExitCode is not null)
+{
+    Environment.ExitCode = operatorExitCode.Value;
     return;
 }
 

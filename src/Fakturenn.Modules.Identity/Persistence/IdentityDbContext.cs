@@ -27,6 +27,18 @@ public sealed class IdentityDbContext(
 {
     public const string SchemaName = "identity";
 
+    /// <summary>
+    /// The Data Protection purpose that protects <c>IdentityUserToken.Value</c>. Part of
+    /// the key derivation, so changing it makes every stored second factor undecryptable —
+    /// it must never be edited.
+    /// <para>
+    /// A named constant rather than a literal at its one use site so that a reader
+    /// protecting or unprotecting one of these values by hand cannot silently pick a
+    /// different purpose and get ciphertext this context will not accept.
+    /// </para>
+    /// </summary>
+    public const string UserTokenProtectorPurpose = "Fakturenn.Identity.UserToken.v1";
+
     public DbSet<Role> Roles => Set<Role>();
 
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
@@ -84,15 +96,20 @@ public sealed class IdentityDbContext(
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // Both second factors live in IdentityUserToken.Value. The purpose string is
-        // part of the key derivation: changing it makes every existing value
-        // undecryptable, so it must never be edited.
+        // Both second factors live in IdentityUserToken.Value.
+        //
+        // The protector is captured here, and EF caches the model per context type: the
+        // FIRST IdentityDbContext in a process to build the model decides which key ring
+        // every later instance in that process encrypts with, whatever provider its own
+        // constructor was handed. That is invisible in production, where one provider
+        // exists; it is not invisible to a test process that builds two.
+        //
         // Declared as the non-generic base on purpose: IdentityUserToken.Value is
         // `string?`, so the generic HasConversion<TProvider> overload demands a
         // ValueConverter<string?, string> and rejects this one (CS8620). EF never
         // passes null to a converter, so the non-null model type is correct.
         ValueConverter converter = new EncryptedStringConverter(
-            dataProtectionProvider.CreateProtector("Fakturenn.Identity.UserToken.v1"));
+            dataProtectionProvider.CreateProtector(UserTokenProtectorPurpose));
 
         builder.Entity<IdentityUserToken<Guid>>()
             .Property(token => token.Value)

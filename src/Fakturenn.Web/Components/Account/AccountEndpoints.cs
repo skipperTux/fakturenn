@@ -12,24 +12,6 @@ namespace Fakturenn.Web.Components.Account;
 public static class AccountEndpoints
 {
     /// <summary>
-    /// The PostgreSQL advisory-lock key that serialises first-run setup.
-    /// <para>
-    /// The value is the ASCII bytes of <c>FKTNSETU</c> ("Fakturenn setup") read as a
-    /// big-endian 64-bit integer. It is derived from text rather than picked at random
-    /// so it is reproducible and self-documenting, and it stays inside a positive
-    /// <c>bigint</c>.
-    /// </para>
-    /// <para>
-    /// Advisory locks share one namespace per database, so this key must be unique
-    /// within the database and <b>must never change</b>: a different key is a different
-    /// lock, and two application versions taking different keys would not exclude each
-    /// other during a rolling deployment. Any later operator entrypoint that creates the
-    /// first administrator has to take <i>this</i> key.
-    /// </para>
-    /// </summary>
-    private const long SetupLockKey = 0x464B544E53455455L;
-
-    /// <summary>
     /// Carries the freshly generated recovery codes from the enrolment post to the page
     /// that displays them.
     /// <para>
@@ -85,20 +67,9 @@ public static class AccountEndpoints
                     // THE mechanism. The count check and the insert are not atomic, so
                     // without this every concurrent post passes the check and every one
                     // of them becomes an administrator -- measured, four out of four.
-                    //
-                    // A unique index does NOT serialise this: it only rejects rows that
-                    // collide on the indexed value, so it stops two posts using the SAME
-                    // e-mail address and does nothing about two posts using different
-                    // ones, which is the case that matters. That reasoning was in this
-                    // comment before it was tested, and it was wrong.
-                    //
-                    // pg_advisory_xact_lock is transaction-scoped: it releases on commit
-                    // or rollback, so there is no cleanup path to forget. It records no
-                    // state either, which is why a marker row was rejected -- restore a
-                    // partial backup and a marker says "configured" while zero users
-                    // exist, bricking the instance. Zero users must reopen /setup.
-                    await db.Database.ExecuteSqlAsync(
-                        $"SELECT pg_advisory_xact_lock({SetupLockKey})", token);
+                    // See SetupLock for why the key is shared with --create-admin and
+                    // why a unique index does not serialise this.
+                    await SetupLock.TakeAsync(db, token);
 
                     // Re-checked server-side. The page's own guard is a redirect for
                     // humans; this is the one that actually closes the endpoint, and
@@ -133,8 +104,8 @@ public static class AccountEndpoints
                         // anything that takes the same key; this still catches a writer
                         // that does not -- an operator entrypoint creating an
                         // administrator from another connection, say -- but only when the
-                        // user names collide. Task 14 must take SetupLockKey rather than
-                        // rely on this.
+                        // user names collide. --create-admin therefore takes SetupLock
+                        // rather than relying on this.
                         return Results.Redirect("/account/login");
                     }
 

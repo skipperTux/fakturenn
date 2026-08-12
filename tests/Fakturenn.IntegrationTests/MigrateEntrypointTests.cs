@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
@@ -77,45 +75,10 @@ public sealed class MigrateEntrypointTests(PostgresFixture postgres) : IClassFix
             .Select(r => r.Id)
             .Single();
 
-    private static string RepositoryRoot([CallerFilePath] string sourceFilePath = "") =>
-        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFilePath)!, "..", ".."));
-
-    /// <summary>
-    /// The host assembly built for the same configuration as this test assembly.
-    /// Building this project builds <c>Fakturenn.Web</c> into its own <c>bin</c>, next
-    /// to the <c>runtimeconfig.json</c> and <c>appsettings.json</c> the entrypoint
-    /// needs, so no separate build step is required.
-    /// </summary>
-    private static string HostAssemblyPath()
-    {
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-
-        return Path.Combine(
-            RepositoryRoot(), "src", "Fakturenn.Web", "bin", configuration, "net10.0", "Fakturenn.Web.dll");
-    }
-
-    private async Task<(int ExitCode, string Output)> RunMigrateAsync()
-    {
-        string hostAssembly = HostAssemblyPath();
-        File.Exists(hostAssembly).Should().BeTrue($"the host must be built at {hostAssembly}");
-
-        ProcessStartInfo startInfo = new("dotnet")
-        {
-            ArgumentList = { hostAssembly, "--migrate" },
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        startInfo.Environment["ConnectionStrings__Fakturenn"] = postgres.ConnectionString;
-
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start the host process.");
-
-        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        Task<string> standardError = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
-
-        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
-
-        return (process.ExitCode, await standardOutput + await standardError);
-    }
+    private Task<(int ExitCode, string Output)> RunMigrateAsync() =>
+        HostProcess.RunAsync(
+            postgres.ConnectionString,
+            ["--migrate"],
+            standardInput: null,
+            TestContext.Current.CancellationToken);
 }
