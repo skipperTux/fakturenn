@@ -541,6 +541,54 @@ mechanisms, on purpose:
   `SetupEndpointTests` case: a gate that acts on anonymous callers closes sign-in and
   first-run setup, which is the whole application.
 
+## Administrator user management
+
+`POST /account/admin/{create-user,reset-password,clear-mfa,set-lockout}` plus the page
+at `/admin/users` (`src/Fakturenn.Web/Components/Admin/Users.razor`). Added in E02a
+Task 13.
+
+- **Lockout does not rotate the security stamp, so `set-lockout` does it explicitly,
+  and this is the one line the whole endpoint exists for.** `UserManager` rotates the
+  stamp on a password change or reset and on a two-factor change; `SetLockoutEndDateAsync`
+  does not, and it goes through `UpdateUserAsync`, which does not either. The stamp
+  validator checks that the cookie's stamp still **matches** — and it does — so without
+  `UpdateSecurityStampAsync` a locked user keeps a working session for as long as the
+  cookie lives. Measured: deleting that one call reddens
+  `AdminUserManagementTests.Locking_a_user_ends_their_existing_session` and nothing else.
+- **`SecurityStampValidatorOptions.ValidationInterval` does not save you here.** It
+  decides how *often* the stamp is checked, not what the check finds. A one-minute
+  interval on a stamp that never changes is a check that always passes.
+- **Testing "the session ended" needs an aged ticket, and one cookie jar is a trap.**
+  The validator revalidates only once the interval has elapsed since `IssuedUtc`, so a
+  freshly minted cookie sails through the next request no matter what the endpoint did —
+  hence `SetupHostFixture.CreateAuthenticationCookieAsync(user, issuedUtc)`. Worse, a
+  *successful* revalidation sets `ShouldRenew`, and the handler then reissues the cookie
+  with a current `IssuedUtc`. A test that probes the session before locking and after
+  locking through **one** `CookieContainer` therefore hands the second request a freshly
+  issued ticket that skips revalidation entirely, and fails against correct code. Use a
+  fresh container holding the same ticket value for each probe.
+- **Neither `SetTwoFactorEnabledAsync` nor `ResetAuthenticatorKeyAsync` touches the
+  recovery codes.** Measured: an account with nine unspent codes still read nine after
+  both calls. They are unreachable in that state — the recovery endpoint needs the
+  two-factor cookie that only a two-factor challenge issues, and `TwoFactorEnabled` is
+  now false — and re-enrolment would replace them, because
+  `GenerateNewTwoFactorRecoveryCodesAsync` **replaces** the stored set rather than adding
+  to it. `clear-mfa` nonetheless calls it with a count of **zero** to wipe them outright:
+  an administrator clearing two-factor is often doing so because the old factors may be
+  in somebody else's hands, and "unreachable while another flag stays false" is a weaker
+  promise than "gone".
+- **A missing permission is a 302, not a 403.** `ConfigureApplicationCookie` sets
+  `AccessDeniedPath`, so the cookie handler turns the authorization middleware's forbid
+  into a redirect to `/account/denied` — as an **absolute** URL with a `ReturnUrl` query,
+  unlike the handlers' own relative `Results.Redirect("/admin/users")`. Assert on the
+  path, not on the raw `Location` string, or the assertion is about URL formatting.
+- **`AdministratorGuard` still has no caller.** `WouldRemoveLastAdministrator` is
+  unit-tested as a pure function and referenced by nothing but those tests. Task 13 is not
+  its caller and was never going to be: E02a has no path that removes a role or a
+  permission, so there is nothing for it to guard. Locking the last administrator is
+  *permitted* — that is why `--unlock-user` exists — so `set-lockout` must not call it
+  either. It becomes live when E02b adds role management.
+
 ## Testing the entrypoint
 
 - `Program.cs` is top-level statements, so **anything wired there is unreachable

@@ -1,0 +1,101 @@
+@page "/admin/users"
+@using Fakturenn.Modules.Identity.Authorization
+@using Fakturenn.Modules.Identity.Domain
+@using Fakturenn.Modules.Identity.Persistence
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@* Reading the list needs users.read; every mutation below posts to an endpoint gated on
+   users.manage. Two permissions, two enforcement sites -- which is why users.read survived
+   the spec review's cull and roles.read did not.
+
+   This page is deliberately NOT on the enrolment gate's allowlist. An administrator who
+   has not enrolled a second factor is sent to enrolment before reaching it, which is the
+   intended behaviour: administration is not an exemption from the account's own
+   obligations. *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersRead)]
+@inject IdentityDbContext Db
+
+<PageTitle>Fakturenn — Users</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Users</MudText>
+
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="admin-error">@Error</MudAlert>
+}
+
+<MudTable Items="_users" Class="mb-8" data-testid="user-table">
+    <HeaderContent>
+        <MudTh>Email</MudTh>
+        <MudTh>Display name</MudTh>
+        <MudTh>Two-factor</MudTh>
+        <MudTh>Locked until</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Email</MudTd>
+        <MudTd>@context.DisplayName</MudTd>
+        <MudTd>@(context.TwoFactorEnabled ? "enrolled" : "pending")</MudTd>
+        @* LockoutEnd, never AccessFailedCount. UserManager.AccessFailedAsync zeroes that
+           column in the same call that sets LockoutEnd, so it reads 0 exactly when a
+           reader most expects it to read 5. *@
+        <MudTd>@(context.LockoutEnd?.ToString("u") ?? "-")</MudTd>
+        <MudTd>
+            <form method="post" action="/account/admin/clear-mfa" class="d-inline">
+                <AntiforgeryToken />
+                <input type="hidden" name="email" value="@context.Email" />
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Size="Size.Small">
+                    Clear two-factor
+                </MudButton>
+            </form>
+            <form method="post" action="/account/admin/set-lockout" class="d-inline">
+                <AntiforgeryToken />
+                <input type="hidden" name="email" value="@context.Email" />
+                @* Locking the last administrator is permitted. AdministratorGuard stops the
+                   user interface stripping the last administrator's permissions; nothing
+                   stops it locking them, which is exactly why the CLI has --unlock-user. *@
+                <input type="hidden" name="locked" value="@(IsLocked(context) ? "false" : "true")" />
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Size="Size.Small">
+                    @(IsLocked(context) ? "Unlock" : "Lock")
+                </MudButton>
+            </form>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
+
+<MudText Typo="Typo.h5" GutterBottom="true">Create a user</MudText>
+<form method="post" action="/account/admin/create-user" data-testid="create-user-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="create-user-email" />
+    <MudTextField T="string" Label="Display name" name="displayName" Required="true" data-testid="create-user-display-name" />
+    <MudTextField T="string" Label="Initial password" InputType="InputType.Password" name="password" Required="true" data-testid="create-user-password" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="create-user-submit">
+        Create user
+    </MudButton>
+</form>
+
+<MudText Typo="Typo.h5" GutterBottom="true" Class="mt-8">Reset a password</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">
+    The account is unlocked and the user must choose their own password at the next sign-in.
+</MudText>
+<form method="post" action="/account/admin/reset-password" data-testid="reset-password-form">
+    <AntiforgeryToken />
+    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="reset-password-email" />
+    <MudTextField T="string" Label="New password" InputType="InputType.Password" name="password" Required="true" data-testid="reset-password-password" />
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="reset-password-submit">
+        Reset password
+    </MudButton>
+</form>
+
+@code {
+    private List<ApplicationUser> _users = [];
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    private static bool IsLocked(ApplicationUser user) => user.LockoutEnd > DateTimeOffset.UtcNow;
+
+    protected override async Task OnInitializedAsync() =>
+        _users = await Db.Users.AsNoTracking().OrderBy(user => user.Email).ToListAsync();
+}

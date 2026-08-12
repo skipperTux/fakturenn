@@ -156,18 +156,17 @@ public sealed class SetupHostFixture : IAsyncLifetime
     /// an address inside the loopback <c>127.0.0.0/8</c> block that Linux assigns to
     /// <c>lo</c> in its entirety.
     /// <para>
-    /// This exists because the <c>account</c> rate limiter partitions on
-    /// <c>Connection.RemoteIpAddress</c> plus the <c>email</c> form field, and the
-    /// second-factor, change-password and sign-out forms carry no e-mail — so for those
-    /// endpoints the partition is the client address alone, and ten posts a minute is the
-    /// budget for every caller sharing it. Without a distinct source address per test the
-    /// suite exhausts one partition and later tests answer 429.
+    /// The <c>account</c> rate limiter partitions on the caller's identity <i>plus</i> the
+    /// client address (<c>AccountRateLimitPartition</c>), so distinct users no longer share
+    /// a budget merely by sharing an address. This overload therefore exists for the one
+    /// suite that wants the opposite: <c>AccountRateLimitTests</c> pins several clients to
+    /// <b>one</b> address deliberately, because whether they then share a budget is the
+    /// property under test.
     /// </para>
     /// <para>
-    /// Distinct addresses are the honest arrangement rather than a workaround: these tests
-    /// are logically distinct clients. Defeating the limiter — raising the permit count or
-    /// exempting the endpoints — would stop the suite exercising the pipeline it claims to
-    /// exercise.
+    /// It is not a workaround for a limiter that is in the way. Defeating the limiter —
+    /// raising the permit count or exempting the endpoints — would stop the suite exercising
+    /// the pipeline it claims to exercise.
     /// </para>
     /// </summary>
     public HttpClient CreateClient(CookieContainer cookies, IPAddress client) =>
@@ -349,23 +348,42 @@ public sealed class SetupHostFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// Mints the application's real authentication cookie for a user.
+    /// Mints the application's real authentication cookie for a user, without going through
+    /// the sign-in endpoints.
     /// <para>
-    /// Sign-in does not exist until Task 11, so there is no endpoint to post credentials
-    /// to yet. Rather than fake authentication with a test scheme — which would prove
-    /// nothing about the pipeline that actually guards these pages — this asks the host
-    /// for the same claims factory and the same <see cref="CookieAuthenticationOptions"/>
-    /// the cookie handler uses, and protects the ticket with the host's own key ring.
-    /// The result is a cookie the running application accepts because it is the cookie
-    /// the running application would have issued.
+    /// The endpoints exist, and a test whose subject is sign-in itself should use them.
+    /// This is for the tests whose subject is what happens <i>after</i> a session exists:
+    /// it skips the two-factor exchange without faking authentication with a test scheme,
+    /// by asking the host for the same claims factory and the same
+    /// <see cref="CookieAuthenticationOptions"/> the cookie handler uses and protecting the
+    /// ticket with the host's own key ring. The result is a cookie the running application
+    /// accepts because it is the cookie the running application would have issued.
     /// </para>
     /// <para>
-    /// <c>IssuedUtc</c> is set to now on purpose: the security-stamp validator revalidates
-    /// only after its one-minute interval has elapsed, so a freshly issued ticket keeps
-    /// these tests independent of how long the suite has been running.
+    /// The claims come from the <paramref name="user"/> instance passed in, security stamp
+    /// included. Rotate the stamp — enable two-factor, reset a password — and then mint a
+    /// cookie from a stale instance, and the validator rejects it on its first
+    /// revalidation.
+    /// </para>
+    /// <para>
+    /// <c>IssuedUtc</c> is set to now, which keeps these tests independent of how long the
+    /// suite has been running: the security-stamp validator revalidates only once its
+    /// one-minute interval has elapsed since the ticket was issued.
     /// </para>
     /// </summary>
-    public async Task<Cookie> CreateAuthenticationCookieAsync(ApplicationUser user)
+    public Task<Cookie> CreateAuthenticationCookieAsync(ApplicationUser user) =>
+        CreateAuthenticationCookieAsync(user, DateTimeOffset.UtcNow);
+
+    /// <inheritdoc cref="CreateAuthenticationCookieAsync(ApplicationUser)"/>
+    /// <param name="user">The user the ticket identifies.</param>
+    /// <param name="issuedUtc">
+    /// When the ticket was issued. Pass a time further back than
+    /// <c>SecurityStampValidatorOptions.ValidationInterval</c> to reach the state a real
+    /// session reaches a minute after sign-in — one where the next request revalidates the
+    /// security stamp instead of trusting the ticket. Without that, a test about ending a
+    /// session cannot observe anything.
+    /// </param>
+    public async Task<Cookie> CreateAuthenticationCookieAsync(ApplicationUser user, DateTimeOffset issuedUtc)
     {
         await using AsyncServiceScope scope = Services.CreateAsyncScope();
 
@@ -376,10 +394,50 @@ public sealed class SetupHostFixture : IAsyncLifetime
         CookieAuthenticationOptions options = ApplicationCookieOptions();
 
         AuthenticationTicket ticket = new(principal, IdentityConstants.ApplicationScheme);
-        ticket.Properties.IssuedUtc = DateTimeOffset.UtcNow;
+        ticket.Properties.IssuedUtc = issuedUtc;
         ticket.Properties.ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1);
 
         return new Cookie(options.Cookie.Name!, options.TicketDataFormat.Protect(ticket), "/");
+    }
+
+    /// <summary>
+    /// Puts a user in the seeded Administrator role, which is how a test gives one the
+    /// <c>users.read</c> and <c>users.manage</c> permissions the administration pages
+    /// require.
+    /// <para>
+    /// Assign before signing in. Permissions are claims minted into the authentication
+    /// cookie at sign-in, so a role granted afterwards does not reach an existing session
+    /// until the security stamp is revalidated.
+    /// </para>
+    /// </summary>
+    public async Task AssignAdministratorRoleAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        await using IdentityDbContext context = CreateIdentityContext();
+
+        Guid roleId = await context.Roles
+            .Where(role => role.Name == RoleSeeder.AdministratorRoleName)
+            .Select(role => role.Id)
+            .SingleAsync(cancellationToken);
+
+        context.UserRoles.Add(new UserRole { UserId = userId, RoleId = roleId });
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The authenticator key the account currently holds, read through the host's
+    /// <see cref="UserManager{TUser}"/> — the same value the enrolment page displays.
+    /// </summary>
+    public async Task<string> ReadAuthenticatorKeyAsync(Guid userId)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await FindAsync(users, userId);
+
+        return await users.GetAuthenticatorKeyAsync(user)
+            ?? throw new InvalidOperationException("The account holds no authenticator key.");
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Microsoft.AspNetCore.DataProtection;
@@ -376,7 +377,200 @@ public static class AccountEndpoints
 
             return Results.Redirect("/account/login");
         });
+
+        MapAdministrationEndpoints(group);
     }
+
+    /// <summary>
+    /// The mutating administration endpoints, all of them behind
+    /// <see cref="Permissions.UsersManage"/> — a permission, never a role name, so the
+    /// bundle of permissions a role carries can change without a deploy.
+    /// <para>
+    /// A nested group under <c>/account</c> rather than a group of its own, so these inherit
+    /// the <c>account</c> rate-limit policy and its identity-plus-address partition. Nothing
+    /// here needs a partitioner of its own.
+    /// </para>
+    /// <para>
+    /// The page these post from lives at <c>/admin/users</c>, which is a different route
+    /// from <c>/account/admin/*</c> and therefore does not collide with them — the same
+    /// separation between a page and the endpoint its form posts to that the rest of this
+    /// file relies on.
+    /// </para>
+    /// </summary>
+    private static void MapAdministrationEndpoints(RouteGroupBuilder group)
+    {
+        RouteGroupBuilder admin = group.MapGroup("/admin")
+            .RequireAuthorization(Permissions.UsersManage);
+
+        admin.MapPost("/create-user", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            string email = form["email"].ToString().Trim();
+            string displayName = form["displayName"].ToString().Trim();
+            string password = form["password"].ToString();
+
+            var user = new ApplicationUser
+            {
+                Id = Guid.CreateVersion7(),
+                UserName = email,
+                Email = email,
+                DisplayName = displayName,
+                CreatedAt = DateTimeOffset.UtcNow,
+
+                // Both obligations, and both are enforced by the enrolment gate rather than
+                // by the redirect the sign-in handler issues. The account has no second
+                // factor, and the administrator standing here knows the password -- so it
+                // is shared until the user replaces it with one only they know.
+                MustEnrolTotp = true,
+                MustChangePassword = true,
+            };
+
+            IdentityResult created = await users.CreateAsync(user, password);
+
+            return created.Succeeded
+                ? Results.Redirect("/admin/users")
+                : RedirectWithError(string.Join(" ", created.Errors.Select(error => error.Description)));
+        });
+
+        admin.MapPost("/reset-password", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
+            if (user is null)
+            {
+                return RedirectWithError("No account with that email address exists.");
+            }
+
+            // Generated and redeemed in the same breath. The token exists because Identity's
+            // reset flow normally mails it; here the caller has already been authorised to
+            // do this, so the round trip through the user is not what grants the authority.
+            string token = await users.GeneratePasswordResetTokenAsync(user);
+            IdentityResult reset = await users.ResetPasswordAsync(user, token, form["password"].ToString());
+
+            if (!reset.Succeeded)
+            {
+                return RedirectWithError(string.Join(" ", reset.Errors.Select(error => error.Description)));
+            }
+
+            // A reset that left the account locked would hand the user a password they
+            // cannot use, and the administrator no signal that they had not finished. The
+            // failure count goes with it: leaving it behind means the next few honest
+            // mistakes lock the account again immediately.
+            await users.SetLockoutEndDateAsync(user, null);
+            await users.ResetAccessFailedCountAsync(user);
+
+            user.MustChangePassword = true;
+            await users.UpdateAsync(user);
+
+            // No explicit UpdateSecurityStampAsync here, and that is not an oversight:
+            // ResetPasswordAsync rotates the stamp itself, which is what ends the sessions
+            // held under the old password. Measured, not assumed -- removing the rotation
+            // from set-lockout below reddens its test, and this path is covered by the
+            // sign-in that follows the reset.
+            return Results.Redirect("/admin/users");
+        });
+
+        admin.MapPost("/clear-mfa", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
+            if (user is null)
+            {
+                return RedirectWithError("No account with that email address exists.");
+            }
+
+            // This is the whole recovery path for a user who has lost both their
+            // authenticator and their recovery codes: E02a has no regeneration page on
+            // purpose. Re-enrolment calls GenerateNewTwoFactorRecoveryCodesAsync, which
+            // REPLACES the stored set rather than adding to it, so the codes the user lost
+            // stop working the moment they enrol again.
+            await users.SetTwoFactorEnabledAsync(user, false);
+            await users.ResetAuthenticatorKeyAsync(user);
+
+            // Neither call above touches the recovery codes -- measured, not assumed: an
+            // account with nine unspent codes still read nine after both of them. Those
+            // codes are unreachable while TwoFactorEnabled is false, because the recovery
+            // endpoint needs the two-factor cookie that only a two-factor challenge issues,
+            // and re-enrolment would replace them. But "clear two-factor" is what an
+            // administrator does when a user's second factor may be in somebody else's
+            // hands, so leaving live credential material behind on the strength of an
+            // argument about which other flag is currently false is the wrong default.
+            // Generating zero codes replaces the stored set with an empty one.
+            await users.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+
+            user.MustEnrolTotp = true;
+            await users.UpdateAsync(user);
+
+            // Both calls above rotate the security stamp, so the cleared user's existing
+            // sessions end on their next revalidation without anything explicit here.
+            return Results.Redirect("/admin/users");
+        });
+
+        admin.MapPost("/set-lockout", async (
+            HttpContext http,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
+            if (user is null)
+            {
+                return RedirectWithError("No account with that email address exists.");
+            }
+
+            bool locked = string.Equals(form["locked"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+
+            // DateTimeOffset.MaxValue is how Identity itself spells "until somebody lifts
+            // it": IsLockedOutAsync compares the stored end against now, so an unreachable
+            // end is an indefinite lock. A null end is the absence of one.
+            IdentityResult result = await users.SetLockoutEndDateAsync(
+                user, locked ? DateTimeOffset.MaxValue : null);
+
+            if (!result.Succeeded)
+            {
+                // SetLockoutEndDateAsync refuses an account with LockoutEnabled false rather
+                // than throwing, and silently redirecting to a page that still shows the
+                // account unlocked would look like the click did nothing.
+                return RedirectWithError(string.Join(" ", result.Errors.Select(error => error.Description)));
+            }
+
+            if (!locked)
+            {
+                await users.ResetAccessFailedCountAsync(user);
+            }
+
+            // THE line. Identity rotates the security stamp on a password reset and on a
+            // two-factor change, but NOT on lockout -- and the stamp validator checks that
+            // the cookie's stamp still MATCHES, which it does. So without this the locked
+            // user's session survives for as long as the cookie lives, and the one-minute
+            // ValidationInterval does not help: it decides how often to check, not what the
+            // check would find. Locking without rotating is not locking.
+            //
+            // Rotating on the unlock too, deliberately: an administrator unlocking an
+            // account after a suspected compromise gets the same guarantee, and one rule is
+            // easier to keep true than two.
+            await users.UpdateSecurityStampAsync(user);
+
+            return Results.Redirect("/admin/users");
+        });
+    }
+
+    /// <summary>
+    /// Sends the administrator back to the list with a message. The page shows it verbatim,
+    /// so the message must stay something an administrator may see — Identity's validation
+    /// descriptions qualify; nothing here echoes a credential.
+    /// </summary>
+    private static IResult RedirectWithError(string message) =>
+        Results.Redirect($"/admin/users?error={Uri.EscapeDataString(message)}");
 
     /// <summary>
     /// Reads the stashed recovery codes and clears the cookie, so they are displayed
