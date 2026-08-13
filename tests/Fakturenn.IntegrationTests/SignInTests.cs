@@ -26,8 +26,14 @@ public sealed class SignInTests(SetupHostFixture host)
     /// <summary>
     /// A page carrying <c>[Authorize]</c>, used as the probe for "is this client actually
     /// signed in". Anything that renders it has an application cookie the pipeline accepts.
+    /// <para>
+    /// Not <c>/account/enrol-totp</c>, which it used to be: that page now refuses a user who
+    /// has already enrolled, and every user in this class is enrolled — so it would answer
+    /// 302 for a perfectly good session and this probe would report the opposite of the
+    /// truth. Change-password needs nothing but an authenticated user.
+    /// </para>
     /// </summary>
-    private const string AuthorizedPage = "/account/enrol-totp";
+    private const string AuthorizedPage = "/account/change-password";
 
     [Fact]
     public async Task A_correct_password_alone_does_not_produce_an_authenticated_session()
@@ -304,10 +310,8 @@ public sealed class SignInTests(SetupHostFixture host)
         using HttpClient client = host.CreateClient(cookies);
         await SignInHelper.SignInAsync(client, user.UserName!, Password, key);
 
-        using (HttpResponseMessage response = await client.PostAsync(
-            new Uri("/account/logout", UriKind.Relative),
-            new FormUrlEncodedContent([]),
-            TestContext.Current.CancellationToken))
+        using (HttpResponseMessage response = await AntiforgeryHelper.PostAsync(
+            client, AntiforgeryHelper.SignedInTokenPage, "/account/logout"))
         {
             response.StatusCode.Should().Be(HttpStatusCode.Found);
             response.Headers.Location?.OriginalString.Should().Be("/account/login");
@@ -325,19 +329,13 @@ public sealed class SignInTests(SetupHostFixture host)
     private static async Task<HttpResponseMessage> PostChangePasswordAsync(
         HttpClient client,
         string current,
-        string replacement)
-    {
-        using FormUrlEncodedContent form = new(
-        [
-            new KeyValuePair<string, string>("currentPassword", current),
-            new KeyValuePair<string, string>("newPassword", replacement),
-        ]);
-
-        return await client.PostAsync(
-            new Uri("/account/change-password/submit", UriKind.Relative),
-            form,
-            TestContext.Current.CancellationToken);
-    }
+        string replacement) =>
+        await AntiforgeryHelper.PostAsync(
+            client,
+            AntiforgeryHelper.SignedInTokenPage,
+            "/account/change-password/submit",
+            ("currentPassword", current),
+            ("newPassword", replacement));
 
     private static async Task<HttpResponseMessage> GetAsync(HttpClient client, string path) =>
         await client.GetAsync(new Uri(path, UriKind.Relative), TestContext.Current.CancellationToken);

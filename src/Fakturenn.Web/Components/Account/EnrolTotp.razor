@@ -55,6 +55,34 @@
             return;
         }
 
+        // THE guard. [Authorize] alone lets any authenticated session re-read the live
+        // shared secret below, and posting a code from it regenerates the recovery codes --
+        // so a stolen cookie became a permanent second-factor compromise that changing the
+        // password does not undo. Task 12's gate confines flagged users TO this page; it
+        // never kept unflagged users OFF it.
+        //
+        // MustEnrolTotp rather than TwoFactorEnabled, and the choice matters. This is the
+        // gate's own predicate, so the set of users the gate confines here is exactly the
+        // set this page admits. Any narrower condition -- "not enrolled yet", or that AND
+        // the flag -- admits a state where the gate redirects a user to a page that then
+        // refuses them, which is the infinite redirect loop recorded in
+        // IMPLEMENTATION-NOTES.md, not a blocked page. The flag is also honest about what
+        // it means: nothing sets it without first clearing TwoFactorEnabled and the
+        // authenticator key (the administrator's clear-MFA endpoint and --reset-mfa both
+        // do), so "owes an enrolment" and "has no second factor" are the same state.
+        if (!user.MustEnrolTotp)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        // The response below carries the shared secret, and it must not be cached. It is
+        // not, and no line here does it: Blazor's endpoint renderer stores an antiforgery
+        // token on every static-SSR render, and DefaultAntiforgery.SetDoNotCacheHeaders
+        // sets "no-cache, no-store" when it does. Measured across every page in the
+        // application, and pinned by EnrolTotpTests.The_pages_that_render_a_secret_forbid_caching
+        // -- which is where to look if that ever stops being true.
+
         // Reuse an existing key rather than resetting on every visit. A user who verified
         // a code but left before acknowledging their recovery codes still has
         // MustEnrolTotp set and comes back here; resetting would silently kill the entry

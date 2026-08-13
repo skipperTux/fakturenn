@@ -70,6 +70,10 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
     {
         // The positive control for the theory above. Without it, an endpoint that refused
         // everybody -- or one that was never mapped at all -- would satisfy every case.
+        //
+        // The post carries a valid antiforgery token, which it did not have to before: this
+        // request used to succeed with a session cookie and nothing else, and that is the
+        // hole the token now closes. The paired negative is the test below.
         using HttpClient client = await AdministratorClientAsync("admin-allowed@example.test");
         ApplicationUser subject =
             await host.CreateUserAsync("admin-allowed-subject@example.test", Password, Token);
@@ -79,6 +83,36 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
         response.Headers.Location?.OriginalString.Should().Be("/admin/users");
+    }
+
+    [Theory]
+    [InlineData(CreateUserPath)]
+    [InlineData(ResetPasswordPath)]
+    [InlineData(ClearMfaPath)]
+    [InlineData(SetLockoutPath)]
+    public async Task Every_administration_endpoint_refuses_a_post_without_an_antiforgery_token(string path)
+    {
+        // A session cookie alone must not be enough. These endpoints are reached from
+        // /admin/users, whose forms have always rendered a token -- nothing on the server
+        // looked at it, because a handler that reads the form by hand gets no antiforgery
+        // metadata inferred for it and UseAntiforgery skips what it finds no metadata on.
+        //
+        // The caller here is a full administrator, so authorization cannot be what refuses
+        // the request: the only thing missing is the token.
+        using HttpClient client = await AdministratorClientAsync($"admin-forged-{Slug(path)}@example.test");
+        ApplicationUser subject =
+            await host.CreateUserAsync($"admin-forged-subject-{Slug(path)}@example.test", Password, Token);
+
+        using HttpResponseMessage response = await AntiforgeryHelper.PostWithoutTokenAsync(
+            client, path, ("email", subject.Email!), ("locked", "true"));
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.BadRequest,
+            $"POST {path} must validate the antiforgery token the form already renders");
+
+        ApplicationUser unchanged = await ReadUserAsync(subject.Email!);
+        unchanged.LockoutEnd.Should().BeNull("a refused post must change nothing");
+        unchanged.MustChangePassword.Should().BeFalse("a refused post must change nothing");
     }
 
     [Fact]
@@ -323,6 +357,15 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
                 "/", "clearing two-factor leaves the password as the only factor until re-enrolment");
         }
 
+        // The enrolment page refuses a user who has already enrolled, so this is also the
+        // assertion that clearing two-factor RE-OPENS it. Without the flag going back on,
+        // the documented recovery path would end at a page the user is bounced off.
+        using (HttpResponseMessage enrolment = await GetAsync(enrolling, "/account/enrol-totp"))
+        {
+            enrolment.StatusCode.Should().Be(
+                HttpStatusCode.OK, "clearing two-factor must let the user enrol again");
+        }
+
         string replacementKey = await host.ReadAuthenticatorKeyAsync(user.Id);
         replacementKey.Should().NotBeNullOrEmpty();
 
@@ -390,16 +433,21 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
     private static async Task<HttpResponseMessage> GetAsync(HttpClient client, string path) =>
         await client.GetAsync(new Uri(path, UriKind.Relative), Token);
 
+    /// <summary>
+    /// A post carrying a valid antiforgery token, which every <c>/account</c> endpoint now
+    /// requires.
+    /// <para>
+    /// The token comes from <c>/account/change-password</c> rather than from
+    /// <c>/admin/users</c> — the page these forms actually live on — because half the tests
+    /// here drive a user who is refused <c>/admin/users</c> on purpose. A token is bound to
+    /// the caller, not to a form's action, so the page that issues it is free.
+    /// </para>
+    /// </summary>
     private static async Task<HttpResponseMessage> PostAsync(
         HttpClient client,
         string path,
-        params (string Name, string Value)[] fields)
-    {
-        using FormUrlEncodedContent form =
-            new([.. fields.Select(field => new KeyValuePair<string, string>(field.Name, field.Value))]);
-
-        return await client.PostAsync(new Uri(path, UriKind.Relative), form, Token);
-    }
+        params (string Name, string Value)[] fields) =>
+        await AntiforgeryHelper.PostAsync(client, AntiforgeryHelper.SignedInTokenPage, path, fields);
 
     private HttpClient ClientWith(Cookie session)
     {

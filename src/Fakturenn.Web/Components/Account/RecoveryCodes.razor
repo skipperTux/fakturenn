@@ -41,6 +41,10 @@ else
     // cannot get them back. The codes still work; nothing displays them again. E02a has
     // no regeneration page on purpose, so the recovery path is an administrator clearing
     // two-factor setup, which forces re-enrolment and issues a fresh set.
+    //
+    // The response carries ten live credentials and must not be cached. It is not, and no
+    // line here does it — see the same note on EnrolTotp.razor and the assertion in
+    // EnrolTotpTests.The_pages_that_render_a_secret_forbid_caching.
     protected override void OnInitialized() =>
         _codes = AccountEndpoints.TakeRecoveryCodes(HttpContextAccessor.HttpContext!);
 }

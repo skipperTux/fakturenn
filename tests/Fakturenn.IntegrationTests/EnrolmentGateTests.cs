@@ -51,9 +51,8 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
     {
         using HttpClient client = await NotEnrolledClientAsync("gate-enrol-post@example.test");
 
-        using FormUrlEncodedContent form = new([new KeyValuePair<string, string>("code", "000000")]);
-        using HttpResponseMessage response = await client.PostAsync(
-            new Uri("/account/enrol-totp/verify", UriKind.Relative), form, TestContext.Current.CancellationToken);
+        using HttpResponseMessage response =
+            await SignInHelper.PostCodeAsync(client, "/account/enrol-totp/verify", "000000");
 
         // The query string is the whole assertion. The gate's own redirect is to
         // "/account/enrol-totp" with nothing after it, so only "?error=invalid" proves the
@@ -66,9 +65,8 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
     {
         using HttpClient client = await NotEnrolledClientAsync("gate-logout@example.test");
 
-        using FormUrlEncodedContent form = new([]);
-        using HttpResponseMessage response = await client.PostAsync(
-            new Uri("/account/logout", UriKind.Relative), form, TestContext.Current.CancellationToken);
+        using HttpResponseMessage response = await AntiforgeryHelper.PostAsync(
+            client, AntiforgeryHelper.SignedInTokenPage, "/account/logout");
 
         response.Headers.Location?.OriginalString.Should().Be(
             "/account/login", "a user who cannot finish enrolling must still be able to leave");
@@ -124,14 +122,12 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
     {
         using HttpClient client = await MustChangePasswordClientAsync("gate-change-post@example.test");
 
-        using FormUrlEncodedContent form = new(
-        [
-            new KeyValuePair<string, string>("currentPassword", "Falsch-Pferd-99"),
-            new KeyValuePair<string, string>("newPassword", "Anderes-Pferd-77"),
-        ]);
-
-        using HttpResponseMessage response = await client.PostAsync(
-            new Uri("/account/change-password/submit", UriKind.Relative), form, TestContext.Current.CancellationToken);
+        using HttpResponseMessage response = await AntiforgeryHelper.PostAsync(
+            client,
+            AntiforgeryHelper.SignedInTokenPage,
+            "/account/change-password/submit",
+            ("currentPassword", "Falsch-Pferd-99"),
+            ("newPassword", "Anderes-Pferd-77"));
 
         // Same reasoning as the enrolment post: the gate redirects to the bare page, so the
         // "?error=" the handler adds is what distinguishes "the handler ran and refused" from
@@ -168,7 +164,9 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
         // /account/login/submit is NOT on the allowlist, deliberately — an authenticated
         // user has no business there. Anonymous callers reach it because the gate declines
         // to act on a request with no user behind it, and this pins that.
-        using HttpClient client = host.CreateClient();
+        // A cookie jar, because the post now carries an antiforgery token and validation
+        // compares it against a cookie the token page sets.
+        using HttpClient client = host.CreateClient(new CookieContainer());
 
         using HttpResponseMessage response =
             await SignInHelper.PostPasswordAsync(client, "nobody@example.test", Password);

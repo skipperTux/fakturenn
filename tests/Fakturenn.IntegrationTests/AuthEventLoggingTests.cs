@@ -354,8 +354,9 @@ public sealed class AuthEventLoggingTests(SetupHostFixture host)
 
         using (HttpClient client = host.CreateClient(new CookieContainer()))
         {
-            using HttpResponseMessage created = await PostAsync(
+            using HttpResponseMessage created = await AntiforgeryHelper.PostAsync(
                 client,
+                "/setup",
                 "/account/setup",
                 ("email", "log-first@example.test"),
                 ("displayName", "First Administrator"),
@@ -437,16 +438,16 @@ public sealed class AuthEventLoggingTests(SetupHostFixture host)
     private static async Task<HttpResponseMessage> GetAsync(HttpClient client, string path) =>
         await client.GetAsync(new Uri(path, UriKind.Relative), Token);
 
+    /// <summary>
+    /// A post by a signed-in caller, carrying the antiforgery token every <c>/account</c>
+    /// endpoint now requires. The one post in this class made by a caller with no session —
+    /// first-run setup — takes its token from <c>/setup</c> instead.
+    /// </summary>
     private static async Task<HttpResponseMessage> PostAsync(
         HttpClient client,
         string path,
-        params (string Name, string Value)[] fields)
-    {
-        using FormUrlEncodedContent form =
-            new([.. fields.Select(field => new KeyValuePair<string, string>(field.Name, field.Value))]);
-
-        return await client.PostAsync(new Uri(path, UriKind.Relative), form, Token);
-    }
+        params (string Name, string Value)[] fields) =>
+        await AntiforgeryHelper.PostAsync(client, AntiforgeryHelper.SignedInTokenPage, path, fields);
 
     /// <summary>The data-protected cookie the enrolment handler uses to carry the codes.</summary>
     private static string RecoveryCookie(HttpResponseMessage response)

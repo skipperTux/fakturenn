@@ -56,10 +56,9 @@ public sealed class AccountRateLimitTests(SetupHostFixture host)
             new Cookie("Identity.TwoFactorUserId", "not-a-protected-ticket", "/"));
 
         using HttpClient client = host.CreateClient(cookies, SharedAddress);
-        using FormUrlEncodedContent form = new([new KeyValuePair<string, string>("code", "000000")]);
 
-        using HttpResponseMessage response = await client.PostAsync(
-            new Uri("/account/login-2fa/submit", UriKind.Relative), form, TestContext.Current.CancellationToken);
+        using HttpResponseMessage response =
+            await SignInHelper.PostCodeAsync(client, "/account/login-2fa/submit", "000000");
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
         response.Headers.Location?.OriginalString.Should().Be("/account/login-2fa?error=invalid");
@@ -82,19 +81,21 @@ public sealed class AccountRateLimitTests(SetupHostFixture host)
 
         await SignInHelper.SignInAsync(client, email, Password, key);
 
+        // One token for all six posts, deliberately. Antiforgery tokens are not single-use,
+        // and re-fetching one per attempt would leave the count of requests this method
+        // makes to the "account" group depending on how the helper is written -- which is
+        // precisely the number this test is measuring.
+        string token = await AntiforgeryHelper.TokenFromAsync(client, AntiforgeryHelper.SignedInTokenPage);
+
         List<HttpStatusCode> statuses = [];
         for (int attempt = 0; attempt < PostsPerUser; attempt++)
         {
-            using FormUrlEncodedContent form = new(
-            [
-                new KeyValuePair<string, string>("currentPassword", "Falsch-Pferd-99"),
-                new KeyValuePair<string, string>("newPassword", "Anderes-Pferd-77"),
-            ]);
-
-            using HttpResponseMessage response = await client.PostAsync(
-                new Uri("/account/change-password/submit", UriKind.Relative),
-                form,
-                TestContext.Current.CancellationToken);
+            using HttpResponseMessage response = await AntiforgeryHelper.PostWithTokenAsync(
+                client,
+                token,
+                "/account/change-password/submit",
+                ("currentPassword", "Falsch-Pferd-99"),
+                ("newPassword", "Anderes-Pferd-77"));
 
             statuses.Add(response.StatusCode);
         }

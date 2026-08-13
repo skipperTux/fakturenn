@@ -32,25 +32,31 @@ internal static class SignInHelper
     public static async Task<HttpResponseMessage> PostPasswordAsync(
         HttpClient client,
         string email,
-        string password)
-    {
-        using FormUrlEncodedContent form = new(
-        [
-            new KeyValuePair<string, string>("email", email),
-            new KeyValuePair<string, string>("password", password),
-        ]);
+        string password) =>
+        await AntiforgeryHelper.PostAsync(
+            client,
+            AntiforgeryHelper.AnonymousTokenPage,
+            "/account/login/submit",
+            ("email", email),
+            ("password", password));
 
-        return await client.PostAsync(
-            new Uri("/account/login/submit", UriKind.Relative), form, TestContext.Current.CancellationToken);
-    }
-
-    public static async Task<HttpResponseMessage> PostCodeAsync(HttpClient client, string path, string code)
-    {
-        using FormUrlEncodedContent form = new([new KeyValuePair<string, string>("code", code)]);
-
-        return await client.PostAsync(
-            new Uri(path, UriKind.Relative), form, TestContext.Current.CancellationToken);
-    }
+    /// <summary>
+    /// Posts a code to one of the code-taking endpoints.
+    /// <para>
+    /// The token page depends on the caller, not on the path: the two sign-in challenges
+    /// are posted by a caller who has no session yet — the two-factor cookie is not one —
+    /// while <c>/account/enrol-totp/verify</c> is posted by a signed-in user, and a token
+    /// issued to one of those is not valid for the other.
+    /// </para>
+    /// </summary>
+    public static async Task<HttpResponseMessage> PostCodeAsync(HttpClient client, string path, string code) =>
+        await AntiforgeryHelper.PostAsync(
+            client,
+            path.StartsWith("/account/enrol-totp", StringComparison.Ordinal)
+                ? "/account/enrol-totp"
+                : AntiforgeryHelper.AnonymousTokenPage,
+            path,
+            ("code", code));
 
     /// <summary>Both factors, asserting at each step so a caller's later failure is its own.</summary>
     public static async Task SignInAsync(HttpClient client, string email, string password, string key)

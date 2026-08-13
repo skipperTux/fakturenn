@@ -39,18 +39,49 @@ public static class AccountEndpoints
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
+        // EVERY handler below takes the form as an IFormCollection PARAMETER, and none of
+        // them calls http.Request.ReadFormAsync. That is the whole antiforgery story for
+        // this file, so it is worth spelling out rather than leaving as a style.
+        //
+        // RequestDelegateFactory infers IAntiforgeryMetadata for an endpoint that BINDS a
+        // form, and the generated delegate is also what turns a failed validation into a
+        // 400 before the handler body runs. Read the form off HttpContext instead and both
+        // halves are lost: no metadata, so UseAntiforgery skips the endpoint entirely --
+        // measured in Task 9, where a token-less post to /account/setup answered 302 and
+        // created the administrator while all seven forms had been rendering
+        // <AntiforgeryToken /> since they were written.
+        //
+        // Endpoint metadata alone is NOT the fix, and that was measured too: with
+        // RequireAntiforgeryTokenAttribute on this group and the handlers still reading the
+        // form by hand, AntiforgeryMiddleware validates but does not reject -- it records
+        // the outcome in IAntiforgeryValidationFeature and calls the next middleware, and
+        // FormFeature.ReadFormAsync then throws InvalidOperationException. A forged post
+        // answered 500 instead of 400. The parameter is what makes the framework refuse it.
+        //
+        // /account/logout binds a form it never reads for exactly this reason: it is the
+        // one endpoint here with no fields, and without the parameter it would be the one
+        // endpoint with no antiforgery.
+        //
+        // /account/setup is deliberately NOT exempted, which reverses Task 9's disposition
+        // rather than repeating it. That reasoning was "an attacker who can reach an
+        // unconfigured instance can simply POST it directly", and it holds only for an
+        // attacker who can reach it. Cross-site request forgery is the case where they
+        // cannot: an instance on a private network, reachable by a victim's browser and by
+        // nothing the attacker controls, is claimed with a password of the attacker's
+        // choosing by a page the victim merely visits. The setup form already renders a
+        // token; validating it costs nothing and closes that.
         RouteGroupBuilder group = endpoints.MapGroup("/account").RequireRateLimiting("account");
 
         group.MapPost("/setup", async (
-            HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             IdentityDbContext db,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
-            // Read outside the transaction: parsing the request body is not database work
-            // and must not hold the advisory lock below.
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            // Bound, so it is parsed before the handler body and outside the transaction:
+            // parsing the request body is not database work and must not hold the advisory
+            // lock below.
             string email = form["email"].ToString().Trim();
             string displayName = form["displayName"].ToString().Trim();
             string password = form["password"].ToString();
@@ -156,10 +187,10 @@ public static class AccountEndpoints
         // "/account/setup": in this application a form's action is never its page route.
         group.MapPost("/enrol-totp/verify", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             SignInManager<ApplicationUser> signIn,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
             ApplicationUser? user = await users.GetUserAsync(http.User);
             if (user is null)
@@ -167,7 +198,19 @@ public static class AccountEndpoints
                 return Results.Redirect("/account/login");
             }
 
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
+            // The same guard the enrolment page carries, for the same reason: this handler
+            // ends in GenerateNewTwoFactorRecoveryCodesAsync, which REPLACES the stored set.
+            // Without it, any authenticated session -- a stolen cookie included -- silently
+            // invalidates the recovery codes their owner already wrote down, which is a
+            // denial of the second factor rather than a use of it.
+            //
+            // MustEnrolTotp, and not TwoFactorEnabled, deliberately. See EnrolTotp.razor for
+            // the argument: this predicate is the enrolment gate's own, and any other one
+            // admits a state where the gate redirects a user to a page that refuses them.
+            if (!user.MustEnrolTotp)
+            {
+                return Results.Redirect("/");
+            }
 
             // Authenticator apps group the digits; a user copying from one brings the
             // grouping with them.
@@ -213,12 +256,10 @@ public static class AccountEndpoints
         // mapping a handler on the page's own route makes every post an
         // AmbiguousMatchException at request time.
         group.MapPost("/login/submit", async (
-            HttpContext http,
+            IFormCollection form,
             SignInManager<ApplicationUser> signIn,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             string email = form["email"].ToString().Trim();
             string password = form["password"].ToString();
 
@@ -272,12 +313,10 @@ public static class AccountEndpoints
 
         group.MapPost("/login-2fa/submit", async (
             HttpContext http,
+            IFormCollection form,
             SignInManager<ApplicationUser> signIn,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
-
             // Authenticator apps group the digits; a user copying from one brings the
             // grouping with them.
             string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
@@ -327,12 +366,10 @@ public static class AccountEndpoints
         });
 
         group.MapPost("/login-recovery/submit", async (
-            HttpContext http,
+            IFormCollection form,
             SignInManager<ApplicationUser> signIn,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
 
             // Before the exchange, for the same reason as the authenticator handler above.
@@ -367,10 +404,10 @@ public static class AccountEndpoints
 
         group.MapPost("/change-password/submit", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             SignInManager<ApplicationUser> signIn,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
             ApplicationUser? user = await users.GetUserAsync(http.User);
             if (user is null)
@@ -378,7 +415,6 @@ public static class AccountEndpoints
                 return Results.Redirect("/account/login");
             }
 
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             string current = form["currentPassword"].ToString();
             string replacement = form["newPassword"].ToString();
 
@@ -415,9 +451,16 @@ public static class AccountEndpoints
         // discharge their obligations must still be able to end the session.
         group.MapPost("/logout", async (
             HttpContext http,
+
+            // Bound and never read. This endpoint carries no fields, and binding a form is
+            // what attaches antiforgery validation to a minimal-API endpoint -- without the
+            // parameter, this would be the one /account post a cross-site page could make.
+            IFormCollection form,
             SignInManager<ApplicationUser> signIn,
             ILoggerFactory loggerFactory) =>
         {
+            _ = form;
+
             // Read before the sign-out, which clears HttpContext.User's identity for the
             // remainder of the request.
             string email = ActorOf(http);
@@ -455,11 +498,10 @@ public static class AccountEndpoints
 
         admin.MapPost("/create-user", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             string email = form["email"].ToString().Trim();
             string displayName = form["displayName"].ToString().Trim();
             string password = form["password"].ToString();
@@ -494,12 +536,11 @@ public static class AccountEndpoints
 
         admin.MapPost("/reset-password", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             IStringLocalizer<SharedResource> localizer,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
@@ -542,12 +583,11 @@ public static class AccountEndpoints
 
         admin.MapPost("/clear-mfa", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             IStringLocalizer<SharedResource> localizer,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
@@ -585,12 +625,11 @@ public static class AccountEndpoints
 
         admin.MapPost("/set-lockout", async (
             HttpContext http,
+            IFormCollection form,
             UserManager<ApplicationUser> users,
             IStringLocalizer<SharedResource> localizer,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
+            ILoggerFactory loggerFactory) =>
         {
-            IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {

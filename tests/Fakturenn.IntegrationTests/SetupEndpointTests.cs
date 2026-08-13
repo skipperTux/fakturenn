@@ -21,8 +21,9 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
     {
         await host.ResetUsersAsync(TestContext.Current.CancellationToken);
 
-        using HttpClient client = host.CreateClient();
-        using HttpResponseMessage response = await PostSetupAsync(client, "first@example.test");
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        using HttpResponseMessage response =
+            await PostSetupAsync(client, await SetupTokenAsync(client), "first@example.test");
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
         response.Headers.Location?.OriginalString.Should().Be("/account/login");
@@ -48,13 +49,15 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
     {
         await host.ResetUsersAsync(TestContext.Current.CancellationToken);
 
-        using HttpClient client = host.CreateClient();
-        using (HttpResponseMessage first = await PostSetupAsync(client, "owner@example.test"))
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        string token = await SetupTokenAsync(client);
+
+        using (HttpResponseMessage first = await PostSetupAsync(client, token, "owner@example.test"))
         {
             first.StatusCode.Should().Be(HttpStatusCode.Found);
         }
 
-        using HttpResponseMessage second = await PostSetupAsync(client, "intruder@example.test");
+        using HttpResponseMessage second = await PostSetupAsync(client, token, "intruder@example.test");
 
         // The closed-path answer, not an unhandled exception: an endpoint that 500s on
         // the second post is still leaking that it did work before it failed.
@@ -82,7 +85,8 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
 
         const int Racers = 4;
 
-        using HttpClient client = host.CreateClient();
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        string token = await SetupTokenAsync(client);
         using Barrier startTogether = new(Racers);
 
         Task<HttpResponseMessage>[] posts = [.. Enumerable.Range(0, Racers).Select(index =>
@@ -92,7 +96,7 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
                     // Released as one, so the count checks overlap rather than queueing.
                     startTogether.SignalAndWait(TestContext.Current.CancellationToken);
 
-                    return await PostSetupAsync(client, $"racer-{index}@example.test");
+                    return await PostSetupAsync(client, token, $"racer-{index}@example.test");
                 },
                 TestContext.Current.CancellationToken))];
 
@@ -121,9 +125,9 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
         // Required attributes would be the only gate, and a direct post skips those.
         await host.ResetUsersAsync(TestContext.Current.CancellationToken);
 
-        using HttpClient client = host.CreateClient();
-        using HttpResponseMessage response =
-            await PostSetupAsync(client, "weak@example.test", password: "short");
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        using HttpResponseMessage response = await PostSetupAsync(
+            client, await SetupTokenAsync(client), "weak@example.test", password: "short");
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
         response.Headers.Location?.OriginalString.Should().StartWith("/setup?error=");
@@ -159,8 +163,12 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
             await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        using HttpClient client = host.CreateClient();
-        using HttpResponseMessage response = await PostSetupAsync(client, "bypass@example.test");
+        // The token comes from a page that is not /setup, so the setup page really is never
+        // rendered for this caller — which is the whole point of the test.
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        string token = await AntiforgeryHelper.TokenFromAsync(client, AntiforgeryHelper.AnonymousTokenPage);
+
+        using HttpResponseMessage response = await PostSetupAsync(client, token, "bypass@example.test");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
@@ -172,22 +180,59 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
         emails.Should().ContainSingle().Which.Should().Be("planted@example.test");
     }
 
+    [Fact]
+    public async Task A_post_without_an_antiforgery_token_creates_nothing()
+    {
+        // /account/setup is NOT exempt from antiforgery, and this is the assertion that
+        // says so. An earlier disposition accepted the exemption on the grounds that an
+        // attacker who can reach an unconfigured instance can simply post to it -- true,
+        // and beside the point for the attacker who cannot reach it and uses a victim's
+        // browser to claim the instance with a password of their choosing.
+        await host.ResetUsersAsync(TestContext.Current.CancellationToken);
+
+        using HttpClient client = host.CreateClient(new CookieContainer());
+        using HttpResponseMessage response = await AntiforgeryHelper.PostWithoutTokenAsync(
+            client,
+            "/account/setup",
+            ("email", "forged@example.test"),
+            ("displayName", "Forged"),
+            ("password", ValidPassword));
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.BadRequest, "a first-run post without a token must never mint an administrator");
+
+        await using IdentityDbContext context = host.CreateIdentityContext();
+
+        bool anyUser = await context.Users.AsNoTracking()
+            .AnyAsync(TestContext.Current.CancellationToken);
+        anyUser.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The token <c>/setup</c> renders while the instance is empty, which is the state
+    /// every test in this class arranges before it posts.
+    /// <para>
+    /// Fetched once and reused rather than re-fetched per post: the page stops rendering a
+    /// form the moment a user exists, and two of these tests post a <b>second</b> time to
+    /// assert that the endpoint refuses. Re-fetching would turn those into a 400 from
+    /// antiforgery and stop proving anything about the endpoint's own guard.
+    /// </para>
+    /// </summary>
+    private static async Task<string> SetupTokenAsync(HttpClient client) =>
+        await AntiforgeryHelper.TokenFromAsync(client, "/setup");
+
     private static async Task<HttpResponseMessage> PostSetupAsync(
         HttpClient client,
+        string token,
         string email,
-        string password = ValidPassword)
-    {
-        // No antiforgery token: this measures what the pipeline actually enforces for a
-        // hand-rolled form post rather than assuming it.
-        using FormUrlEncodedContent form = new(
-        [
-            new KeyValuePair<string, string>("email", email),
-            new KeyValuePair<string, string>("displayName", email),
-            new KeyValuePair<string, string>("password", password),
-        ]);
-
-        return await client.PostAsync(new Uri("/account/setup", UriKind.Relative), form, TestContext.Current.CancellationToken);
-    }
+        string password = ValidPassword) =>
+        await AntiforgeryHelper.PostWithTokenAsync(
+            client,
+            token,
+            "/account/setup",
+            ("email", email),
+            ("displayName", email),
+            ("password", password));
 
     private static async Task<Guid> AdministratorRoleIdAsync(IdentityDbContext context) =>
         await context.Roles.AsNoTracking()

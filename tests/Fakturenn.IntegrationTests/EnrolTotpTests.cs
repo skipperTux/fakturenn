@@ -27,6 +27,12 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
 
     private const int ExpectedRecoveryCodes = 10;
 
+    /// <summary>
+    /// Satisfies the configured policy. Only the already-enrolled users need one: the tests
+    /// about re-enrolment sign in again over HTTP to redeem a recovery code.
+    /// </summary>
+    private const string EnrolledPassword = "Korrekt-Pferd-42";
+
     [Fact]
     public async Task Enrolling_with_a_valid_code_stores_both_second_factors_as_ciphertext()
     {
@@ -235,6 +241,126 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
     }
 
     [Fact]
+    public async Task The_pages_that_render_a_secret_forbid_caching()
+    {
+        // Both of these put credential material in a response body: the TOTP shared secret
+        // on one, ten recovery codes on the other. Shown-once is enforced by deleting a
+        // cookie, which stops the server rendering them again and says nothing about the
+        // copy the browser kept -- a disk cache or a back-navigation puts them back on
+        // screen for whoever is at the machine next.
+        //
+        // NOTHING IN THIS APPLICATION SETS THIS HEADER. Measured, not assumed: with no
+        // `no-store` anywhere under src/, every static-SSR page in this host already answers
+        // "no-store, no-cache" -- /account/enrol-totp, /account/recovery-codes,
+        // /account/change-password, /account/login and /setup alike. The source is
+        // DefaultAntiforgery.SetDoNotCacheHeaders, which Blazor's endpoint renderer triggers
+        // by storing an antiforgery token on every component render, plus the health-check
+        // middleware doing the same for /health. Adding an explicit header on these two
+        // pages would be a line no mutation could redden.
+        //
+        // So this test exists to pin a property the framework currently supplies rather than
+        // to prove application code supplies it. If a future ASP.NET Core stops storing that
+        // token eagerly, or a page opts out, these two pages become cacheable with a secret
+        // in the body and this is the only thing that would say so.
+        (_, CookieContainer cookies) = await SignedInUserAsync("no-store@example.test");
+
+        using HttpClient client = host.CreateClient(cookies);
+
+        CacheControlOf(await client.GetAsync(
+            new Uri("/account/enrol-totp", UriKind.Relative), TestContext.Current.CancellationToken))
+            .Should().Contain("no-store", "the enrolment page renders the shared secret");
+
+        string key = await ReadAuthenticatorKeyAsync(client);
+        using (HttpResponseMessage posted = await PostCodeAsync(client, CurrentCode(key)))
+        {
+            posted.StatusCode.Should().Be(HttpStatusCode.Found);
+        }
+
+        CacheControlOf(await client.GetAsync(
+            new Uri("/account/recovery-codes", UriKind.Relative), TestContext.Current.CancellationToken))
+            .Should().Contain("no-store", "the recovery-code page renders ten live credentials");
+    }
+
+    [Fact]
+    public async Task An_enrolled_user_is_refused_the_enrolment_page()
+    {
+        // The page displays the account's live TOTP shared secret. [Authorize] alone means
+        // any authenticated session can re-read it -- including one held by whoever stole
+        // the cookie -- so a password change no longer undoes the compromise. Task 12's
+        // gate confines flagged users TO this page; nothing kept enrolled users OFF it.
+        (ApplicationUser user, CookieContainer cookies) = await EnrolledUserAsync("reread@example.test");
+
+        using HttpClient client = host.CreateClient(cookies);
+        using HttpResponseMessage response = await client.GetAsync(
+            new Uri("/account/enrol-totp", UriKind.Relative), TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Found);
+        LocationPath(response).Should().Be("/", "a user who has already enrolled has no business here");
+
+        // The status alone would be satisfied by a redirect issued after the secret had
+        // been rendered into the body -- static SSR writes the markup even on the request
+        // that redirects, so the guard has to sit before the key is read, not after.
+        string html = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        html.Should().NotContain(
+            Formatted(await host.ReadAuthenticatorKeyAsync(user.Id)),
+            "the shared secret must not reach the response even on the way out");
+
+        await using IdentityDbContext context = host.CreateIdentityContext();
+        ApplicationUser stored = await context.Users.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == user.Id, TestContext.Current.CancellationToken);
+
+        stored.TwoFactorEnabled.Should().BeTrue("the refusal must not have disturbed the enrolment");
+    }
+
+    [Fact]
+    public async Task An_enrolled_user_is_refused_the_verification_endpoint()
+    {
+        // The endpoint's tail is GenerateNewTwoFactorRecoveryCodesAsync, which REPLACES the
+        // stored set. Reachable by any session, it turns a stolen cookie into a silent
+        // destruction of the ten codes the owner wrote down -- a denial of the second
+        // factor, from a caller who never proved they hold one.
+        (ApplicationUser user, string key, CookieContainer cookies) =
+            await EnrolledUserWithKeyAsync("regenerate@example.test");
+
+        string[] issued = await host.GenerateRecoveryCodesAsync(user.Id, ExpectedRecoveryCodes);
+        issued.Should().HaveCount(ExpectedRecoveryCodes);
+
+        using HttpClient client = host.CreateClient(cookies);
+
+        // A genuinely valid code, computed from the account's own key. The refusal has to be
+        // the guard rather than a rejected code, or this proves nothing.
+        using HttpResponseMessage response = await AntiforgeryHelper.PostAsync(
+            client,
+            AntiforgeryHelper.SignedInTokenPage,
+            "/account/enrol-totp/verify",
+            ("code", CurrentCode(key)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Found);
+        LocationPath(response).Should().Be("/");
+        SetCookieHeaders(response).Should()
+            .NotContain(header => header.StartsWith(RecoveryCookieName, StringComparison.Ordinal));
+
+        (await host.CountRecoveryCodesAsync(user.Id)).Should().Be(
+            ExpectedRecoveryCodes, "no code may have been spent or replaced");
+
+        // The decisive check. A count alone would be satisfied by a fresh set of the same
+        // size, which is exactly the outcome this guard exists to prevent, so redeem one of
+        // the codes the user actually holds.
+        using HttpClient redeeming = host.CreateClient(new CookieContainer());
+        using (HttpResponseMessage passwordStep = await SignInHelper.PostPasswordAsync(
+            redeeming, user.UserName!, EnrolledPassword))
+        {
+            passwordStep.Headers.Location?.OriginalString.Should().Be("/account/login-2fa");
+        }
+
+        using HttpResponseMessage redeemed = await SignInHelper.PostCodeAsync(
+            redeeming, "/account/login-recovery/submit", issued[0]);
+
+        redeemed.Headers.Location?.OriginalString.Should().Be(
+            "/", "the recovery codes the user wrote down must survive somebody else's post");
+    }
+
+    [Fact]
     public async Task Returning_to_the_enrolment_page_reuses_the_authenticator_key()
     {
         // Spec section 8: a user who leaves before acknowledging the recovery codes comes
@@ -272,6 +398,16 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
     private static string CurrentCode(string key) =>
         new Totp(Base32Encoding.ToBytes(key)).ComputeTotp();
 
+    /// <summary>
+    /// The key as the page would print it — four-character groups. Searching the markup for
+    /// the raw base32 would miss it, because the page never writes it that way.
+    /// </summary>
+    private static string Formatted(string key) =>
+        string.Join(
+            ' ',
+            Enumerable.Range(0, (key.Length + 3) / 4)
+                .Select(group => key.Substring(group * 4, Math.Min(4, key.Length - (group * 4)))));
+
     private static string[] ExtractRecoveryCodes(string html)
     {
         const string Marker = "data-testid=\"recovery-codes\"";
@@ -286,6 +422,18 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
         string block = end < 0 ? html[start..] : html[start..end];
 
         return [.. Paragraph().Matches(block).Select(match => match.Groups[1].Value.Trim())];
+    }
+
+    /// <summary>
+    /// The response's <c>Cache-Control</c> as a string, disposing the response — these
+    /// assertions want the header and nothing else from it.
+    /// </summary>
+    private static string CacheControlOf(HttpResponseMessage response)
+    {
+        using (response)
+        {
+            return response.Headers.CacheControl?.ToString() ?? string.Empty;
+        }
     }
 
     private static IEnumerable<string> SetCookieHeaders(HttpResponseMessage response) =>
@@ -326,12 +474,20 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
     private static async Task<string[]> ReadRecoveryCodesAsync(HttpClient client) =>
         ExtractRecoveryCodes(await GetAsync(client, "/account/recovery-codes"));
 
-    private static async Task<HttpResponseMessage> PostCodeAsync(HttpClient client, string code)
-    {
-        using FormUrlEncodedContent form = new([new KeyValuePair<string, string>("code", code)]);
+    private static async Task<HttpResponseMessage> PostCodeAsync(HttpClient client, string code) =>
+        await SignInHelper.PostCodeAsync(client, "/account/enrol-totp/verify", code);
 
-        return await client.PostAsync(
-            new Uri("/account/enrol-totp/verify", UriKind.Relative), form, TestContext.Current.CancellationToken);
+    /// <summary>
+    /// The path a redirect points at. A <c>Results.Redirect</c> from an endpoint emits a
+    /// relative location; a <c>NavigationManager.NavigateTo</c> from a static-SSR page emits
+    /// an absolute one, and both spellings appear in these tests.
+    /// </summary>
+    private static string LocationPath(HttpResponseMessage response)
+    {
+        Uri location = response.Headers.Location
+            ?? throw new InvalidOperationException("A redirect with no Location header.");
+
+        return location.IsAbsoluteUri ? location.AbsolutePath : location.OriginalString.Split('?')[0];
     }
 
     private async Task<(ApplicationUser User, CookieContainer Cookies)> SignedInUserAsync(string email)
@@ -342,6 +498,37 @@ public sealed partial class EnrolTotpTests(SetupHostFixture host)
         cookies.Add(new Uri(host.BaseAddress), await host.CreateAuthenticationCookieAsync(user));
 
         return (user, cookies);
+    }
+
+    /// <summary>A signed-in client for a user who has finished enrolling.</summary>
+    private async Task<(ApplicationUser User, CookieContainer Cookies)> EnrolledUserAsync(string email)
+    {
+        (ApplicationUser user, _, CookieContainer cookies) = await EnrolledUserWithKeyAsync(email);
+
+        return (user, cookies);
+    }
+
+    /// <inheritdoc cref="EnrolledUserAsync(string)"/>
+    /// <remarks>
+    /// The cookie is minted from the user as they are <b>after</b> enrolment, re-read from
+    /// the store: <c>SetTwoFactorEnabledAsync</c> rotates the security stamp, and a ticket
+    /// carrying the stamp the account held before it would be ended by the validator.
+    /// </remarks>
+    private async Task<(ApplicationUser User, string Key, CookieContainer Cookies)> EnrolledUserWithKeyAsync(
+        string email)
+    {
+        ApplicationUser created =
+            await host.CreateUserAsync(email, EnrolledPassword, TestContext.Current.CancellationToken);
+        string key = await host.EnableTwoFactorAsync(created.Id);
+
+        await using IdentityDbContext context = host.CreateIdentityContext();
+        ApplicationUser enrolled = await context.Users.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == created.Id, TestContext.Current.CancellationToken);
+
+        CookieContainer cookies = new();
+        cookies.Add(new Uri(host.BaseAddress), await host.CreateAuthenticationCookieAsync(enrolled));
+
+        return (enrolled, key, cookies);
     }
 
     private async Task<string> ReadTokenValueAsync(Guid userId, string name)
