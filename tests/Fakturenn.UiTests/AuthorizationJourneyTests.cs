@@ -22,6 +22,18 @@ public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app) : 
     {
         _playwright = await Playwright.CreateAsync();
         _browser = await _playwright.Chromium.LaunchAsync();
+
+        // Before anything in this class touches the host, and not only in the one test that
+        // signs in as the administrator. Two tests below call CreateEnrolledUserAsync, which
+        // writes a user row straight through UserManager -- and the first user row closes
+        // /setup permanently. If either of them ran before the first-run journey, the
+        // journey could never happen and four tests in this collection went red waiting for
+        // a setup-email field on a page that had already redirected. Measured: exactly that,
+        // deterministically, once test-case order happened to put them first.
+        //
+        // EnsureAdministratorAsync is idempotent, so paying for it here in every test's
+        // setup costs one semaphore acquisition after the first.
+        await app.EnsureAdministratorAsync(_browser);
     }
 
     public async ValueTask DisposeAsync()

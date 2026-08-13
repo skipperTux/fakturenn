@@ -24,6 +24,7 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.Infrastructure.Storage",
             "Fakturenn.Infrastructure.Persistence",
             "Fakturenn.Infrastructure.DataProtection",
+            "Fakturenn.Infrastructure.Logging",
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
             "Fakturenn.Modules.Identity",

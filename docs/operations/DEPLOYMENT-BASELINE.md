@@ -131,6 +131,63 @@ the runtime execution strategy's retry count — are deliberately not unified
 into a single setting: they have different lifetimes and a count-based budget
 makes the real wait depend on how the database is unavailable.
 
+## Authentication event log
+
+Every authentication decision is written to the standard logging pipeline under
+the category **`Fakturenn.Auth`**, as a message of the form
+`AuthEvent {Event} {Email}` (or `{Actor} {Target}` for an administrative
+action). The `Event` property carries a stable name, so alerting rules select
+on it rather than on message wording.
+
+| Event | Level | Written when |
+| --- | --- | --- |
+| `SignInSucceeded` | Information | A password sign-in completed for an account with no second factor yet |
+| `SignInFailed` | Warning | A password sign-in was refused |
+| `AccountLockedOut` | Warning | A sign-in attempt met a locked account |
+| `TwoFactorSucceeded` | Information | The authenticator code was accepted |
+| `TwoFactorFailed` | Warning | The authenticator code was refused |
+| `RecoveryCodeUsed` | Warning | A recovery code was redeemed, and thereby spent |
+| `TotpEnrolled` | Information | Enrolment completed |
+| `PasswordChanged` | Information | A user replaced their own password |
+| `SignedOut` | Information | A session was ended by its owner |
+| `FirstAdministratorCreated` | Information | `/setup` minted the first administrator |
+| `AdminCreatedUser` | Information | An administrator created an account |
+| `AdminResetPassword` | Information | An administrator reset somebody's password |
+| `AdminClearedMfa` | Information | An administrator cleared somebody's second factor |
+| `AdminLockedUser` | Information | An administrator locked an account |
+| `AdminUnlockedUser` | Information | An administrator unlocked an account |
+| `OperatorCreatedAdmin` | Information | `--create-admin` |
+| `OperatorResetPassword` | Information | `--reset-password` |
+| `OperatorResetMfa` | Information | `--reset-mfa` |
+| `OperatorUnlockedUser` | Information | `--unlock-user` |
+
+`SignInFailed` deliberately carries **no reason**. The sign-in endpoint answers
+identically for an unknown address and a wrong password, and a log that
+distinguished them would hand the enumeration oracle to anyone who can read it.
+
+No event carries a password, TOTP code, recovery code, authenticator key,
+password-reset token, security stamp or Data Protection payload — asserted by
+`AuthEventLoggingTests.No_secret_reaches_a_sink`, which drives real sign-in,
+enrolment, recovery, password-change and administrative-reset flows against an
+in-memory sink attached to the running host.
+
+### Selecting the `_msg` JSON formatter
+
+Some log stores take a line's headline text from a field named exactly `_msg`
+and render a placeholder when it is absent. `MessageFieldJsonFormatter` writes
+one JSON object per event with the rendered message under that name. It is
+**not** selected by default — the human-readable console formatter stays the
+default — and an operator adopts it by configuration alone:
+
+```json
+"Serilog": { "WriteTo": [ { "Name": "Console", "Args": {
+  "formatter": "Fakturenn.Infrastructure.Logging.MessageFieldJsonFormatter, Fakturenn.Infrastructure.Logging" } } ] }
+```
+
+The type and assembly names in that string are part of the contract. They are
+resolved at runtime, so a typo fails only in the deployment that adopted the
+formatter, and only when that sink is used.
+
 ## Backup
 
 Back up consistently:

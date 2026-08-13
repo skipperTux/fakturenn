@@ -1,5 +1,6 @@
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Fakturenn.Web.Logging;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -60,18 +61,24 @@ public static class OperatorCommands
             scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         IdentityDbContext db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
 
+        // The same logger category the web endpoints use, so one query finds an account's
+        // whole history whether it was touched through a page or from a shell. These
+        // commands bypass every other control, which is exactly why they must not bypass
+        // the log as well.
+        ILoggerFactory loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
+
         string? email = EmailAfter(args, command);
 
         return command switch
         {
-            CreateAdmin => await CreateAdminAsync(users, db, email),
-            ResetPassword => await ResetPasswordAsync(users, email),
-            ResetMfa => await ResetMfaAsync(users, email),
+            CreateAdmin => await CreateAdminAsync(users, db, loggerFactory, email),
+            ResetPassword => await ResetPasswordAsync(users, loggerFactory, email),
+            ResetMfa => await ResetMfaAsync(users, loggerFactory, email),
 
             // Exists because the IsSystemRole guard prevents stripping the last
             // administrator's permissions but not LOCKING them. Without an unlock path
             // the guard protects the wrong thing.
-            UnlockUser => await UnlockUserAsync(users, email),
+            UnlockUser => await UnlockUserAsync(users, loggerFactory, email),
             ListUsers => await ListUsersAsync(db),
             _ => null,
         };
@@ -92,7 +99,10 @@ public static class OperatorCommands
     }
 
     private static async Task<int> CreateAdminAsync(
-        UserManager<ApplicationUser> users, IdentityDbContext db, string? email)
+        UserManager<ApplicationUser> users,
+        IdentityDbContext db,
+        ILoggerFactory loggerFactory,
+        string? email)
     {
         if (string.IsNullOrWhiteSpace(email))
         {
@@ -171,6 +181,11 @@ public static class OperatorCommands
 
                 await transaction.CommitAsync(token);
 
+                // After the commit, and to the log as well as to the terminal: the terminal
+                // output is gone with the shell that ran the command, and "who gave this
+                // account administrator access, and when" has to survive that.
+                AuthEventLog.Operator(loggerFactory, AuthEvents.OperatorCreatedAdmin, email);
+
                 Console.WriteLine(
                     $"Created administrator {email}. TOTP enrolment and a password change are required at first sign-in.");
 
@@ -179,7 +194,8 @@ public static class OperatorCommands
             CancellationToken.None);
     }
 
-    private static async Task<int> ResetPasswordAsync(UserManager<ApplicationUser> users, string? email)
+    private static async Task<int> ResetPasswordAsync(
+        UserManager<ApplicationUser> users, ILoggerFactory loggerFactory, string? email)
     {
         (ApplicationUser? user, int? failure) = await FindAsync(users, email, ResetPassword);
         if (user is null)
@@ -218,11 +234,17 @@ public static class OperatorCommands
 
         // No explicit UpdateSecurityStampAsync: ResetPasswordAsync rotates the stamp
         // itself, which is what ends the sessions held under the old password.
+        //
+        // Neither the password read from standard input nor the reset token generated above
+        // reaches the log.
+        AuthEventLog.Operator(loggerFactory, AuthEvents.OperatorResetPassword, user.Email!);
+
         Console.WriteLine($"Password reset for {email}. A password change is required at next sign-in.");
         return 0;
     }
 
-    private static async Task<int> ResetMfaAsync(UserManager<ApplicationUser> users, string? email)
+    private static async Task<int> ResetMfaAsync(
+        UserManager<ApplicationUser> users, ILoggerFactory loggerFactory, string? email)
     {
         (ApplicationUser? user, int? failure) = await FindAsync(users, email, ResetMfa);
         if (user is null)
@@ -252,12 +274,18 @@ public static class OperatorCommands
         // Both calls above rotate the security stamp, so the cleared user's existing
         // sessions end on their next revalidation without anything explicit here --
         // measured in Task 10 (HQ6QNBU3... -> BK4GZJDP...).
+        //
+        // The authenticator key -- old or new -- is never logged. It is the shared secret
+        // the whole second factor rests on.
+        AuthEventLog.Operator(loggerFactory, AuthEvents.OperatorResetMfa, user.Email!);
+
         Console.WriteLine(
             $"Two-factor authentication cleared for {email}. Re-enrolment is required at next sign-in.");
         return 0;
     }
 
-    private static async Task<int> UnlockUserAsync(UserManager<ApplicationUser> users, string? email)
+    private static async Task<int> UnlockUserAsync(
+        UserManager<ApplicationUser> users, ILoggerFactory loggerFactory, string? email)
     {
         (ApplicationUser? user, int? failure) = await FindAsync(users, email, UnlockUser);
         if (user is null)
@@ -291,6 +319,8 @@ public static class OperatorCommands
         // who might be holding it. /account/admin/set-lockout already rotates on both
         // edges; §10 requires the CLI and the UI not to diverge.
         await users.UpdateSecurityStampAsync(user);
+
+        AuthEventLog.Operator(loggerFactory, AuthEvents.OperatorUnlockedUser, user.Email!);
 
         Console.WriteLine($"Unlocked {email}.");
         return 0;

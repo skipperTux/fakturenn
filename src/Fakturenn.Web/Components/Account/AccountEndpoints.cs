@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Fakturenn.Web.Logging;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +44,7 @@ public static class AccountEndpoints
             HttpContext http,
             UserManager<ApplicationUser> users,
             IdentityDbContext db,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             // Read outside the transaction: parsing the request body is not database work
@@ -135,6 +137,12 @@ public static class AccountEndpoints
 
                     await transaction.CommitAsync(token);
 
+                    // After the commit, so the log never claims an administrator that a
+                    // rolled-back transaction did not leave behind. This is the single most
+                    // security-significant event the application emits: the one moment an
+                    // unauthenticated caller mints administrative access.
+                    AuthEventLog.Account(loggerFactory, AuthEvents.FirstAdministratorCreated, email);
+
                     return Results.Redirect("/account/login");
                 },
                 cancellationToken);
@@ -149,6 +157,7 @@ public static class AccountEndpoints
             HttpContext http,
             UserManager<ApplicationUser> users,
             SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             ApplicationUser? user = await users.GetUserAsync(http.User);
@@ -186,9 +195,13 @@ public static class AccountEndpoints
             // whole fix; the rotation itself is wanted.
             await signIn.RefreshSignInAsync(user);
 
+            AuthEventLog.Account(loggerFactory, AuthEvents.TotpEnrolled, user.Email!);
+
             IEnumerable<string>? codes =
                 await users.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount);
 
+            // The codes themselves never reach the log, only the fact that enrolment
+            // finished. They are credential material with the same weight as a password.
             StashRecoveryCodes(http, codes ?? []);
 
             return Results.Redirect("/account/recovery-codes");
@@ -201,6 +214,7 @@ public static class AccountEndpoints
         group.MapPost("/login/submit", async (
             HttpContext http,
             SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -216,6 +230,8 @@ public static class AccountEndpoints
 
             if (result.IsLockedOut)
             {
+                AuthEventLog.AccountAlert(loggerFactory, AuthEvents.AccountLockedOut, email);
+
                 return Results.Redirect("/account/lockout");
             }
 
@@ -234,18 +250,29 @@ public static class AccountEndpoints
                 // status, identical location, identical body. Anything that distinguished
                 // them would let an attacker enumerate valid addresses without ever
                 // guessing a password.
+                //
+                // The log keeps the same silence. The plan's {Reason} property is
+                // deliberately absent: an operator needs to see that this address is being
+                // attempted, not which half of the credential was wrong, and anyone who can
+                // read the log would otherwise hold the enumeration oracle the endpoint
+                // refuses to hand out.
+                AuthEventLog.AccountAlert(loggerFactory, AuthEvents.SignInFailed, email);
+
                 return Results.Redirect("/account/login?error=invalid");
             }
 
             // Reached only by a user who has not enrolled a second factor yet. They are
             // signed in so they can reach the enrolment page; the enrolment gate is what
             // confines them to it.
+            AuthEventLog.Account(loggerFactory, AuthEvents.SignInSucceeded, email);
+
             return Results.Redirect("/");
         });
 
         group.MapPost("/login-2fa/submit", async (
             HttpContext http,
             SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -254,18 +281,31 @@ public static class AccountEndpoints
             // grouping with them.
             string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
 
+            // Read BEFORE the exchange, not after: a successful sign-in deletes the
+            // two-factor cookie, so afterwards there is no challenged user left to name and
+            // every success would be logged against "unknown".
+            string email = await ChallengedEmailAsync(signIn);
+
             SignInResult result = await signIn.TwoFactorAuthenticatorSignInAsync(
                 code, isPersistent: false, rememberClient: false);
 
             if (result.IsLockedOut)
             {
+                AuthEventLog.AccountAlert(loggerFactory, AuthEvents.AccountLockedOut, email);
+
                 return Results.Redirect("/account/lockout");
             }
 
             if (!result.Succeeded)
             {
+                // The code itself is never logged. A six-digit TOTP is short-lived but it is
+                // still a credential, and a rejected one is often a mistyped valid one.
+                AuthEventLog.AccountAlert(loggerFactory, AuthEvents.TwoFactorFailed, email);
+
                 return Results.Redirect("/account/login-2fa?error=invalid");
             }
+
+            AuthEventLog.Account(loggerFactory, AuthEvents.TwoFactorSucceeded, email);
 
             // Somebody else chose this password -- an administrator creating the account,
             // or an operator running --reset-password. Send them to change it before
@@ -288,25 +328,39 @@ public static class AccountEndpoints
         group.MapPost("/login-recovery/submit", async (
             HttpContext http,
             SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
             string code = form["code"].ToString().Replace(" ", string.Empty, StringComparison.Ordinal);
+
+            // Before the exchange, for the same reason as the authenticator handler above.
+            string email = await ChallengedEmailAsync(signIn);
 
             // TwoFactorRecoveryCodeSignInAsync redeems the code as part of accepting it, so
             // a code is spent whether or not the user goes on to use the session. Verifying
             // without redeeming would turn a one-shot credential into a second password.
             SignInResult result = await signIn.TwoFactorRecoveryCodeSignInAsync(code);
 
-            return result.Succeeded
-                ? Results.Redirect("/")
-                : Results.Redirect("/account/login-recovery?error=invalid");
+            if (!result.Succeeded)
+            {
+                return Results.Redirect("/account/login-recovery?error=invalid");
+            }
+
+            // A warning, not information: a recovery code is the exceptional path, it is
+            // spent by being accepted, and a user who reaches for one has usually lost their
+            // authenticator -- or somebody else has found their codes. The code itself is
+            // never logged.
+            AuthEventLog.AccountAlert(loggerFactory, AuthEvents.RecoveryCodeUsed, email);
+
+            return Results.Redirect("/");
         });
 
         group.MapPost("/change-password/submit", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
             SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             ApplicationUser? user = await users.GetUserAsync(http.User);
@@ -337,14 +391,27 @@ public static class AccountEndpoints
             // login page immediately after succeeding.
             await signIn.RefreshSignInAsync(user);
 
+            // Neither password reaches the log, only that this account replaced one. An
+            // operator investigating a compromise needs the timeline, not the credential.
+            AuthEventLog.Account(loggerFactory, AuthEvents.PasswordChanged, user.Email!);
+
             return Results.Redirect("/");
         });
 
         // No page at this route, so no "/submit" suffix is needed -- and none is wanted
         // either, because the sign-out form posts here from the layout on every page.
-        group.MapPost("/logout", async (SignInManager<ApplicationUser> signIn) =>
+        group.MapPost("/logout", async (
+            HttpContext http,
+            SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggerFactory) =>
         {
+            // Read before the sign-out, which clears HttpContext.User's identity for the
+            // remainder of the request.
+            string email = ActorOf(http);
+
             await signIn.SignOutAsync();
+
+            AuthEventLog.Account(loggerFactory, AuthEvents.SignedOut, email);
 
             return Results.Redirect("/account/login");
         });
@@ -376,6 +443,7 @@ public static class AccountEndpoints
         admin.MapPost("/create-user", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -401,14 +469,20 @@ public static class AccountEndpoints
 
             IdentityResult created = await users.CreateAsync(user, password);
 
-            return created.Succeeded
-                ? Results.Redirect("/admin/users")
-                : RedirectWithError(string.Join(" ", created.Errors.Select(error => error.Description)));
+            if (!created.Succeeded)
+            {
+                return RedirectWithError(string.Join(" ", created.Errors.Select(error => error.Description)));
+            }
+
+            AuthEventLog.Administrative(loggerFactory, AuthEvents.AdminCreatedUser, ActorOf(http), email);
+
+            return Results.Redirect("/admin/users");
         });
 
         admin.MapPost("/reset-password", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -444,12 +518,18 @@ public static class AccountEndpoints
             // held under the old password. Measured, not assumed -- removing the rotation
             // from set-lockout below reddens its test, and this path is covered by the
             // sign-in that follows the reset.
+            //
+            // Neither the new password nor the reset token above is logged. The token is a
+            // bearer credential for exactly this operation.
+            AuthEventLog.Administrative(loggerFactory, AuthEvents.AdminResetPassword, ActorOf(http), user.Email!);
+
             return Results.Redirect("/admin/users");
         });
 
         admin.MapPost("/clear-mfa", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -483,12 +563,15 @@ public static class AccountEndpoints
 
             // Both calls above rotate the security stamp, so the cleared user's existing
             // sessions end on their next revalidation without anything explicit here.
+            AuthEventLog.Administrative(loggerFactory, AuthEvents.AdminClearedMfa, ActorOf(http), user.Email!);
+
             return Results.Redirect("/admin/users");
         });
 
         admin.MapPost("/set-lockout", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             IFormCollection form = await http.Request.ReadFormAsync(cancellationToken);
@@ -531,8 +614,41 @@ public static class AccountEndpoints
             // easier to keep true than two.
             await users.UpdateSecurityStampAsync(user);
 
+            // Both edges, not just the lock. An operator asked "who gave this account access
+            // back, and when" has no answer from a log that records only the taking away --
+            // and an unlock after a suspected compromise is exactly the moment that question
+            // gets asked.
+            AuthEventLog.Administrative(
+                loggerFactory,
+                locked ? AuthEvents.AdminLockedUser : AuthEvents.AdminUnlockedUser,
+                ActorOf(http),
+                user.Email!);
+
             return Results.Redirect("/admin/users");
         });
+    }
+
+    /// <summary>
+    /// The signed-in caller's e-mail address, for the <c>{Actor}</c> property of an
+    /// administrative event. <c>Identity.Name</c> is the user name, which this application
+    /// sets to the e-mail address.
+    /// </summary>
+    private static string ActorOf(HttpContext http) => http.User.Identity?.Name ?? "unknown";
+
+    /// <summary>
+    /// The e-mail address of the user holding a two-factor challenge, read from the
+    /// two-factor cookie.
+    /// <para>
+    /// Must be called <b>before</b> the sign-in exchange. A successful
+    /// <c>TwoFactorAuthenticatorSignInAsync</c> or <c>TwoFactorRecoveryCodeSignInAsync</c>
+    /// deletes that cookie, so afterwards there is nobody left to name.
+    /// </para>
+    /// </summary>
+    private static async Task<string> ChallengedEmailAsync(SignInManager<ApplicationUser> signIn)
+    {
+        ApplicationUser? challenged = await signIn.GetTwoFactorAuthenticationUserAsync();
+
+        return challenged?.Email ?? "unknown";
     }
 
     /// <summary>

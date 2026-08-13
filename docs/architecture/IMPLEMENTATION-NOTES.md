@@ -191,6 +191,65 @@ additions not covered there:
   Architecture-test pitfalls note above). Simplest fix: do not set
   `<AssemblyName>` on `src/` projects.
 
+## Logging
+
+- **Serilog configuration resolves types by assembly-qualified name, and does
+  it at runtime.** `Serilog.Settings.Configuration` accepts
+  `"Namespace.Type, Assembly"` for any argument typed as an interface it can
+  construct — `MessageFieldJsonFormatter` is selected that way — and also
+  `"Namespace.Type::StaticMember, Assembly"` to use an existing instance, which
+  is how `tests/Fakturenn.IntegrationTests/HostLogCapture.cs` attaches an
+  in-memory sink to the running host through `Serilog:WriteTo` rather than
+  through a test-only hook in `FakturennWebApplication`. A name that does not
+  resolve throws from `ReadFrom.Configuration` (measured: dropping one letter
+  from the formatter's type name produced "Type ... was not found"), so the
+  failure is loud — but only in the deployment that selected that sink.
+  `MessageFieldJsonFormatterTests` exists because nothing else would notice.
+- **`src/Fakturenn.Web` references `Fakturenn.Infrastructure.Logging` with no
+  C# in the project naming a type from it.** The reference is what puts the
+  assembly next to the host so `Type.GetType` can find the formatter. Removing
+  it leaves the build green; `MessageFieldJsonFormatterTests` reddens instead,
+  because that test project references only `Fakturenn.Web` and reaches the
+  formatter through this chain. Do not "clean up" the reference.
+- **`ILogger<T>` cannot name a static class** (CS0718), so a
+  `[LoggerMessage]` holder cannot be its own logger category. `AuthEventLog`
+  takes an `ILoggerFactory` and resolves the fixed category
+  `Fakturenn.Auth` instead — which is better anyway: the category is what an
+  operator filters on, so it should not change when a call site moves to
+  another class.
+- **CA1873 rejects a method call as an argument to a logging method**,
+  including a source-generated `[LoggerMessage]` delegate, because the argument
+  would be evaluated even when the level is disabled. `Account(LoggerFor(f), …)`
+  is an error; resolving the logger into a local first is not.
+- **Every log event written inside a request carries `RequestId`,
+  `RequestPath` and `ConnectionId`** from ASP.NET Core's own logging scope, on
+  top of Serilog's `SourceContext` and `EventId`. A test that asserts on an
+  event's property set has to allow for them. They are correlation handles, not
+  credentials: `RequestPath` is `Request.Path` with no query string, and
+  `ConnectionId` names a Kestrel connection rather than a session.
+- **`SignInManager.GetTwoFactorAuthenticationUserAsync` must be called before
+  the two-factor exchange, not after.** A successful
+  `TwoFactorAuthenticatorSignInAsync` or `TwoFactorRecoveryCodeSignInAsync`
+  deletes the two-factor cookie it reads, so afterwards there is no challenged
+  user left to name and every successful second factor would be logged against
+  "unknown".
+
+## Browser tests
+
+- **The shared UI fixture's first-run journey is order-sensitive, and the
+  collection has to protect it.** `/setup` closes permanently the moment the
+  first user row exists, so `AuthenticatedWebAppFixture.EnsureAdministratorAsync`
+  can only ever succeed while no other test has created a user.
+  `CreateEnrolledUserAsync` writes a user straight through `UserManager`, which
+  closes it. Task 16 hit this deterministically: with the test-case order that
+  build produced, `AuthorizationJourneyTests`' two user-creating tests ran
+  first, and four tests in the collection then failed waiting for a
+  `setup-email` field on a page that had already redirected. The fix is
+  `await app.EnsureAdministratorAsync(_browser)` in that class's
+  `InitializeAsync`, so the journey is always the first thing the collection
+  does. A new test class in `SharedIdentityHost` that creates users needs the
+  same line — and the failure it prevents does not point at its own cause.
+
 ## Domain and storage primitives
 
 - `GuidV7IdGenerator` uses `Guid.CreateVersion7()`, which orders ids to

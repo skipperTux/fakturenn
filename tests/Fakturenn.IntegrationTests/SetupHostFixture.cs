@@ -85,6 +85,13 @@ public sealed class SetupHostFixture : IAsyncLifetime
             "--urls",
             "http://127.0.0.1:0",
             $"--ConnectionStrings:Fakturenn={ConnectionString}",
+
+            // Index 1, because appsettings.json already occupies index 0 with the console
+            // sink. Adding a sink rather than replacing one keeps the host's real logging
+            // configuration in play: HostLogCapture observes what the application writes, it
+            // does not stand in for the pipeline that writes it.
+            "--Serilog:WriteTo:1:Name=Sink",
+            $"--Serilog:WriteTo:1:Args:sink={HostLogCapture.ConfigurationName}",
         ]);
 
         await _app.StartAsync();

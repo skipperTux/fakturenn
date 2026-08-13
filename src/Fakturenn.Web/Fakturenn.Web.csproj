@@ -41,6 +41,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
+    <!-- No C# in this project names a type from Fakturenn.Infrastructure.Logging, and the
+         reference is still required: MessageFieldJsonFormatter is selected by an
+         assembly-qualified name in Serilog configuration, so the assembly has to sit next
+         to the host for Type.GetType to find it at runtime. Removing this line leaves the
+         build green and breaks any deployment that has adopted the formatter.
+         MessageFieldJsonFormatterTests resolves it through the same configuration string
+         (and through this project's reference chain) so the removal fails a test instead. -->
+    <ProjectReference Include="..\Fakturenn.Infrastructure.Logging\Fakturenn.Infrastructure.Logging.csproj" />
     <ProjectReference Include="..\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
