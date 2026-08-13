@@ -147,6 +147,7 @@ on it rather than on message wording.
 | `TwoFactorSucceeded` | Information | The authenticator code was accepted |
 | `TwoFactorFailed` | Warning | The authenticator code was refused |
 | `RecoveryCodeUsed` | Warning | A recovery code was redeemed, and thereby spent |
+| `RecoveryCodeFailed` | Warning | A recovery code was refused |
 | `TotpEnrolled` | Information | Enrolment completed |
 | `PasswordChanged` | Information | A user replaced their own password |
 | `SignedOut` | Information | A session was ended by its owner |

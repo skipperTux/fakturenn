@@ -235,6 +235,58 @@ public sealed class AuthEventLoggingTests(SetupHostFixture host)
     }
 
     [Fact]
+    public async Task A_refused_recovery_code_is_logged_without_the_code_or_how_many_are_left()
+    {
+        // The failure path that would otherwise be the only invisible one. Recovery codes are
+        // ten single-use credentials with no counter of their own beyond the shared account
+        // lockout, so somebody working through the space leaves no trace unless this fires --
+        // while a log holding RecoveryCodeUsed alone records the outcomes that are usually
+        // innocent and drops the ones that are not.
+        ApplicationUser user = await host.CreateUserAsync("log-recovery-refused@example.test", Password, Token);
+        await host.EnableTwoFactorAsync(user.Id);
+        string[] issued = await host.GenerateRecoveryCodesAsync(user.Id, 10);
+
+        const string WrongCode = "zzzzz-zzzzz";
+        issued.Should().NotContain(WrongCode, "the code under test has to be one the account does not hold");
+
+        int mark = HostLogCapture.Instance.Mark();
+
+        using (HttpClient client = host.CreateClient(new CookieContainer()))
+        {
+            using (HttpResponseMessage passwordStep =
+                await SignInHelper.PostPasswordAsync(client, user.UserName!, Password))
+            {
+                passwordStep.Headers.Location?.OriginalString.Should().Be("/account/login-2fa");
+            }
+
+            using HttpResponseMessage refused = await SignInHelper.PostCodeAsync(
+                client, "/account/login-recovery/submit", WrongCode);
+
+            refused.Headers.Location?.OriginalString.Should().Be("/account/login-recovery?error=invalid");
+        }
+
+        LogEvent logged = SingleEvent(mark, "RecoveryCodeFailed");
+
+        logged.Level.Should().Be(
+            LogEventLevel.Warning, "a refused credential sits alongside SignInFailed and TwoFactorFailed");
+        Property(logged, "Email").Should().Be(user.Email);
+
+        // The template itself, not just this event's values: two slots means there is nowhere
+        // for a code or a remaining-code count to be added without this failing.
+        logged.MessageTemplate.Text.Should().Be("AuthEvent {Event} {Email}");
+        logged.Properties.Keys.Should().BeSubsetOf(_permittedProperties);
+
+        string captured = Flatten(HostLogCapture.Instance.Since(mark));
+
+        captured.Should().NotContain(WrongCode, "the code that was tried is still a guess at a credential");
+
+        foreach (string code in issued)
+        {
+            captured.Should().NotContain(code, "the account's live codes must not be written while one is refused");
+        }
+    }
+
+    [Fact]
     public async Task A_locked_account_meeting_the_sign_in_endpoint_is_logged()
     {
         ApplicationUser victim = await host.CreateUserAsync("log-locked@example.test", Password, Token);

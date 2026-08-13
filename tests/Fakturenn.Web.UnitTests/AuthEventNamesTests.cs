@@ -30,6 +30,7 @@ public sealed class AuthEventNamesTests
         "TwoFactorSucceeded",
         "TwoFactorFailed",
         "RecoveryCodeUsed",
+        "RecoveryCodeFailed",
         "TotpEnrolled",
         "PasswordChanged",
         "SignedOut",

@@ -40,6 +40,21 @@ internal static class AuthEvents
     /// <summary>A recovery code was redeemed, which spends it. Warning: it is the exceptional path.</summary>
     internal const string RecoveryCodeUsed = "RecoveryCodeUsed";
 
+    /// <summary>
+    /// A recovery code was refused.
+    /// <para>
+    /// The one failure path that would otherwise be invisible, and the one where invisibility
+    /// costs most: recovery codes are ten single-use credentials with no counter of their own
+    /// beyond the shared account lockout, so somebody working through the space would leave no
+    /// trace while every other refused credential in this application is logged.
+    /// </para>
+    /// <para>
+    /// Carries neither the code that was tried — a credential — nor how many codes remain,
+    /// which would tell a reader how much of the space is still worth guessing.
+    /// </para>
+    /// </summary>
+    internal const string RecoveryCodeFailed = "RecoveryCodeFailed";
+
     internal const string TotpEnrolled = "TotpEnrolled";
 
     internal const string PasswordChanged = "PasswordChanged";

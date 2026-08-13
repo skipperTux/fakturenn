@@ -344,6 +344,14 @@ public static class AccountEndpoints
 
             if (!result.Succeeded)
             {
+                // Warning, alongside SignInFailed and TwoFactorFailed. Logging only the
+                // successes here would record the outcomes that are usually innocent and drop
+                // the ones that are not: ten single-use codes have no failure counter of their
+                // own beyond the shared account lockout, so an attacker working through the
+                // space is invisible without this line. Neither the code tried nor the number
+                // of codes left is recorded.
+                AuthEventLog.AccountAlert(loggerFactory, AuthEvents.RecoveryCodeFailed, email);
+
                 return Results.Redirect("/account/login-recovery?error=invalid");
             }
 
