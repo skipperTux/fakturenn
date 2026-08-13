@@ -674,6 +674,69 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
   testable class and asserting on that -- extracting the body leaves the
   *dispatch* untested, and the dispatch is the part that silently disappears.
 
+## The browser suite
+
+- **`tests/Fakturenn.UiTests` does not run its collections in parallel, and must not
+  be switched back.** The assembly hosts three real applications in one process —
+  `WebAppFixture` plus two `AuthenticatedWebAppFixture` instances, one for the shared
+  identity collection and one for the Content-Security-Policy walk, which needs a
+  `/setup` page no user has closed yet. All of them build EF Core models for the same
+  three context types out of EF's process-wide internal service provider. With
+  parallelism on, two fixtures initialising at once intermittently threw
+  `The model must be finalized and its runtime dependencies must be initialized before
+  'GetRelationalModel' can be used` from `Migrator.HasPendingModelChanges()` and killed
+  the whole shared collection. Measured: twice in eleven runs, with nine green runs in
+  between. `AssemblyInfo.cs` carries the reasoning; the cost is about eleven seconds,
+  because the suite is dominated by a sixty-second security-stamp wait, not by
+  parallelism. This is a harness constraint, not a product defect — a deployed instance
+  is one host in one process.
+- **Never `WaitForURLAsync` after a click. Wait for an element on the destination and
+  assert the path.** `ClickAsync` returns once the click is dispatched, so the navigation
+  it causes can finish before or after the next line runs. When it finishes first,
+  Playwright sees the URL already matching and falls through to
+  `WaitForLoadStateAsync(Load)` — but the new document's `load` event has already fired,
+  so it waits for an event that will never come again and times out. Measured: the
+  first-run journey hung the full timeout at `WaitForURLAsync("**/account/login")` while
+  the server log showed `POST /account/setup responded 302` followed by
+  `GET /account/login responded 200` — the navigation being waited for had already
+  succeeded — and Playwright's own log reported only `"NetworkIdle" event fired`. Two
+  occurrences in thirteen runs, nine green runs in between.
+  `AuthenticatedWebAppFixture.ArriveAtAsync(page, path, testId)` is the replacement, and
+  it asserts more, not less: a locator wait re-evaluates until the element exists, and the
+  path assertion stops an element from standing in for the wrong page.
+- **One shared first-run journey needs its failure remembered, not retried.** `/setup`
+  closes as soon as the user row exists, so a second attempt after a failed first one
+  lands on the sign-in page and times out waiting for `setup-email` — three misleading
+  red tests on top of the one real one. `EnsureAdministratorAsync` caches the original
+  exception and re-throws it as the inner exception of every later caller's failure.
+- **`WebApplication.Urls` reports an address with no trailing slash.** Measured:
+  `http://127.0.0.1:34027`. Interpolating a relative path straight onto it produces
+  `http://127.0.0.1:34027account/login`, which is a valid-looking URL for a host called
+  `127.0.0.1:34027account`. Every navigation in the suite goes through
+  `AuthenticatedWebAppFixture.Url(path)`, which composes it with `new Uri(baseUri, path)`.
+- **The browser tests need `--environment Development --applicationName Fakturenn.Web`,
+  or the pages they look at have no styles and no scripts.** The generic host loads the
+  static web assets manifest only in Development, and it looks for
+  `{ApplicationName}.staticwebassets.runtime.json` beside the assembly named by
+  `ApplicationName` — which in a test process defaults to the *test* assembly. Without
+  both switches `/app.css`, `/Fakturenn.Web.styles.css`, `/_content/MudBlazor/*` and
+  `/_framework/blazor.web.js` all answer 404, and a Content-Security-Policy check then
+  reports "nothing was blocked" about a page on which nothing was ever fetched. That is
+  why `ContentSecurityPolicyTests` asserts the required assets were actually received
+  before it asserts the violation list is empty.
+- **A `Content-Security-Policy` assertion must ask the browser, not the response
+  headers.** `Headers.Should().ContainKey("content-security-policy")` passes for a policy
+  that blocks every script on the page. Assert on the `securitypolicyviolation` event,
+  the console error and the failed request instead. Proven by narrowing `script-src` to
+  `'none'`: the console channel named the blocked script and the asset guard reported
+  `/_framework/blazor.web.js` never fetched.
+- **The application sends two `Content-Security-Policy` headers, and that is correct.**
+  Ours, plus a `frame-ancestors 'self'` policy from
+  `Microsoft.AspNetCore.Components.Server`. Browsers enforce multiple policies
+  independently, so the intersection applies and our `frame-ancestors 'none'` still wins.
+  Do not assert a header count — that fails for a reason unrelated to whether the policy
+  is right.
+
 ## Containerisation
 
 - There is no Dockerfile, deliberately — the image is built with

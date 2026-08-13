@@ -28,11 +28,15 @@
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Otp.NET" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Fakturenn.Web\Fakturenn.Web.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
   </ItemGroup>
 
 </Project>
