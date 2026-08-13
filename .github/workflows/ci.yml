@@ -59,6 +59,14 @@ jobs:
     # All five run in low single-digit seconds once built; the budget is dominated by a
     # cold restore and build on a fresh runner.
     timeout-minutes: 15
+    env:
+      # Insurance, not a known requirement -- same as the integration and ui jobs.
+      # Fakturenn.Web.UnitTests builds real hosts through FakturennWebApplication.Build,
+      # and every host adds a configuration file watcher. A bare runner has no desktop
+      # session competing for inotify instances, so the default limit is very likely
+      # enough; the reason to set it anyway is that going over shows up as whole classes
+      # failing inside Build with an IOException that looks nothing like a test failure.
+      DOTNET_USE_POLLING_FILE_WATCHER: 1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
