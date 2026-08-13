@@ -60,7 +60,7 @@ combination does and does not catch:
   declare collaborators by their interface type on purpose, to exercise the
   same abstraction production code depends on. Copy
   `tests/Fakturenn.UnitTests/.editorconfig` into any new test project; all
-  five existing test projects carry an identical copy of it.
+  seven existing test projects carry an identical copy of it.
 - **Unused `using` directives are not caught by warnings-as-errors alone.**
   CS8019 (the compiler's own unused-using diagnostic) is not emitted by the
   command-line compiler, and IDE0005 (the analyzer equivalent) needs two
@@ -489,6 +489,27 @@ mechanisms, on purpose:
 
 ## Identity, sign-in and lockout
 
+- **`IdentityDbContext` derives from `IdentityUserContext<ApplicationUser, Guid>`,
+  not from Identity's own `IdentityDbContext`.** The stock base class brings
+  `AspNetRoles` and `AspNetUserRoles`, and this application owns its own `Roles`,
+  `UserRoles` and `RolePermissions` tables because E02b needs an `OrganizationId` on
+  the assignment. Switching to the stock base would create a second, parallel role
+  system that nothing reads — verified by grepping the migration: no `AspNetRoles`
+  table exists anywhere in the schema. The three stock user tables (`AspNetUsers`,
+  `AspNetUserClaims`, `AspNetUserTokens`, plus logins) are kept.
+- **The application is static SSR by default, and every page relies on that.**
+  `AddInteractiveServerComponents()` and `AddInteractiveServerRenderMode()` are both
+  registered, but **no component declares `@rendermode`**, so no circuit is ever
+  negotiated. Two things depend on it. First, all the account forms post to real
+  endpoints (`AccountEndpoints`) rather than handling submission in a component,
+  because `SignInManager` issues the authentication cookie by writing a `Set-Cookie`
+  header to the HTTP *response*, and a component running inside an established circuit
+  is handling a WebSocket message, not a request whose response headers are still
+  open. This is a structural constraint, not a tuning problem: it is why every form in
+  `Components/Account/` posts to a route rather than binding an `@onclick`. Second,
+  `EnrolmentGateMiddleware` does not allowlist `/_blazor` (see the
+  enrolment-gate section). Adding `@rendermode InteractiveServer` to a page is
+  therefore not a local change; it has to meet both decisions.
 - **The `account` rate limiter partitions on identity plus client address, and
   never on the address alone.** `AccountRateLimitPartition.KeyFor` resolves the
   best identity available, in this order: the signed-in user's id claim
@@ -716,6 +737,25 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
   `UserTokenProtectorModelCacheTests.Two_providers_in_one_process_each_protect_under_their_own_key_ring`
   with "Expected a CryptographicException to be thrown, but no exception was thrown" —
   the second provider silently reading the first's ciphertext, which is the whole defect.
+- **The purpose string `"Fakturenn.Identity.UserToken.v1"` (`IdentityDbContext`) is
+  part of key derivation, not a label. Never edit it.** Data Protection derives the
+  sub-key from it, so a changed string is a different key: every previously written
+  `AspNetUserTokens.Value` becomes undecryptable, which means every enrolled
+  authenticator and every recovery code in the installation. The failure is a
+  `CryptographicException` at read time, not at startup, so it surfaces when a user
+  tries to sign in rather than when the deployment goes out. If a re-key is ever
+  genuinely needed, it needs a migration that rewrites the column, and the `v1`
+  suffix is there so the new string has an obvious form.
+- **Why the encryption is ours to do: ASP.NET Core Identity stores both second
+  factors in plaintext by default.** `AspNetUserTokens.Value` holds the raw
+  authenticator key and the recovery-code set as the framework writes them —
+  measured in E02a Task 10 against the real `UserManager` path, not a hand-inserted
+  probe: with the converter removed, the column reads the bare base32 key
+  (`2DLLRGWUSHJCMXNDCZS4KFQRMM5ZILP7`) and the ten codes as text; with it in place,
+  both are `CfDJ8`-prefixed Data Protection payloads. A round-trip test cannot see
+  the difference — it round-trips either way — so the guard is
+  `A_token_value_is_not_readable_as_plaintext_in_the_column`, which reads the raw
+  column.
 
 ## Testing the entrypoint
 
@@ -841,6 +881,38 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
   startup (verified in container logs) — an optional Kerberos/GSSAPI auth
   probe that is unused here, since this deployment authenticates with a
   password. Not an error to chase.
+
+## Mutation testing: how to revert, and how to read a green
+
+Nearly every task in E02a proved a guard load-bearing by breaking it and
+watching a specific test go red. The technique works; these are the ways it
+goes wrong.
+
+- **`git checkout -- <file>` is not a mutation revert. It is a revert to
+  `HEAD`.** For a tracked file whose current content is *uncommitted*, that
+  discards the whole task's work, not the one line just mutated. E02a Task 17
+  used it to undo a one-key mutation in
+  `src/Fakturenn.Web/Resources/SharedResource.de.resx` and lost all 85 German
+  translations, which had to be regenerated from scratch. It was caught only
+  because `git status` stopped listing the file as modified. `git checkout --`
+  is safe only when the committed state *is* the pre-mutation state. For
+  uncommitted work, copy the file aside first, or undo the edit directly.
+- **Apply, run and revert a mutation in one command, then confirm
+  `git status --short src/` is empty.** A mutation stranded in production code
+  by an interrupted run is a live regression that compiles and mostly passes:
+  E02a left `[Authorize(Policy = Permissions.UsersRead)]` weakened to a bare
+  `[Authorize]` on `src/Fakturenn.Web/Components/Admin/Users.razor` this way.
+  Checking that the tree still compiles does not catch it.
+- **A mutation that stays green is a question, not a verdict.** The next
+  question is "what *else* is providing this guarantee", never "the guard is
+  redundant". Three times in E02a the answer was something unintended: the
+  enrolment gate's `IsAuthenticated` early return turned out to be a
+  performance guard while `GetUserAsync`'s null result was doing the
+  correctness work; and, worse, the concurrency test for `/account/setup`
+  stayed green with the advisory lock deleted because an unrelated unique
+  index on the role name was serialising the racers — the same class of error
+  the lock existed to fix, reappearing inside the test meant to prove the fix.
+  Accepting that green would have shipped an unverified guard.
 
 ## Standing rulings
 

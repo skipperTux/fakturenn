@@ -407,8 +407,12 @@ public static class AccountEndpoints
             return Results.Redirect("/");
         });
 
-        // No page at this route, so no "/submit" suffix is needed -- and none is wanted
-        // either, because the sign-out form posts here from the layout on every page.
+        // No page at this route, so no "/submit" suffix is needed to avoid the
+        // AmbiguousMatchException a static-SSR page endpoint produces -- a page answers POST
+        // as well as GET. Nothing in the UI posts here yet: E02a ships no sign-out control,
+        // so the only callers are the integration tests and an operator's own POST. The
+        // route is on the enrolment gate's allowlist regardless, because a user who cannot
+        // discharge their obligations must still be able to end the session.
         group.MapPost("/logout", async (
             HttpContext http,
             SignInManager<ApplicationUser> signIn,

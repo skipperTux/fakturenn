@@ -72,8 +72,8 @@ public static class FakturennWebApplication
         {
             // A short explicit timeout keeps readiness answering well inside a
             // probe interval even when the database is unreachable rather than
-            // hanging; retrying belongs to the Task 8 migration entrypoint, not
-            // to a probe that must answer fast every time it is called.
+            // hanging; retrying belongs to the `--migrate` entrypoint, not to a
+            // probe that must answer fast every time it is called.
             healthChecks.AddNpgSql(
                 connectionString,
                 name: "postgres",
@@ -125,9 +125,14 @@ public static class FakturennWebApplication
             // 'unsafe-inline' for styles is required by MudBlazor's component styles;
             // scripts do NOT get it, which is the half that matters for injection.
             //
-            // This policy is unproven until Task 15's journey exercises it. Do not tune
-            // it by clicking around, and do not widen it to 'unsafe-eval' or an inline
-            // hash without recording why here.
+            // This policy is covered by tests/Fakturenn.UiTests/ContentSecurityPolicyTests.cs,
+            // which walks the real pages in Chromium and fails on a securitypolicyviolation
+            // event, a console error or a blocked request -- and separately asserts the
+            // governed assets were actually fetched, so "no violations" cannot mean "nothing
+            // loaded". Narrowing script-src to 'none' reddens it through both halves.
+            // Changing anything below therefore means updating that test, not clicking
+            // around; do not widen to 'unsafe-eval' or an inline hash without recording why
+            // here.
             context.Response.Headers["Content-Security-Policy"] =
                 "default-src 'self'; "
                 + "script-src 'self'; "
