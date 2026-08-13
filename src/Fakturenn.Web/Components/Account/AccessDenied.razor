@@ -1,9 +1,10 @@
 @page "/account/denied"
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Access denied</PageTitle>
+<PageTitle>@Localizer["Account_Denied_PageTitle"]</PageTitle>
 
 @* Where ConfigureApplicationCookie's AccessDeniedPath sends an authenticated user who
    lacks the permission a page requires. *@
 <MudAlert Severity="Severity.Error" data-testid="denied-message">
-    You do not have permission to view that page.
+    @Localizer["Account_Denied_Message"]
 </MudAlert>

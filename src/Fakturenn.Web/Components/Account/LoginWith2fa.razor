@@ -1,26 +1,27 @@
 @page "/account/login-2fa"
 @* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
 @using Microsoft.AspNetCore.Components.Forms
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Two-factor authentication</PageTitle>
+<PageTitle>@Localizer["Account_TwoFactor_PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Two-factor authentication</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="twofa-title">@Localizer["Account_TwoFactor_Title"]</MudText>
 
 @if (Error is not null)
 {
-    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="twofa-error">That code was not accepted.</MudAlert>
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="twofa-error">@Localizer["Account_TwoFactor_InvalidCode"]</MudAlert>
 }
 
 <form method="post" action="/account/login-2fa/submit" data-testid="twofa-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="Authenticator code" name="code" Required="true" data-testid="twofa-code" />
+    <MudTextField T="string" Label="@Localizer["Account_TwoFactor_Code"]" name="code" Required="true" data-testid="twofa-code" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="twofa-submit">
-        Verify
+        @Localizer["Account_TwoFactor_Submit"]
     </MudButton>
 </form>
 
 <MudLink Href="/account/login-recovery" Class="mt-4" data-testid="twofa-use-recovery">
-    Use a recovery code instead
+    @Localizer["Account_TwoFactor_UseRecoveryCode"]
 </MudLink>
 
 @code {

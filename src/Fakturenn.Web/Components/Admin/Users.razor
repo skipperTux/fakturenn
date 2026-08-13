@@ -15,11 +15,14 @@
    obligations. *@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.UsersRead)]
 @inject IdentityDbContext Db
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Users</PageTitle>
+<PageTitle>@Localizer["Admin_Users_PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Users</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="admin-users-title">@Localizer["Admin_Users_Title"]</MudText>
 
+@* Error is whatever /account/admin/* redirected with: either Identity's own validation
+   descriptions or Account_Error_NoSuchAccount, both already in the request's language. *@
 @if (Error is not null)
 {
     <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="admin-error">@Error</MudAlert>
@@ -27,16 +30,16 @@
 
 <MudTable Items="_users" Class="mb-8" data-testid="user-table">
     <HeaderContent>
-        <MudTh>Email</MudTh>
-        <MudTh>Display name</MudTh>
-        <MudTh>Two-factor</MudTh>
-        <MudTh>Locked until</MudTh>
-        <MudTh>Actions</MudTh>
+        <MudTh>@Localizer["Admin_Users_Column_Email"]</MudTh>
+        <MudTh>@Localizer["Admin_Users_Column_DisplayName"]</MudTh>
+        <MudTh>@Localizer["Admin_Users_Column_TwoFactor"]</MudTh>
+        <MudTh>@Localizer["Admin_Users_Column_LockedUntil"]</MudTh>
+        <MudTh>@Localizer["Admin_Users_Column_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Email</MudTd>
         <MudTd>@context.DisplayName</MudTd>
-        <MudTd>@(context.TwoFactorEnabled ? "enrolled" : "pending")</MudTd>
+        <MudTd>@(context.TwoFactorEnabled ? Localizer["Admin_Users_TwoFactorEnrolled"] : Localizer["Admin_Users_TwoFactorPending"])</MudTd>
         @* LockoutEnd, never AccessFailedCount. UserManager.AccessFailedAsync zeroes that
            column in the same call that sets LockoutEnd, so it reads 0 exactly when a
            reader most expects it to read 5. *@
@@ -46,7 +49,7 @@
                 <AntiforgeryToken />
                 <input type="hidden" name="email" value="@context.Email" />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Size="Size.Small">
-                    Clear two-factor
+                    @Localizer["Admin_Users_ClearTwoFactor"]
                 </MudButton>
             </form>
             <form method="post" action="/account/admin/set-lockout" class="d-inline">
@@ -57,34 +60,34 @@
                    stops it locking them, which is exactly why the CLI has --unlock-user. *@
                 <input type="hidden" name="locked" value="@(IsLocked(context) ? "false" : "true")" />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Size="Size.Small">
-                    @(IsLocked(context) ? "Unlock" : "Lock")
+                    @(IsLocked(context) ? Localizer["Admin_Users_Unlock"] : Localizer["Admin_Users_Lock"])
                 </MudButton>
             </form>
         </MudTd>
     </RowTemplate>
 </MudTable>
 
-<MudText Typo="Typo.h5" GutterBottom="true">Create a user</MudText>
+<MudText Typo="Typo.h5" GutterBottom="true">@Localizer["Admin_Users_CreateTitle"]</MudText>
 <form method="post" action="/account/admin/create-user" data-testid="create-user-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="create-user-email" />
-    <MudTextField T="string" Label="Display name" name="displayName" Required="true" data-testid="create-user-display-name" />
-    <MudTextField T="string" Label="Initial password" InputType="InputType.Password" name="password" Required="true" data-testid="create-user-password" />
+    <MudTextField T="string" Label="@Localizer["Admin_Users_CreateEmail"]" InputType="InputType.Email" name="email" Required="true" data-testid="create-user-email" />
+    <MudTextField T="string" Label="@Localizer["Admin_Users_CreateDisplayName"]" name="displayName" Required="true" data-testid="create-user-display-name" />
+    <MudTextField T="string" Label="@Localizer["Admin_Users_CreateInitialPassword"]" InputType="InputType.Password" name="password" Required="true" data-testid="create-user-password" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="create-user-submit">
-        Create user
+        @Localizer["Admin_Users_CreateSubmit"]
     </MudButton>
 </form>
 
-<MudText Typo="Typo.h5" GutterBottom="true" Class="mt-8">Reset a password</MudText>
+<MudText Typo="Typo.h5" GutterBottom="true" Class="mt-8">@Localizer["Admin_Users_ResetTitle"]</MudText>
 <MudText Typo="Typo.body2" Class="mb-4">
-    The account is unlocked and the user must choose their own password at the next sign-in.
+    @Localizer["Admin_Users_ResetExplanation"]
 </MudText>
 <form method="post" action="/account/admin/reset-password" data-testid="reset-password-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="reset-password-email" />
-    <MudTextField T="string" Label="New password" InputType="InputType.Password" name="password" Required="true" data-testid="reset-password-password" />
+    <MudTextField T="string" Label="@Localizer["Admin_Users_ResetEmail"]" InputType="InputType.Email" name="email" Required="true" data-testid="reset-password-email" />
+    <MudTextField T="string" Label="@Localizer["Admin_Users_ResetNewPassword"]" InputType="InputType.Password" name="password" Required="true" data-testid="reset-password-password" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="reset-password-submit">
-        Reset password
+        @Localizer["Admin_Users_ResetSubmit"]
     </MudButton>
 </form>
 

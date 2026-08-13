@@ -34,6 +34,23 @@ public sealed record UiAccount(string Email, string Password, string TotpKey);
 /// </summary>
 public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
 {
+    // public const Fields
+
+    /// <summary>
+    /// The default locale for a context, so the assertions can name English strings
+    /// without depending on the host machine's culture.
+    /// </summary>
+    public const string EnglishLocale = "en-GB";
+
+    /// <summary>
+    /// The locale the localization journey uses. A neutral <c>de</c> would also resolve,
+    /// but a real German browser sends a region, and <c>Accept-Language: de-DE</c> is what
+    /// <c>RequestLocalizationOptions</c>'s supported-culture matching has to fold down to
+    /// the neutral <c>de</c> the resource files are keyed on. Asserting against the form a
+    /// browser actually sends is the point.
+    /// </summary>
+    public const string GermanLocale = "de-DE";
+
     // private const Fields
 
     /// <summary>
@@ -52,18 +69,6 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
     /// </para>
     /// </summary>
     private const int ColdStartTimeoutMilliseconds = 60_000;
-
-    // private static readonly Fields
-
-    /// <summary>
-    /// Every context is created with this locale, so the assertions can name English
-    /// strings without depending on the host machine's culture.
-    /// </summary>
-    private static readonly BrowserNewContextOptions _englishContext = new()
-    {
-        Locale = "en-GB",
-        ExtraHTTPHeaders = new Dictionary<string, string> { ["Accept-Language"] = "en-GB" },
-    };
 
     // private readonly Fields
 
@@ -179,23 +184,32 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// A browser context pointed at this host: English, and patient enough for a cold
-    /// start. Every context in this suite comes from here, so no test can quietly get the
-    /// thirty-second default back.
+    /// A browser context pointed at this host: one stated locale, and patient enough for a
+    /// cold start. Every context in this suite comes from here, so no test can quietly get
+    /// the thirty-second default back.
     /// </summary>
     /// <param name="browser">The browser to open the context in.</param>
     /// <param name="storageState">
     /// A serialised Playwright cookie jar to start from, or <see langword="null"/> for a
     /// context that has never signed in.
     /// </param>
-    public static async Task<IBrowserContext> NewContextAsync(IBrowser browser, string? storageState = null)
+    /// <param name="locale">
+    /// The browser locale, sent both as Chromium's own locale and as
+    /// <c>Accept-Language</c> — the two must agree, or the page is rendered in one language
+    /// and formatted for another. Defaults to <see cref="EnglishLocale"/>; the localization
+    /// journey passes <see cref="GermanLocale"/>.
+    /// </param>
+    public static async Task<IBrowserContext> NewContextAsync(
+        IBrowser browser,
+        string? storageState = null,
+        string locale = EnglishLocale)
     {
         ArgumentNullException.ThrowIfNull(browser);
 
         IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions
         {
-            Locale = _englishContext.Locale,
-            ExtraHTTPHeaders = _englishContext.ExtraHTTPHeaders,
+            Locale = locale,
+            ExtraHTTPHeaders = new Dictionary<string, string> { ["Accept-Language"] = locale },
             StorageState = storageState,
         });
 
@@ -306,14 +320,23 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
     /// Reusing the state is an optimisation; producing it any other way than by signing in
     /// would make every test built on it prove nothing about authentication.
     /// </para>
+    /// <para>
+    /// The cookie jar carries no language of its own, so replaying it into a
+    /// <paramref name="locale"/> context is how the localization journey reaches an
+    /// authenticated page in German without signing in a second time — and without the
+    /// German assertion depending on a sign-in journey that has nothing to do with
+    /// language.
+    /// </para>
     /// </summary>
-    public async Task<IPage> SignInAsAdministratorAsync(IBrowser browser)
+    /// <param name="browser">The browser to open the context in.</param>
+    /// <param name="locale">The browser locale for the returned page's context.</param>
+    public async Task<IPage> SignInAsAdministratorAsync(IBrowser browser, string locale = EnglishLocale)
     {
         ArgumentNullException.ThrowIfNull(browser);
 
         await EnsureAdministratorAsync(browser);
 
-        IBrowserContext context = await NewContextAsync(browser, _administratorStorageState);
+        IBrowserContext context = await NewContextAsync(browser, _administratorStorageState, locale);
 
         return await context.NewPageAsync();
     }

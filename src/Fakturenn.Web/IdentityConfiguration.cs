@@ -84,6 +84,14 @@ public static class IdentityConfiguration
             .AddDefaultTokenProviders()
             .AddSignInManager()
 
+            // Identity's stock descriptions are hard-coded English, and they are what a
+            // user meets when a password is rejected -- rendered verbatim by /setup,
+            // /account/change-password and /admin/users. Without this line those three
+            // pages are German with one English sentence on them. See
+            // LocalizedIdentityErrorDescriber for which errors it covers and which are
+            // deliberately left on the base implementation.
+            .AddErrorDescriber<LocalizedIdentityErrorDescriber>()
+
             // Without this line Identity keeps its stock factory, nothing writes a
             // fakturenn.permission claim, and PermissionAuthorizationHandler reads a
             // claim that is never present -- so every [Authorize(Policy = ...)]

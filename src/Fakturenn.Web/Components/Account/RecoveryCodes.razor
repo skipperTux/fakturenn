@@ -1,23 +1,22 @@
 @page "/account/recovery-codes"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @inject IHttpContextAccessor HttpContextAccessor
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Recovery codes</PageTitle>
+<PageTitle>@Localizer["Account_RecoveryCodes_PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Recovery codes</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="recovery-codes-title">@Localizer["Account_RecoveryCodes_Title"]</MudText>
 
 @if (_codes.Length == 0)
 {
     <MudAlert Severity="Severity.Info" data-testid="recovery-empty">
-        These codes are shown once. If you no longer have them, an administrator can clear
-        your two-factor setup, which issues a fresh set when you enrol again.
+        @Localizer["Account_RecoveryCodes_Empty"]
     </MudAlert>
 }
 else
 {
     <MudAlert Severity="Severity.Warning" Class="mb-4">
-        Store these now. They are shown once and cannot be displayed again.
-        Each code works a single time.
+        @Localizer["Account_RecoveryCodes_StoreNow"]
     </MudAlert>
 
     <MudPaper Class="pa-4" data-testid="recovery-codes">
@@ -30,7 +29,7 @@ else
 }
 
 <MudButton Href="/" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="recovery-continue">
-    Continue
+    @Localizer["Account_RecoveryCodes_Continue"]
 </MudButton>
 
 @code {

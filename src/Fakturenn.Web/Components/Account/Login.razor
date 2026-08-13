@@ -5,26 +5,27 @@
 @using Microsoft.EntityFrameworkCore
 @inject IdentityDbContext Db
 @inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Sign in</PageTitle>
+<PageTitle>@Localizer["Account_Login_PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Sign in</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="login-title">@Localizer["Account_Login_Title"]</MudText>
 
 @if (Error is not null)
 {
     @* One message for both an unknown account and a wrong password. Naming which one
        failed would make this page an account oracle. *@
     <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="login-error">
-        That email address and password combination was not recognised.
+        @Localizer["Account_Login_InvalidCredentials"]
     </MudAlert>
 }
 
 <form method="post" action="/account/login/submit" data-testid="login-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="login-email" />
-    <MudTextField T="string" Label="Password" InputType="InputType.Password" name="password" Required="true" data-testid="login-password" />
+    <MudTextField T="string" Label="@Localizer["Account_Login_Email"]" InputType="InputType.Email" name="email" Required="true" data-testid="login-email" />
+    <MudTextField T="string" Label="@Localizer["Account_Login_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="login-password" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="login-submit">
-        Sign in
+        @Localizer["Account_Login_Submit"]
     </MudButton>
 </form>
 

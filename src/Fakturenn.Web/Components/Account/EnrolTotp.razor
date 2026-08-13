@@ -8,30 +8,30 @@
 @inject UserManager<ApplicationUser> Users
 @inject IHttpContextAccessor HttpContextAccessor
 @inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Set up two-factor authentication</PageTitle>
+<PageTitle>@Localizer["Account_EnrolTotp_PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Set up two-factor authentication</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="enrol-title">@Localizer["Account_EnrolTotp_Title"]</MudText>
 <MudText Typo="Typo.body2" Class="mb-4">
-    Two-factor authentication is required. Add the key below to an authenticator app,
-    then enter the six-digit code it shows.
+    @Localizer["Account_EnrolTotp_Explanation"]
 </MudText>
 
 @if (Error is not null)
 {
-    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="enrol-error">That code was not accepted.</MudAlert>
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="enrol-error">@Localizer["Account_EnrolTotp_InvalidCode"]</MudAlert>
 }
 
 <MudPaper Class="pa-4 mb-4">
-    <MudText Typo="Typo.caption">Manual entry key</MudText>
+    <MudText Typo="Typo.caption">@Localizer["Account_EnrolTotp_ManualEntryKey"]</MudText>
     <MudText Typo="Typo.h6" data-testid="totp-key">@_formattedKey</MudText>
 </MudPaper>
 
 <form method="post" action="/account/enrol-totp/verify" data-testid="enrol-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="Authenticator code" name="code" Required="true" data-testid="enrol-code" />
+    <MudTextField T="string" Label="@Localizer["Account_EnrolTotp_Code"]" name="code" Required="true" data-testid="enrol-code" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="enrol-submit">
-        Verify and enable
+        @Localizer["Account_EnrolTotp_Submit"]
     </MudButton>
 </form>
 

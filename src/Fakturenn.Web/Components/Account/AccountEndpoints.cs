@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Localization;
 
 namespace Fakturenn.Web.Components.Account;
 
@@ -490,6 +491,7 @@ public static class AccountEndpoints
         admin.MapPost("/reset-password", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            IStringLocalizer<SharedResource> localizer,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -497,7 +499,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError("No account with that email address exists.");
+                return RedirectWithError(NoSuchAccount(localizer));
             }
 
             // Generated and redeemed in the same breath. The token exists because Identity's
@@ -537,6 +539,7 @@ public static class AccountEndpoints
         admin.MapPost("/clear-mfa", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            IStringLocalizer<SharedResource> localizer,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -544,7 +547,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError("No account with that email address exists.");
+                return RedirectWithError(NoSuchAccount(localizer));
             }
 
             // This is the whole recovery path for a user who has lost both their
@@ -579,6 +582,7 @@ public static class AccountEndpoints
         admin.MapPost("/set-lockout", async (
             HttpContext http,
             UserManager<ApplicationUser> users,
+            IStringLocalizer<SharedResource> localizer,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -586,7 +590,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError("No account with that email address exists.");
+                return RedirectWithError(NoSuchAccount(localizer));
             }
 
             bool locked = string.Equals(form["locked"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
@@ -660,9 +664,30 @@ public static class AccountEndpoints
     }
 
     /// <summary>
+    /// "No account with that email address exists.", in the language of the request that
+    /// asked.
+    /// <para>
+    /// The three administration endpoints that look a user up by e-mail address all end
+    /// here, and the message reaches a person rather than an operator: it is rendered
+    /// verbatim by <c>/admin/users</c>. Localizing the pages and leaving these three
+    /// English would give a German administrator a German page carrying one English
+    /// sentence — the only sentence on it they did not ask for.
+    /// </para>
+    /// <para>
+    /// Resolved per call, not once: <see cref="IStringLocalizer"/> reads
+    /// <see cref="System.Globalization.CultureInfo.CurrentUICulture"/> at lookup time, and
+    /// <c>UseRequestLocalization</c> has set that from this request's <c>Accept-Language</c>
+    /// well before any endpoint runs.
+    /// </para>
+    /// </summary>
+    private static string NoSuchAccount(IStringLocalizer<SharedResource> localizer) =>
+        localizer["Account_Error_NoSuchAccount"];
+
+    /// <summary>
     /// Sends the administrator back to the list with a message. The page shows it verbatim,
     /// so the message must stay something an administrator may see — Identity's validation
-    /// descriptions qualify; nothing here echoes a credential.
+    /// descriptions qualify (localized by <see cref="LocalizedIdentityErrorDescriber"/>);
+    /// nothing here echoes a credential.
     /// </summary>
     private static IResult RedirectWithError(string message) =>
         Results.Redirect($"/admin/users?error={Uri.EscapeDataString(message)}");

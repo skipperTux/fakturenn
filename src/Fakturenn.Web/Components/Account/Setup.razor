@@ -5,21 +5,24 @@
 @using Microsoft.EntityFrameworkCore
 @inject IdentityDbContext Db
 @inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>Fakturenn — Setup</PageTitle>
+<PageTitle>@Localizer["Setup_PageTitle"]</PageTitle>
 
 @if (_alreadyConfigured)
 {
-    <MudText Typo="Typo.h5">Already configured</MudText>
+    <MudText Typo="Typo.h5">@Localizer["Setup_AlreadyConfigured"]</MudText>
 }
 else
 {
-    <MudText Typo="Typo.h4" GutterBottom="true">Create the first administrator</MudText>
+    <MudText Typo="Typo.h4" GutterBottom="true">@Localizer["Setup_CreateAdministrator"]</MudText>
     <MudText Typo="Typo.body2" Class="mb-4">
-        This page is available only while no account exists. It disappears permanently
-        once the first administrator is created.
+        @Localizer["Setup_Explanation"]
     </MudText>
 
+    @* Error is produced by POST /account/setup, which builds it from Identity's own
+       validation descriptions -- localized by LocalizedIdentityErrorDescriber, so what
+       arrives here is already in the request's language. *@
     @if (Error is not null)
     {
         <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="setup-error">@Error</MudAlert>
@@ -27,11 +30,11 @@ else
 
     <form method="post" action="/account/setup" data-testid="setup-form">
         <AntiforgeryToken />
-        <MudTextField T="string" Label="Email" InputType="InputType.Email" name="email" Required="true" data-testid="setup-email" />
-        <MudTextField T="string" Label="Display name" name="displayName" Required="true" data-testid="setup-display-name" />
-        <MudTextField T="string" Label="Password" InputType="InputType.Password" name="password" Required="true" data-testid="setup-password" />
+        <MudTextField T="string" Label="@Localizer["Setup_Email"]" InputType="InputType.Email" name="email" Required="true" data-testid="setup-email" />
+        <MudTextField T="string" Label="@Localizer["Setup_DisplayName"]" name="displayName" Required="true" data-testid="setup-display-name" />
+        <MudTextField T="string" Label="@Localizer["Setup_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="setup-password" />
         <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="setup-submit">
-            Create administrator
+            @Localizer["Setup_Submit"]
         </MudButton>
     </form>
 }
