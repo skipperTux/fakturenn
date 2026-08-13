@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
@@ -107,8 +108,12 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
             client, path, ("email", subject.Email!), ("locked", "true"));
 
         response.StatusCode.Should().Be(
-            HttpStatusCode.BadRequest,
+            HttpStatusCode.Found,
             $"POST {path} must validate the antiforgery token the form already renders");
+        response.Headers.Location?.OriginalString.Should().Be(
+            "/admin/users?error=expired",
+            "a refused token sends the administrator back to the page, with no field echoed "
+            + "back -- the fields of a post that failed antiforgery are not the caller's own typing");
 
         ApplicationUser unchanged = await ReadUserAsync(subject.Email!);
         unchanged.LockoutEnd.Should().BeNull("a refused post must change nothing");
@@ -408,6 +413,60 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     /// <summary>A distinct, readable user name per theory case.</summary>
+    [Fact]
+    public async Task A_rejected_creation_refills_the_form_it_came_from_and_only_that_one()
+    {
+        // /admin/users hosts two forms and both post an "email" field, so a redirect that
+        // simply carried the address back would fill in whichever the page happened to bind
+        // first -- and putting an address nobody typed into "reset this person's password"
+        // is worse than making the administrator retype it. The endpoint therefore names the
+        // form it belongs to.
+        using HttpClient client = await AdministratorClientAsync("refill-admin@example.test");
+
+        using HttpResponseMessage posted = await PostAsync(
+            client,
+            CreateUserPath,
+            ("email", "refill-subject@example.test"),
+            ("displayName", "Neuer Mitarbeiter"),
+            ("password", "Kurz-9"));
+
+        posted.StatusCode.Should().Be(HttpStatusCode.Found);
+
+        string location = posted.Headers.Location!.OriginalString;
+
+        location.Should().StartWith("/admin/users?error=");
+        location.Should().Contain("&form=create-user");
+        location.Should().Contain("&email=refill-subject%40example.test");
+        location.Should().Contain("&displayName=Neuer%20Mitarbeiter");
+        location.Should().NotContain("Kurz", "no password may travel in a URL");
+
+        using HttpResponseMessage page = await GetAsync(client, location);
+        string html = await page.Content.ReadAsStringAsync(Token);
+
+        Input(html, "create-user-email").Should().Contain("value=\"refill-subject@example.test\"");
+        Input(html, "create-user-display-name").Should().Contain("value=\"Neuer Mitarbeiter\"");
+        Input(html, "reset-password-email").Should().NotContain(
+            "value=", "the other form on this page did not ask for that address");
+        Input(html, "create-user-password").Should().NotContain("value=");
+        Input(html, "reset-password-password").Should().NotContain("value=");
+
+        html.Should().Contain("at least 12 characters", "the real rule, localized, not a generic refusal");
+    }
+
+    /// <summary>The one rendered <c>&lt;input&gt;</c> carrying a given <c>data-testid</c>.</summary>
+    private static string Input(string html, string testId)
+    {
+        Match match = Regex.Match(
+            html,
+            $"""<input[^>]*data-testid="{Regex.Escape(testId)}"[^>]*>""",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(5));
+
+        match.Success.Should().BeTrue($"the page must render an input with data-testid=\"{testId}\"");
+
+        return match.Value;
+    }
+
     private static string Slug(string path) => new([.. path.Where(char.IsLetterOrDigit)]);
 
     /// <summary>

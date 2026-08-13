@@ -164,7 +164,7 @@ public sealed class SignInTests(SetupHostFixture host)
                 await SignInHelper.PostPasswordAsync(client, user.UserName!, "Falsch-Pferd-99");
 
             response.Headers.Location?.OriginalString.Should().Be(
-                "/account/login?error=invalid",
+                $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString(user.UserName!)}",
                 $"attempt {attempt} is below the limit");
         }
 
@@ -198,12 +198,20 @@ public sealed class SignInTests(SetupHostFixture host)
         // Lockout plus a distinguishable failure would make this endpoint an account
         // oracle: an attacker could enumerate valid addresses without ever guessing a
         // password. Compared byte for byte rather than asserted to be "similar".
+        //
+        // The one thing that legitimately differs is the address the redirect hands back so
+        // the user does not retype it -- and it differs only because the two posts supplied
+        // different addresses. It is echoed input, not an answer: the assertions below pin
+        // it to exactly what was posted, which is what stops it becoming a channel, and
+        // everything else about the two responses is still compared whole.
         (ApplicationUser known, string _) = await EnrolledUserAsync("known@example.test");
 
         using HttpClient client = host.CreateClient();
 
+        const string UnknownAddress = "no-such-account@example.test";
+
         using HttpResponseMessage unknown =
-            await SignInHelper.PostPasswordAsync(client, "no-such-account@example.test", Password);
+            await SignInHelper.PostPasswordAsync(client, UnknownAddress, Password);
         string unknownBody = await unknown.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         using HttpResponseMessage wrongPassword =
@@ -212,10 +220,25 @@ public sealed class SignInTests(SetupHostFixture host)
             await wrongPassword.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         wrongPassword.StatusCode.Should().Be(unknown.StatusCode);
-        wrongPassword.Headers.Location?.OriginalString.Should()
-            .Be(unknown.Headers.Location?.OriginalString);
         wrongPasswordBody.Should().Be(unknownBody);
+
+        unknown.Headers.Location?.OriginalString.Should().Be(
+            $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString(UnknownAddress)}");
+        wrongPassword.Headers.Location?.OriginalString.Should().Be(
+            $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString(known.UserName!)}");
+
+        Echoless(wrongPassword).Should().Be(
+            Echoless(unknown),
+            "with each caller's own address removed, nothing is left that could tell an "
+            + "unknown account from a wrong password");
     }
+
+    /// <summary>
+    /// A sign-in redirect with the caller's own echoed address stripped off — everything the
+    /// server chose, and nothing the caller supplied.
+    /// </summary>
+    private static string Echoless(HttpResponseMessage response) =>
+        response.Headers.Location!.OriginalString.Split("&email=", StringSplitOptions.None)[0];
 
     [Fact]
     public async Task A_password_somebody_else_chose_sends_the_user_to_change_it()

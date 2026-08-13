@@ -168,6 +168,12 @@ public static class FakturennWebApplication
 
         app.UseAntiforgery();
 
+        // Immediately behind UseAntiforgery, which validates the token and records the outcome
+        // in IAntiforgeryValidationFeature without rejecting anything itself. This is what
+        // turns a stale token into the form again rather than into the 400 (Production) or 500
+        // (the developer exception page) that RequestDelegateFactory's throw produces.
+        app.UseMiddleware<AntiforgeryFailureMiddleware>();
+
         app.MapHealthChecks("/alive", new HealthCheckOptions
         {
             Predicate = registration => registration.Tags.Contains("live"),

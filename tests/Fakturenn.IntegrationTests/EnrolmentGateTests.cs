@@ -171,7 +171,8 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
         using HttpResponseMessage response =
             await SignInHelper.PostPasswordAsync(client, "nobody@example.test", Password);
 
-        response.Headers.Location?.OriginalString.Should().Be("/account/login?error=invalid");
+        response.Headers.Location?.OriginalString.Should().Be(
+            $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString("nobody@example.test")}");
     }
 
     [Theory]

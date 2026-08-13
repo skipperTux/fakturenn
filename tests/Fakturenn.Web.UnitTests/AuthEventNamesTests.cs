@@ -34,6 +34,7 @@ public sealed class AuthEventNamesTests
         "TotpEnrolled",
         "PasswordChanged",
         "SignedOut",
+        "AntiforgeryRejected",
         "FirstAdministratorCreated",
 
         // Administrative actions.

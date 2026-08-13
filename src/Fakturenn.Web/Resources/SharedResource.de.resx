@@ -162,6 +162,9 @@
   <data name="Account_EnrolTotp_Title" xml:space="preserve">
     <value>Zwei-Faktor-Authentifizierung einrichten</value>
   </data>
+  <data name="Account_Error_FormExpired" xml:space="preserve">
+    <value>Das Formular konnte nicht gesendet werden, weil es zu lange geöffnet war oder die zugehörige Sitzung beendet wurde. Bitte prüfen Sie die Angaben und versuchen Sie es erneut.</value>
+  </data>
   <data name="Account_Error_NoSuchAccount" xml:space="preserve">
     <value>Es existiert kein Konto mit dieser E-Mail-Adresse.</value>
   </data>

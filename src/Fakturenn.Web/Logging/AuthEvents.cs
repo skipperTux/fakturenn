@@ -62,6 +62,19 @@ internal static class AuthEvents
     internal const string SignedOut = "SignedOut";
 
     /// <summary>
+    /// A post to an account form carried no usable antiforgery token, so the request was
+    /// refused before any handler ran.
+    /// <para>
+    /// Usually innocent — a form left open until the session behind it ended — which is why it
+    /// is worth recording rather than assuming: a run of these against one instance is what a
+    /// cross-site attempt looks like from the server side, and
+    /// <c>AntiforgeryFailureMiddleware</c> answers it with a redirect, so nothing else would
+    /// leave a trace.
+    /// </para>
+    /// </summary>
+    internal const string AntiforgeryRejected = "AntiforgeryRejected";
+
+    /// <summary>
     /// The first administrator was created through <c>/setup</c>. The most security-significant
     /// single event this application can emit: it is the one moment an unauthenticated caller
     /// mints administrative access.

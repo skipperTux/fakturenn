@@ -35,6 +35,16 @@ public static class AccountEndpoints
     /// <summary>Ten, per the spec. Shown once, each usable once.</summary>
     private const int RecoveryCodeCount = 10;
 
+    /// <summary>
+    /// The <c>?error=</c> value every credential form redirects with. A sentinel, not a
+    /// message: <c>Login</c>, <c>LoginWith2fa</c>, <c>LoginWithRecoveryCode</c> and
+    /// <c>EnrolTotp</c> each render their own localized sentence and none of them echoes this
+    /// value, so nothing the user typed into a credential field can reach a page through it —
+    /// and the sign-in page keeps answering identically whether the account exists or the
+    /// password was wrong.
+    /// </summary>
+    private const string InvalidSubmission = "invalid";
+
     public static void MapAccountEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -73,6 +83,7 @@ public static class AccountEndpoints
         RouteGroupBuilder group = endpoints.MapGroup("/account").RequireRateLimiting("account");
 
         group.MapPost("/setup", async (
+            HttpContext http,
             IFormCollection form,
             UserManager<ApplicationUser> users,
             IdentityDbContext db,
@@ -153,8 +164,13 @@ public static class AccountEndpoints
                             return Results.Redirect("/account/login");
                         }
 
-                        string message = string.Join(" ", created.Errors.Select(e => e.Description));
-                        return Results.Redirect($"/setup?error={Uri.EscapeDataString(message)}");
+                        // Back to /setup carrying the address and display name that were
+                        // typed, so a password the policy refuses costs a correction rather
+                        // than a retype. The password itself is not among the fields
+                        // AccountForms carries -- see the allowlist there.
+                        return AccountForms.Rejected(
+                            http,
+                            string.Join(" ", created.Errors.Select(e => e.Description)));
                     }
 
                     await RoleSeeder.SeedAsync(db, token);
@@ -224,7 +240,7 @@ public static class AccountEndpoints
                 // Nothing is written on a failure. MustEnrolTotp in particular stays set:
                 // it is the flag the enrolment gate reads, so clearing it on anything
                 // short of a verified code would make the gate decorative.
-                return Results.Redirect("/account/enrol-totp?error=invalid");
+                return AccountForms.Rejected(http, InvalidSubmission);
             }
 
             await users.SetTwoFactorEnabledAsync(user, true);
@@ -256,6 +272,7 @@ public static class AccountEndpoints
         // mapping a handler on the page's own route makes every post an
         // AmbiguousMatchException at request time.
         group.MapPost("/login/submit", async (
+            HttpContext http,
             IFormCollection form,
             SignInManager<ApplicationUser> signIn,
             ILoggerFactory loggerFactory) =>
@@ -300,7 +317,10 @@ public static class AccountEndpoints
                 // refuses to hand out.
                 AuthEventLog.AccountAlert(loggerFactory, AuthEvents.SignInFailed, email);
 
-                return Results.Redirect("/account/login?error=invalid");
+                // The address comes back with the caller so they only retype the
+                // password. It tells them nothing they did not just type, so it is not the
+                // account oracle the identical message above exists to avoid.
+                return AccountForms.Rejected(http, InvalidSubmission);
             }
 
             // Reached only by a user who has not enrolled a second factor yet. They are
@@ -342,7 +362,7 @@ public static class AccountEndpoints
                 // still a credential, and a rejected one is often a mistyped valid one.
                 AuthEventLog.AccountAlert(loggerFactory, AuthEvents.TwoFactorFailed, email);
 
-                return Results.Redirect("/account/login-2fa?error=invalid");
+                return AccountForms.Rejected(http, InvalidSubmission);
             }
 
             AuthEventLog.Account(loggerFactory, AuthEvents.TwoFactorSucceeded, email);
@@ -366,6 +386,7 @@ public static class AccountEndpoints
         });
 
         group.MapPost("/login-recovery/submit", async (
+            HttpContext http,
             IFormCollection form,
             SignInManager<ApplicationUser> signIn,
             ILoggerFactory loggerFactory) =>
@@ -390,7 +411,7 @@ public static class AccountEndpoints
                 // of codes left is recorded.
                 AuthEventLog.AccountAlert(loggerFactory, AuthEvents.RecoveryCodeFailed, email);
 
-                return Results.Redirect("/account/login-recovery?error=invalid");
+                return AccountForms.Rejected(http, InvalidSubmission);
             }
 
             // A warning, not information: a recovery code is the exceptional path, it is
@@ -424,8 +445,8 @@ public static class AccountEndpoints
                 // MustChangePassword is deliberately untouched here. Clearing it on
                 // anything short of a successful change would let a user walk past the
                 // forced change by submitting a rejected one.
-                string message = string.Join(" ", changed.Errors.Select(e => e.Description));
-                return Results.Redirect($"/account/change-password?error={Uri.EscapeDataString(message)}");
+                return AccountForms.Rejected(
+                    http, string.Join(" ", changed.Errors.Select(e => e.Description)));
             }
 
             user.MustChangePassword = false;
@@ -526,7 +547,8 @@ public static class AccountEndpoints
 
             if (!created.Succeeded)
             {
-                return RedirectWithError(string.Join(" ", created.Errors.Select(error => error.Description)));
+                return AccountForms.Rejected(
+                    http, string.Join(" ", created.Errors.Select(error => error.Description)));
             }
 
             AuthEventLog.Administrative(loggerFactory, AuthEvents.AdminCreatedUser, ActorOf(http), email);
@@ -544,7 +566,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError(NoSuchAccount(localizer));
+                return AccountForms.Rejected(http, NoSuchAccount(localizer));
             }
 
             // Generated and redeemed in the same breath. The token exists because Identity's
@@ -555,7 +577,8 @@ public static class AccountEndpoints
 
             if (!reset.Succeeded)
             {
-                return RedirectWithError(string.Join(" ", reset.Errors.Select(error => error.Description)));
+                return AccountForms.Rejected(
+                    http, string.Join(" ", reset.Errors.Select(error => error.Description)));
             }
 
             // A reset that left the account locked would hand the user a password they
@@ -591,7 +614,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError(NoSuchAccount(localizer));
+                return AccountForms.Rejected(http, NoSuchAccount(localizer));
             }
 
             // This is the whole recovery path for a user who has lost both their
@@ -633,7 +656,7 @@ public static class AccountEndpoints
             ApplicationUser? user = await users.FindByEmailAsync(form["email"].ToString().Trim());
             if (user is null)
             {
-                return RedirectWithError(NoSuchAccount(localizer));
+                return AccountForms.Rejected(http, NoSuchAccount(localizer));
             }
 
             bool locked = string.Equals(form["locked"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
@@ -649,7 +672,8 @@ public static class AccountEndpoints
                 // SetLockoutEndDateAsync refuses an account with LockoutEnabled false rather
                 // than throwing, and silently redirecting to a page that still shows the
                 // account unlocked would look like the click did nothing.
-                return RedirectWithError(string.Join(" ", result.Errors.Select(error => error.Description)));
+                return AccountForms.Rejected(
+                    http, string.Join(" ", result.Errors.Select(error => error.Description)));
             }
 
             if (!locked)
@@ -725,15 +749,6 @@ public static class AccountEndpoints
     /// </summary>
     private static string NoSuchAccount(IStringLocalizer<SharedResource> localizer) =>
         localizer["Account_Error_NoSuchAccount"];
-
-    /// <summary>
-    /// Sends the administrator back to the list with a message. The page shows it verbatim,
-    /// so the message must stay something an administrator may see — Identity's validation
-    /// descriptions qualify (localized by <see cref="LocalizedIdentityErrorDescriber"/>);
-    /// nothing here echoes a credential.
-    /// </summary>
-    private static IResult RedirectWithError(string message) =>
-        Results.Redirect($"/admin/users?error={Uri.EscapeDataString(message)}");
 
     /// <summary>
     /// Reads the stashed recovery codes and clears the cookie, so they are displayed

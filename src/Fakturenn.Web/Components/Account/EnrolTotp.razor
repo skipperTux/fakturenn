@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Identity
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @inject UserManager<ApplicationUser> Users
+@inject SignInManager<ApplicationUser> SignIn
 @inject IHttpContextAccessor HttpContextAccessor
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
@@ -17,10 +18,7 @@
     @Localizer["Account_EnrolTotp_Explanation"]
 </MudText>
 
-@if (Error is not null)
-{
-    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="enrol-error">@Localizer["Account_EnrolTotp_InvalidCode"]</MudAlert>
-}
+<FormError Error="@Error" Message="@Localizer["Account_EnrolTotp_InvalidCode"]" TestId="enrol-error" />
 
 <MudPaper Class="pa-4 mb-4">
     <MudText Typo="Typo.caption">@Localizer["Account_EnrolTotp_ManualEntryKey"]</MudText>
@@ -95,6 +93,29 @@
         {
             await Users.ResetAuthenticatorKeyAsync(user);
             key = await Users.GetAuthenticatorKeyAsync(user);
+
+            // THE line, and it is the fix for a defect a green suite missed. Minting the key
+            // is a two-factor change, so ResetAuthenticatorKeyAsync rotates the security
+            // stamp -- but the cookie in the browser still carries the stamp it was issued
+            // under. SecurityStampValidatorOptions.ValidationInterval is one minute, so for
+            // the first minute nothing revalidates and the session looks fine; on the first
+            // request after that the validator finds a stamp that no longer matches, rejects
+            // the principal and signs the user out. Typing a code off a phone takes longer
+            // than a minute, so POST /account/enrol-totp/verify then arrived unauthenticated:
+            // its antiforgery token had been bound to a signed-in caller who no longer
+            // existed, and the post failed with "the provided antiforgery token was meant for
+            // a different claims-based user". Re-issuing the cookie under the new stamp is
+            // the whole fix; the rotation itself is wanted.
+            //
+            // The same call for the same reason sits in the verify handler after
+            // SetTwoFactorEnabledAsync. That one covered the rotation on the way OUT of this
+            // page; this covers the rotation on the way IN, which is the one nobody noticed
+            // because every test and every browser journey submits inside the minute.
+            //
+            // Writing a cookie from a component is safe here and only here: these pages are
+            // static SSR (no component declares a render mode), so this runs while the
+            // response headers are still open, and not inside a circuit's WebSocket message.
+            await SignIn.RefreshSignInAsync(user);
         }
 
         _formattedKey = FormatKey(key ?? string.Empty);

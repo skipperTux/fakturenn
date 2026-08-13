@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
@@ -12,7 +13,7 @@ namespace Fakturenn.IntegrationTests;
 /// pipeline; none of them constructs the handler or a <c>UserManager</c> directly.
 /// </summary>
 [Collection(RealHost.Name)]
-public sealed class SetupEndpointTests(SetupHostFixture host)
+public sealed partial class SetupEndpointTests(SetupHostFixture host)
 {
     private const string ValidPassword = "Korrekt-Pferd-42";
 
@@ -198,14 +199,88 @@ public sealed class SetupEndpointTests(SetupHostFixture host)
             ("displayName", "Forged"),
             ("password", ValidPassword));
 
+        // A redirect back to the form, rather than the unhandled BadHttpRequestException
+        // RequestDelegateFactory used to throw -- a 400 with a developer exception page under
+        // Development, a bare 400 under Production, logged as a 500 either way. What matters
+        // for this test is the half that has not changed: the post is refused and no
+        // administrator exists afterwards.
         response.StatusCode.Should().Be(
-            HttpStatusCode.BadRequest, "a first-run post without a token must never mint an administrator");
+            HttpStatusCode.Found, "a first-run post without a token must never mint an administrator");
+        response.Headers.Location?.OriginalString.Should().Be("/setup?error=expired");
 
         await using IdentityDbContext context = host.CreateIdentityContext();
 
         bool anyUser = await context.Users.AsNoTracking()
             .AnyAsync(TestContext.Current.CancellationToken);
         anyUser.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_password_the_policy_refuses_hands_back_everything_except_the_password()
+    {
+        // The first form anybody meets, filled in by somebody who has no account yet and no
+        // way to recover one. It used to answer a refused password by discarding the address
+        // and the display name as well, so a policy the operator had not read cost them the
+        // whole form every time.
+        await host.ResetUsersAsync(TestContext.Current.CancellationToken);
+
+        using HttpClient client = host.CreateClient(new CookieContainer());
+
+        const string TooShort = "Kurz-9";
+
+        using HttpResponseMessage posted = await AntiforgeryHelper.PostWithTokenAsync(
+            client,
+            await SetupTokenAsync(client),
+            "/account/setup",
+            ("email", "typed@example.test"),
+            ("displayName", "Getippter Name"),
+            ("password", TooShort));
+
+        posted.StatusCode.Should().Be(HttpStatusCode.Found);
+
+        string location = posted.Headers.Location!.OriginalString;
+
+        location.Should().StartWith("/setup?error=");
+        location.Should().Contain("&email=typed%40example.test");
+        location.Should().Contain("&displayName=Getippter%20Name");
+        location.Should().NotContain(
+            "Kurz", "a password must never travel in a URL -- it lands in browser history and "
+            + "in every reverse proxy's access log");
+
+        using HttpResponseMessage page = await client.GetAsync(
+            new Uri(location, UriKind.Relative), TestContext.Current.CancellationToken);
+
+        string html = await page.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        html.Should().Contain("value=\"typed@example.test\"");
+        html.Should().Contain("value=\"Getippter Name\"");
+        PasswordInput(html).Should().NotContain(
+            "value=", "the password box must come back empty, whatever else is refilled");
+
+        // And the message names the actual rule, not a generic refusal: Task 17 localized
+        // IdentityErrorDescriber precisely so this sentence is both real and translated.
+        html.Should().Contain("at least 12 characters");
+
+        bool anyUser = await AnyUserAsync();
+        anyUser.Should().BeFalse("a refused password must create nothing");
+    }
+
+    /// <summary>
+    /// The single <c>&lt;input&gt;</c> element MudBlazor renders for the password field.
+    /// Isolating it matters: the page has three inputs and asserting "no value= anywhere"
+    /// would fail on the two that are supposed to carry one.
+    /// </summary>
+    private static string PasswordInput(string html) =>
+        PasswordInputPattern().Match(html).Value;
+
+    [GeneratedRegex("""<input[^>]*name="password"[^>]*>""")]
+    private static partial Regex PasswordInputPattern();
+
+    private async Task<bool> AnyUserAsync()
+    {
+        await using IdentityDbContext context = host.CreateIdentityContext();
+
+        return await context.Users.AsNoTracking().AnyAsync(TestContext.Current.CancellationToken);
     }
 
     /// <summary>

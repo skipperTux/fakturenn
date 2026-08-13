@@ -198,7 +198,8 @@ public sealed class AuthEventLoggingTests(SetupHostFixture host)
             using HttpResponseMessage refused =
                 await SignInHelper.PostPasswordAsync(client, user.UserName!, "Falsches-Pferd-99");
 
-            refused.Headers.Location?.OriginalString.Should().Be("/account/login?error=invalid");
+            refused.Headers.Location?.OriginalString.Should().Be(
+                $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString(user.UserName!)}");
         }
 
         LogEvent logged = SingleEvent(mark, "SignInFailed");
@@ -222,7 +223,11 @@ public sealed class AuthEventLoggingTests(SetupHostFixture host)
             using HttpResponseMessage refused =
                 await SignInHelper.PostPasswordAsync(client, "log-nobody@example.test", Password);
 
-            refused.Headers.Location?.OriginalString.Should().Be("/account/login?error=invalid");
+            // Byte for byte what the test above asserts for an account that does exist, the
+            // echoed address included: the caller typed it either way, so handing it back
+            // cannot be the thing that tells the two cases apart.
+            refused.Headers.Location?.OriginalString.Should().Be(
+                $"/account/login?error=invalid&form=sign-in&email={Uri.EscapeDataString("log-nobody@example.test")}");
         }
 
         LogEvent logged = SingleEvent(mark, "SignInFailed");

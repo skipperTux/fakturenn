@@ -408,6 +408,41 @@ public sealed class SetupHostFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// Re-protects the authentication cookie already in <paramref name="cookies"/> with an
+    /// older <c>IssuedUtc</c>, leaving the principal it carries untouched.
+    /// <para>
+    /// This is the only way to reach the state a real session reaches a minute after sign-in
+    /// while keeping the ticket the <b>application</b> issued —
+    /// <see cref="CreateAuthenticationCookieAsync(ApplicationUser, DateTimeOffset)"/> mints a
+    /// fresh one from the claims factory instead, which is a different principal (no <c>amr</c>
+    /// claim, for one) and cannot show what happens to a cookie a sign-in endpoint wrote.
+    /// </para>
+    /// <para>
+    /// It is <b>not</b> a mocked clock, and the distinction matters for what a test using it
+    /// proves. <c>SecurityStampValidator</c> compares <c>DateTimeOffset.UtcNow</c> against the
+    /// ticket's own <c>IssuedUtc</c> and does that arithmetic itself; all this moves is the
+    /// ticket's claim about when it was issued, which is exactly the input a ticket a minute
+    /// older would present. The validator, the interval and the comparison are the real ones.
+    /// </para>
+    /// </summary>
+    public void AgeAuthenticationCookie(CookieContainer cookies, TimeSpan by)
+    {
+        ArgumentNullException.ThrowIfNull(cookies);
+
+        Cookie cookie = cookies.GetCookies(new Uri(BaseAddress))
+            .Single(candidate => candidate.Name == ApplicationCookieName);
+
+        CookieAuthenticationOptions options = ApplicationCookieOptions();
+
+        AuthenticationTicket ticket = options.TicketDataFormat.Unprotect(cookie.Value)
+            ?? throw new InvalidOperationException("The authentication cookie could not be unprotected.");
+
+        ticket.Properties.IssuedUtc = (ticket.Properties.IssuedUtc ?? DateTimeOffset.UtcNow) - by;
+
+        cookie.Value = options.TicketDataFormat.Protect(ticket);
+    }
+
+    /// <summary>
     /// Puts a user in the seeded Administrator role, which is how a test gives one the
     /// <c>users.read</c> and <c>users.manage</c> permissions the administration pages
     /// require.

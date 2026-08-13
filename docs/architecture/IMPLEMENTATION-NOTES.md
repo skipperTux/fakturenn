@@ -487,6 +487,97 @@ mechanisms, on purpose:
   omits `5`, and silently found six of ten codes. The alphabet is an internal
   detail of `UserManager`; extract the codes from the rendered markup instead.
 
+## Antiforgery, the security stamp, and forms that sit open
+
+Everything below was measured against a real instance during the E02a defect
+review, after a human hit in ninety seconds what 275 green tests had missed.
+The observed failure: first-run setup, sign in, enrolment page rendered, TOTP
+code typed and submitted 76 seconds later, `POST /account/enrol-totp/verify`
+logged as a 500 with
+`AntiforgeryValidationException: The provided antiforgery token was meant for a
+different claims-based user than the current user`, and the next page load
+already signed out.
+
+- **The cause was a security-stamp rotation on a `GET`, not anything about
+  antiforgery's binding.** `EnrolTotp.razor` calls
+  `UserManager.ResetAuthenticatorKeyAsync` when the account has no authenticator
+  key yet, and that rotates the security stamp — while the cookie in the browser
+  still carries the stamp it was issued under. `ValidationInterval` is one
+  minute, so for the first minute nothing revalidates and the session looks
+  healthy; on the first request after it the validator finds a mismatch,
+  **rejects the principal and signs the user out**. The antiforgery token the
+  page rendered had been bound to a signed-in caller who is no longer there, so
+  the post is refused with a message about a *different* user — which is
+  accurate and maximally misleading, because it points at the token rather than
+  at the session. The fix is one `SignInManager.RefreshSignInAsync` call beside
+  the reset, the mirror image of the one the verify handler has carried since
+  Task 10 for `SetTwoFactorEnabledAsync`.
+- **Antiforgery in .NET 10 binds the token to the user id alone, and a plausible
+  reading of the old sources says otherwise.** `DefaultClaimUidExtractor` looks
+  for `sub`, then `ClaimTypes.NameIdentifier`, then `ClaimTypes.Upn`, and returns
+  the first it finds; there is **no** hash-every-claim fallback any more. The
+  ASP.NET Core 1.x/2.x implementation did have one — it used `NameIdentifier`
+  *plus* an `identityprovider` claim, and hashed all claims when both were not
+  present — and reasoning from that version predicts that anything regenerating
+  the principal changes the binding. It does not. Measured: a
+  `POST /account/change-password/submit` two minutes after its page was rendered
+  succeeds, on an account whose stamp nothing had rotated.
+- **A regenerated principal really does lose the `amr` claim, and it is
+  harmless.** `SignInManager` adds `amr=pwd` (password) or `amr=mfa` (second
+  factor) when it issues the cookie; `SecurityStampValidator.SecurityStampVerified`
+  rebuilds the principal with `CreateUserPrincipalAsync`, which does not — the
+  framework's own source carries the comment "REVIEW: note we lost login
+  authentication method". Confirmed by dumping both claim sets. Nothing in this
+  application reads `amr`, and the claim uid does not depend on it, so no fix is
+  warranted; do not "restore" it through `OnRefreshingPrincipal` without a
+  reader that needs it.
+- **A failed antiforgery validation used to tell the operator and the user two
+  different things.** Every handler binds an `IFormCollection` parameter, so
+  `RequestDelegateFactory` throws `BadHttpRequestException` wrapping the
+  `AntiforgeryValidationException`. Nothing handled it. Under Development the
+  wire answer is **400** with the developer exception page's body, while
+  `UseSerilogRequestLogging` — which catches, logs and rethrows before that page
+  sees the exception — records **"responded 500"**. Under Production it is a bare
+  400 with no body. `AntiforgeryFailureMiddleware` now sits immediately behind
+  `UseAntiforgery`, reads `IAntiforgeryValidationFeature` (which the framework's
+  middleware sets without rejecting anything itself) and redirects to the page
+  that drew the form. The post is still refused: nothing downstream runs.
+- **Never echo a refused post's fields back to the browser, and the framework
+  will stop you.** `FormFeature.Form` throws
+  `InvalidOperationException("This form is being accessed with an invalid
+  anti-forgery token. Validate the IAntiforgeryValidationFeature on the request
+  before reading from the form.")` once that feature reports a failure —
+  measured, as a 500 from a first version of `AccountForms` that tried to
+  preserve the typed values on this path. The guard is right: a post that failed
+  antiforgery is exactly the post that may have been composed by somebody else's
+  page. `AccountForms.Rejected` (handler side, token already accepted) carries
+  fields; `AccountForms.Expired` (antiforgery side) carries only a sentinel.
+- **The `?error=` value reaching a page is a sentinel where the page is
+  anonymous.** `FormError` maps `expired` to a localized sentence and otherwise
+  shows either a fixed sentence the page supplies or the value itself. The
+  sign-in page must be in the first group: it shows one sentence for every
+  failure so it cannot become an account oracle, and rendering arbitrary
+  query text on a sign-in page would hand whoever composed the URL a phishing
+  lever.
+- **`AccountForms`' endpoint-to-page table has a test behind it.**
+  `AccountFormsTests.Every_account_post_endpoint_names_the_page_that_renders_its_form`
+  walks the host's real route table both ways. A new `/account` post without an
+  entry would otherwise throw from `AccountForms.Rejected` the first time a real
+  user's submission was refused. The scan skips Razor component pages — a
+  static-SSR page endpoint answers POST as well as GET, so `/account/denied`
+  turns up in a naive POST-route list and needs no entry.
+- **Testing this needs an aged ticket, and ageing one is not mocking a clock.**
+  `SetupHostFixture.AgeAuthenticationCookie` unprotects the cookie the
+  *application* issued, moves its `IssuedUtc` back and re-protects it; the
+  validator then does its own real `UtcNow - IssuedUtc` comparison against the
+  real one-minute interval. `CreateAuthenticationCookieAsync(user, issuedUtc)`
+  is not a substitute here: it mints a fresh principal from the claims factory,
+  which is a different claim set from the one a sign-in endpoint writes.
+- **Why the whole suite missed it.** Every test and every Playwright journey
+  submits its form milliseconds after rendering it, and the failure needs the
+  submission to arrive after the interval has elapsed. A green suite is not
+  evidence about elapsed-time behaviour unless some test lets time elapse.
+
 ## Identity, sign-in and lockout
 
 - **`IdentityDbContext` derives from `IdentityUserContext<ApplicationUser, Guid>`,

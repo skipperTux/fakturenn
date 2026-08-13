@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After signing in you always arrive at the start page. If you were sent to
   sign in from somewhere else, that address is not remembered — a known
   limitation for now, recorded in the design so it is not mistaken for a fault.
+- **A refused form comes back filled in.** A password the policy rejects no
+  longer costs you the e-mail address and display name you typed alongside it,
+  on first-run setup, on sign-in and on the two administrator forms. Passwords
+  and codes are never carried back; the message names the actual rule that was
+  broken, in your language.
+- **A form submitted long after it was opened answers with the form again**, and
+  a sentence explaining that it had been open too long, instead of an error page.
 
 ### Security
 

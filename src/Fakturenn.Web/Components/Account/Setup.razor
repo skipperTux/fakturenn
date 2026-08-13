@@ -20,18 +20,15 @@ else
         @Localizer["Setup_Explanation"]
     </MudText>
 
-    @* Error is produced by POST /account/setup, which builds it from Identity's own
-       validation descriptions -- localized by LocalizedIdentityErrorDescriber, so what
-       arrives here is already in the request's language. *@
-    @if (Error is not null)
-    {
-        <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="setup-error">@Error</MudAlert>
-    }
+    @* No Message, so the value is shown as it arrives: POST /account/setup builds it from
+       Identity's own validation descriptions, localized by LocalizedIdentityErrorDescriber,
+       and "Passwords must be at least 12 characters" is the whole point of showing it. *@
+    <FormError Error="@Error" TestId="setup-error" />
 
     <form method="post" action="/account/setup" data-testid="setup-form">
         <AntiforgeryToken />
-        <MudTextField T="string" Label="@Localizer["Setup_Email"]" InputType="InputType.Email" name="email" Required="true" data-testid="setup-email" />
-        <MudTextField T="string" Label="@Localizer["Setup_DisplayName"]" name="displayName" Required="true" data-testid="setup-display-name" />
+        <MudTextField T="string" Label="@Localizer["Setup_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" data-testid="setup-email" />
+        <MudTextField T="string" Label="@Localizer["Setup_DisplayName"]" name="displayName" Value="@DisplayName" Required="true" data-testid="setup-display-name" />
         <MudTextField T="string" Label="@Localizer["Setup_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="setup-password" />
         <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="setup-submit">
             @Localizer["Setup_Submit"]
@@ -44,6 +41,16 @@ else
 
     [SupplyParameterFromQuery(Name = "error")]
     private string? Error { get; set; }
+
+    // Whatever the rejected post carried back. A refused password used to cost the operator
+    // both other fields as well, on the one form in the application they meet before they
+    // have an account to sign in with. The password is deliberately absent -- AccountForms
+    // carries an allowlist, and no credential is on it.
+    [SupplyParameterFromQuery(Name = "email")]
+    private string? Email { get; set; }
+
+    [SupplyParameterFromQuery(Name = "displayName")]
+    private string? DisplayName { get; set; }
 
     protected override async Task OnInitializedAsync()
     {

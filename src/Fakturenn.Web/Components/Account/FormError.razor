@@ -1,0 +1,50 @@
+@inject IStringLocalizer<SharedResource> Localizer
+
+@* The one place that turns a form's ?error= query value into a sentence.
+
+   Seven forms redirect to a page with ?error=, and each page used to decide for itself what
+   to show. That was fine while every value came from the form's own handler -- but
+   AntiforgeryFailureMiddleware now redirects to any of those pages with
+   AccountForms.ExpiredError, and a page that ignores the value and prints its own fixed
+   sentence would tell a user whose form merely went stale that their password was wrong.
+   The sign-in page did exactly that.
+
+   The mapping is here rather than repeated seven times so that adding a sentinel is one
+   edit, and so that the one page whose wording must never vary -- sign-in, where naming
+   which half of the credential failed would be an account oracle -- cannot drift. *@
+@if (Text is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="@TestId">@Text</MudAlert>
+}
+
+@code {
+    /// <summary>The raw <c>?error=</c> value, or null when the page was not redirected to.</summary>
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>
+    /// What to show for any value other than the expired sentinel.
+    /// <para>
+    /// Null means "show the value itself", which is what the pages carrying Identity's own
+    /// localized validation descriptions want — <c>/setup</c>, <c>/account/change-password</c>
+    /// and <c>/admin/users</c> all render the real reason a password or an address was
+    /// refused. A non-null value is a fixed sentence the form supplies instead, which is what
+    /// the credential forms want: the value they redirect with is a sentinel, never text, so
+    /// nothing a user typed into a password or a code field can reach the page through it.
+    /// </para>
+    /// </summary>
+    [Parameter]
+    public string? Message { get; set; }
+
+    /// <summary>The <c>data-testid</c> the page's own tests look for.</summary>
+    [Parameter]
+    [EditorRequired]
+    public string TestId { get; set; } = string.Empty;
+
+    private string? Text => Error switch
+    {
+        null => null,
+        AccountForms.ExpiredError => Localizer["Account_Error_FormExpired"],
+        _ => Message ?? Error,
+    };
+}

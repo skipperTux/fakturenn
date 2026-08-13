@@ -8,10 +8,7 @@
 <MudText Typo="Typo.h4" GutterBottom="true" data-testid="recovery-login-title">@Localizer["Account_RecoveryLogin_Title"]</MudText>
 <MudText Typo="Typo.body2" Class="mb-4">@Localizer["Account_RecoveryLogin_Explanation"]</MudText>
 
-@if (Error is not null)
-{
-    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="recovery-error">@Localizer["Account_RecoveryLogin_InvalidCode"]</MudAlert>
-}
+<FormError Error="@Error" Message="@Localizer["Account_RecoveryLogin_InvalidCode"]" TestId="recovery-error" />
 
 <form method="post" action="/account/login-recovery/submit" data-testid="recovery-form">
     <AntiforgeryToken />

@@ -11,18 +11,14 @@
 
 <MudText Typo="Typo.h4" GutterBottom="true" data-testid="login-title">@Localizer["Account_Login_Title"]</MudText>
 
-@if (Error is not null)
-{
-    @* One message for both an unknown account and a wrong password. Naming which one
-       failed would make this page an account oracle. *@
-    <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="login-error">
-        @Localizer["Account_Login_InvalidCredentials"]
-    </MudAlert>
-}
+@* One message for both an unknown account and a wrong password. Naming which one failed
+   would make this page an account oracle, so the handler redirects with a sentinel and the
+   sentence comes from here -- which also keeps arbitrary text out of a sign-in page. *@
+<FormError Error="@Error" Message="@Localizer["Account_Login_InvalidCredentials"]" TestId="login-error" />
 
 <form method="post" action="/account/login/submit" data-testid="login-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="@Localizer["Account_Login_Email"]" InputType="InputType.Email" name="email" Required="true" data-testid="login-email" />
+    <MudTextField T="string" Label="@Localizer["Account_Login_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" data-testid="login-email" />
     <MudTextField T="string" Label="@Localizer["Account_Login_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="login-password" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="login-submit">
         @Localizer["Account_Login_Submit"]
@@ -32,6 +28,13 @@
 @code {
     [SupplyParameterFromQuery(Name = "error")]
     private string? Error { get; set; }
+
+    // The address the refused attempt was made with, so only the password is retyped. It is
+    // not an oracle: the caller typed it, the message above is the same sentence whatever
+    // failed, and an address that does not exist comes back looking exactly like one that
+    // does.
+    [SupplyParameterFromQuery(Name = "email")]
+    private string? Email { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
