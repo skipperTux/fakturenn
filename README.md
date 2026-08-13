@@ -41,7 +41,7 @@ must be built locally first:
     docker compose up --detach
     docker compose --profile migrate run --rm migrate
 
-The application listens on http://localhost:8080. See [CLAUDE.md](CLAUDE.md)
+The application listens on http://localhost:8080. See [CLAUDE.md](.claude/CLAUDE.md)
 for the full command reference, including `docker compose down --volumes`.
 
 ## Development
@@ -50,7 +50,7 @@ Requires the .NET 10 SDK. `dotnet build` and the unit/architecture/compliance
 suites (`dotnet test --project tests/Fakturenn.UnitTests`, etc.) need nothing
 else. The full suite also needs Docker (integration tests, Testcontainers
 PostgreSQL) and a local Chromium install (UI tests, Playwright) — see
-[CLAUDE.md](CLAUDE.md) for the exact commands and per-suite test counts.
+[CLAUDE.md](.claude/CLAUDE.md) for the exact commands and per-suite test counts.
 
 ## Documentation
 
@@ -58,7 +58,7 @@ Start at [docs/README.md](docs/README.md).
 
 ## Contributing
 
-Read [CLAUDE.md](CLAUDE.md) for the architecture invariants and the Definition
+Read [CLAUDE.md](.claude/CLAUDE.md) for the architecture invariants and the Definition
 of Done, then [docs/planning/PLAN-v0.1.md](docs/planning/PLAN-v0.1.md).
 
 ## Licence
