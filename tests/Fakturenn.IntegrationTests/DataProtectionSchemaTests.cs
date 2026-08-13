@@ -8,9 +8,11 @@ using Npgsql;
 namespace Fakturenn.IntegrationTests;
 
 /// <summary>
-/// The key ring's migration is not wired into <c>DatabaseMigrator</c> yet, so nothing
-/// else applies it. Without this test a broken key-ring schema would sit undetected
-/// until the host registration lands.
+/// The key ring's schema, asserted directly rather than through the application that
+/// depends on it. <c>Program.cs</c> passes a <c>DataProtectionDbContext</c> factory to
+/// <c>DatabaseMigrator.RunAsync</c>, so <c>--migrate</c> does apply this migration; what
+/// that does not tell anyone is <i>where</i> the table landed, and a ring in the wrong
+/// schema still works right up until something else owns the name.
 /// <para>
 /// The schema is asserted against <c>information_schema</c> rather than through EF
 /// alone: an EF round-trip passes just as happily when <c>HasDefaultSchema</c> has

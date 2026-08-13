@@ -39,9 +39,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full German and English user interface.** Every page this release adds, and
   the validation messages behind it, exist in both languages; the page follows
   the browser's `Accept-Language`.
+- **A sign-out control in the page header**, in both languages. The sign-out
+  endpoint existed but nothing in the interface used it, so a signed-in user had
+  no way to leave except by discarding the browser session.
+
+### Changed
+
+- **`/setup` sends you to the sign-in page** once the instance has an
+  administrator, instead of failing. Opening a bookmarked setup address after
+  installation now lands somewhere useful; it still cannot create a second
+  administrator.
+- After signing in you always arrive at the start page. If you were sent to
+  sign in from somewhere else, that address is not remembered — a known
+  limitation for now, recorded in the design so it is not mistaken for a fault.
 
 ### Security
 
+- **Every account form rejects a request that does not carry its own token.**
+  Without this, a page on another site could make your browser submit the
+  first-run setup form, a password change or an administrative action while you
+  were signed in. First-run setup is covered too.
+- **The two-factor enrolment page is closed once you have enrolled.** Any
+  signed-in session could otherwise reopen it, read the live authenticator
+  secret and regenerate the recovery codes — turning a stolen session into a
+  lasting second factor that changing the password would not undo.
 - **Authenticator secrets and recovery codes are encrypted at rest.**
   ASP.NET Core Identity stores both in plaintext by default; this release
   encrypts the column with a key from a Data Protection key ring held in the

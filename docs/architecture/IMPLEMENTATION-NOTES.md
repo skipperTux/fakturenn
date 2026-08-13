@@ -662,12 +662,20 @@ Task 13.
   into a redirect to `/account/denied` — as an **absolute** URL with a `ReturnUrl` query,
   unlike the handlers' own relative `Results.Redirect("/admin/users")`. Assert on the
   path, not on the raw `Location` string, or the assertion is about URL formatting.
-- **`AdministratorGuard` still has no caller.** `WouldRemoveLastAdministrator` is
-  unit-tested as a pure function and referenced by nothing but those tests. Task 13 is not
-  its caller and was never going to be: E02a has no path that removes a role or a
-  permission, so there is nothing for it to guard. Locking the last administrator is
-  *permitted* — that is why `--unlock-user` exists — so `set-lockout` must not call it
-  either. It becomes live when E02b adds role management.
+- **There is no last-administrator guard, and that is deliberate.** An
+  `AdministratorGuard.WouldRemoveLastAdministrator` existed through most of E02a,
+  unit-tested as a pure function and referenced by nothing but its own tests. It was
+  **deleted in the final review**, along with those tests: E02a has no path that removes
+  a role or a permission — roles are seeded by `--migrate` and edited by SQL — so the
+  guard had nothing to guard, and CLAUDE.md's YAGNI rule says a type only useful in a
+  later epic belongs in that epic. E02b adds role management and should reintroduce it
+  there, next to its caller. Note what the guard would *not* have covered even then:
+  locking the last administrator is **permitted**, which is why `--unlock-user` exists,
+  so `set-lockout` must not call it.
+- **`Role.IsSystemRole` is write-only in E02a.** `RoleSeeder` sets it; nothing in `src/`
+  reads it. It is a marker for E02b's role management, not enforcement, and any comment
+  describing it as a guard that "prevents" something is wrong — two such comments shipped
+  in E02a and were corrected in the final review.
 
 ## Operator recovery entrypoints
 

@@ -55,9 +55,13 @@
             <form method="post" action="/account/admin/set-lockout" class="d-inline">
                 <AntiforgeryToken />
                 <input type="hidden" name="email" value="@context.Email" />
-                @* Locking the last administrator is permitted. AdministratorGuard stops the
-                   user interface stripping the last administrator's permissions; nothing
-                   stops it locking them, which is exactly why the CLI has --unlock-user. *@
+                @* Locking the last administrator is permitted, and nothing here guards
+                   against it. Their permissions cannot be stripped either -- not because a
+                   guard refuses, but because E02a ships no way to remove a role or a
+                   permission at all: roles are seeded by --migrate and edited by SQL. The
+                   lock button is therefore the one action on this page that can lock an
+                   instance out of its own administration, which is exactly why the CLI has
+                   --unlock-user. E02b adds role management and the guard that goes with it. *@
                 <input type="hidden" name="locked" value="@(IsLocked(context) ? "false" : "true")" />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Size="Size.Small">
                     @(IsLocked(context) ? Localizer["Admin_Users_Unlock"] : Localizer["Admin_Users_Lock"])

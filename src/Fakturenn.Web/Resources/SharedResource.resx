@@ -348,6 +348,9 @@
   <data name="Identity_UserLockoutNotEnabled" xml:space="preserve">
     <value>Lockout is not enabled for this account.</value>
   </data>
+  <data name="Layout_SignOut" xml:space="preserve">
+    <value>Sign out</value>
+  </data>
   <data name="Setup_AlreadyConfigured" xml:space="preserve">
     <value>Already configured</value>
   </data>

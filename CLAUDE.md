@@ -155,8 +155,19 @@ not assume the branch is green in CI because it is green locally; the first
 push of `feat/e02a-identity-foundation` is the first time CI sees any of it.
 Two known local-only workarounds are the likeliest sources of a first-run
 surprise: `DOTNET_USE_POLLING_FILE_WATCHER=1` (an inotify limit on that one
-host — see `IMPLEMENTATION-NOTES.md`) and the browser-install command, which
-CI runs through `pwsh` and the dev host does not.
+host — see `IMPLEMENTATION-NOTES.md`; `ci.yml` now sets it on the `integration`
+and `ui` jobs as insurance, not because a runner is known to need it) and the
+browser-install command, which CI runs through `pwsh` and the dev host does not.
+
+**`ci.yml` ran three of the five in-process suites until the final E02a review.**
+`Fakturenn.Web.UnitTests` and `Fakturenn.Modules.Identity.UnitTests` were added
+to the solution by this branch and never added to the workflow, so they compiled
+in CI — catching a build break — while not one of their assertions ever ran.
+That silently disarmed `The_claims_principal_factory_is_the_permission_factory`,
+which exists precisely because a unit test over a class passes whether or not the
+class is registered. Both are in the `build-test` job now. **When a new test
+project is added, add it to `ci.yml` in the same change**; nothing fails if you
+forget.
 
 ## Commands
 
@@ -176,7 +187,7 @@ dotnet test
 # invites "something broke" against a baseline nobody updated. Take the current
 # numbers from the run you just did.
 dotnet test --project tests/Fakturenn.UnitTests                  # shared kernel and Invoices domain objects, fakes, the NSubstitute boundary
-dotnet test --project tests/Fakturenn.Modules.Identity.UnitTests # pure Identity logic: permission handler, enrolment-gate predicate, administrator guard
+dotnet test --project tests/Fakturenn.Modules.Identity.UnitTests # pure Identity logic: permission handler, policy provider, enrolment-gate predicate, permission-catalogue validation
 dotnet test --project tests/Fakturenn.Web.UnitTests              # host composition: forwarded-header parsing, DI registrations, the localization resource guards
 dotnet test --project tests/Fakturenn.ArchitectureTests          # the six architecture rules, plus pattern guards, anti-vacuity and loader-omission checks
 dotnet test --project tests/Fakturenn.IntegrationTests           # Testcontainers PostgreSQL and real hosts, needs Docker — see the polling note below

@@ -16,9 +16,16 @@ public sealed class Role : IAuditable
     public string? Description { get; set; }
 
     /// <summary>
-    /// A role the application itself depends on. System roles cannot be deleted and
-    /// cannot have their permissions removed, so an instance cannot be locked out of
-    /// its own administration through the user interface.
+    /// Marks a role the application itself depends on. <see cref="Persistence.RoleSeeder"/>
+    /// sets it and re-syncs those roles against the permission catalogue; operator-created
+    /// roles are never touched.
+    /// <para>
+    /// In E02a this is a marker and nothing more — <b>no code reads it</b>. It is not
+    /// enforcement, and describing it as a guard would be false: there is no path in this
+    /// epic that deletes a role or removes a permission, so nothing exists for it to
+    /// refuse. E02b introduces role management and is where the marker starts being
+    /// enforced.
+    /// </para>
     /// </summary>
     public bool IsSystemRole { get; set; }
 

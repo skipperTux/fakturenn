@@ -85,6 +85,30 @@ public sealed class IdentityJourneyTests(AuthenticatedWebAppFixture app) : IAsyn
     }
 
     [Fact]
+    public async Task A_signed_in_user_can_sign_out_from_the_layout()
+    {
+        // POST /account/logout existed from Task 13 with no caller in the user interface,
+        // so a signed-in user could not actually leave. This walks the control the layout
+        // now renders, and it is also the only test that proves the form carries an
+        // antiforgery token: Round A made every /account post bind IFormCollection, which
+        // makes the framework answer 400 to a token-less post. A form that renders and a
+        // form that works are different things, and only a real click tells them apart.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!);
+
+        await page.GotoAsync(app.Url("/"));
+        await page.GetByTestId("sign-out-submit").ClickAsync();
+
+        await AuthenticatedWebAppFixture.ArriveAtAsync(page, "/account/login", "login-form");
+
+        // Landing on the sign-in page is not proof the cookie is gone -- the redirect is
+        // issued whether or not SignOutAsync ran. An authorized page is.
+        IResponse? afterwards = await page.GotoAsync(app.Url("/admin/users"));
+
+        afterwards!.Url.Should().Contain(
+            "/account/login", "signing out must end the session, not just navigate away from it");
+    }
+
+    [Fact]
     public async Task The_setup_page_is_gone_once_a_user_exists()
     {
         await app.EnsureAdministratorAsync(_browser!);

@@ -75,9 +75,13 @@ public static class OperatorCommands
             ResetPassword => await ResetPasswordAsync(users, loggerFactory, email),
             ResetMfa => await ResetMfaAsync(users, loggerFactory, email),
 
-            // Exists because the IsSystemRole guard prevents stripping the last
-            // administrator's permissions but not LOCKING them. Without an unlock path
-            // the guard protects the wrong thing.
+            // Exists because locking the last administrator is PERMITTED and nothing in
+            // E02a can undo it from the web interface. There is no last-administrator
+            // guard in this epic and no need for one: no page and no endpoint removes a
+            // role or a permission, so the permissions of the last administrator cannot
+            // be stripped in the first place. Their lock state can. Without this
+            // entrypoint an administrator who locks themselves out — or is locked by
+            // another administrator — has no route back at all.
             UnlockUser => await UnlockUserAsync(users, loggerFactory, email),
             ListUsers => await ListUsersAsync(db),
             _ => null,

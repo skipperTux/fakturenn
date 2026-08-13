@@ -348,6 +348,9 @@
   <data name="Identity_UserLockoutNotEnabled" xml:space="preserve">
     <value>Für dieses Konto ist die Sperrung nicht aktiviert.</value>
   </data>
+  <data name="Layout_SignOut" xml:space="preserve">
+    <value>Abmelden</value>
+  </data>
   <data name="Setup_AlreadyConfigured" xml:space="preserve">
     <value>Bereits eingerichtet</value>
   </data>

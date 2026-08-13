@@ -18,6 +18,18 @@ Each entry states what it is, why it was deferred, and where it would land. An e
 
 **Project context.** `CLAUDE.md` states a preference for IPv6 over IPv4 and for handling both families in anything address-related. This is the outbound half of honouring that.
 
+## TOTP enrolment: a QR code beside the manual key
+
+**Lands in:** E02b, the second identity slice. It is the next epic that opens the identity pages, and the enrolment page is the only file this touches — carrying it further means a second reader meeting the same gap and re-deriving the same reasoning. It is explicitly *not* E14: the other E02a deferrals point at E14 because they need SMTP, and a QR code needs nothing but the key the page already renders.
+
+**The gap.** `/account/enrol-totp` shows the base32 shared secret in four-character groups and nothing else. A user must type 32 characters into their authenticator app. Every app in common use accepts that, so this is a convenience gap on a screen each user sees once, not a compatibility gap — which is why E02a shipped without it rather than treating it as unfinished.
+
+**What it needs.** An `otpauth://totp/` URI built from the issuer, the account name and the key, rendered as a QR code. The URI is trivial; the renderer is the decision. A QR library is a new dependency on a page that displays a live second-factor secret, so it has to be one worth trusting and it must render locally — the "no external asset CDN, ever" ruling in `IMPLEMENTATION-NOTES.md` rules out any image service, and pointing a third party at an `otpauth://` URI would hand them the secret regardless.
+
+**Constraints it must not break.** The page's response is already `no-cache, no-store` because it carries the secret, and the QR image must be inline (a `data:` URI) rather than a second request, or the secret gets its own cacheable URL. The Content-Security-Policy test is the check that an inline image source is actually permitted.
+
+**Why not in E02a.** `CLAUDE.md`'s YAGNI rule, applied honestly: manual entry works for every user today, and the alternative was a new dependency in the sign-in path for one screen. See section 8 of `docs/superpowers/specs/2026-08-10-e02a-identity-foundation-design.md`.
+
 ## Password entropy: warn, never meter
 
 **Lands in:** the `IPasswordValidator<ApplicationUser>` seam established in E02a — one class, no schema change.
