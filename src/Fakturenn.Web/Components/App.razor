@@ -1,5 +1,12 @@
+@using System.Globalization
 <!DOCTYPE html>
-<html lang="en">
+@* Follows the culture UseRequestLocalization resolved for this request, not a fixed "en".
+   German content served under lang="en" is read out by a screen reader with English
+   phonetics, offered for translation into the language it is already in, and hyphenated
+   by the wrong rules. TwoLetterISOLanguageName rather than Name because the supported
+   cultures are the neutral "en" and "de"; a request for de-AT is resolved to "de" before
+   this renders. *@
+<html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName">
 
 <head>
     <meta charset="utf-8" />

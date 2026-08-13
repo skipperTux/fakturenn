@@ -28,6 +28,11 @@
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Invoices.Contracts\Fakturenn.Modules.Invoices.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Web\Fakturenn.Web.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Identity.Contracts\Fakturenn.Modules.Identity.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Logging\Fakturenn.Infrastructure.Logging.csproj" />
   </ItemGroup>
 
 </Project>

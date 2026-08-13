@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sign-in with a mandatory second factor.** An account is reached with a
+  password and a TOTP code from an authenticator app. There is no way to
+  configure the second factor away, and no account can use the application
+  before enrolling one.
+- **First-run setup.** A new installation serves a one-time `/setup` page that
+  creates the first administrator. It closes permanently once any user exists,
+  and exactly one administrator is created even if several people submit the
+  form at the same moment.
+- **Ten single-use recovery codes**, shown once at enrolment, for the case
+  where the authenticator device is lost. A redeemed code is spent.
+- **User administration** at `/admin/users` for accounts holding the
+  `users.manage` permission: create an account, reset a password, clear
+  somebody's second factor, and lock or unlock an account. Locking a user ends
+  the session they are currently holding rather than waiting for it to expire.
+- **Accounts created or reset by an administrator must choose their own
+  password** at next sign-in, so an administrator-chosen password is never a
+  standing credential.
+- **Automatic lockout** after repeated failed sign-in attempts, and per-account
+  rate limiting on every account endpoint.
+- **Operator recovery from the command line** — `--create-admin`,
+  `--reset-password`, `--reset-mfa`, `--unlock-user` and `--list-users` — for
+  the case where nobody can sign in any more. Passwords are read from standard
+  input, never from the command line. See `docs/operations/DEPLOYMENT-BASELINE.md`.
+- **An authentication event log** under the `Fakturenn.Auth` category: twenty
+  named events covering every sign-in, second-factor, recovery-code and
+  administrative outcome, suitable for alerting. No event carries a password,
+  code, key or token.
+- **Full German and English user interface.** Every page this release adds, and
+  the validation messages behind it, exist in both languages; the page follows
+  the browser's `Accept-Language`.
+- **A sign-out control in the page header**, in both languages. The sign-out
+  endpoint existed but nothing in the interface used it, so a signed-in user had
+  no way to leave except by discarding the browser session.
+
+### Changed
+
+- **`/setup` sends you to the sign-in page** once the instance has an
+  administrator, instead of failing. Opening a bookmarked setup address after
+  installation now lands somewhere useful; it still cannot create a second
+  administrator.
+- After signing in you always arrive at the start page. If you were sent to
+  sign in from somewhere else, that address is not remembered — a known
+  limitation for now, recorded in the design so it is not mistaken for a fault.
+- **A refused form comes back filled in.** A password the policy rejects no
+  longer costs you the e-mail address and display name you typed alongside it,
+  on first-run setup, on sign-in and on the two administrator forms. Passwords
+  and codes are never carried back; the message names the actual rule that was
+  broken, in your language.
+- **A form submitted long after it was opened answers with the form again**, and
+  a sentence explaining that it had been open too long, instead of an error page.
+
+### Security
+
+- **Every account form rejects a request that does not carry its own token.**
+  Without this, a page on another site could make your browser submit the
+  first-run setup form, a password change or an administrative action while you
+  were signed in. First-run setup is covered too.
+- **The two-factor enrolment page is closed once you have enrolled.** Any
+  signed-in session could otherwise reopen it, read the live authenticator
+  secret and regenerate the recovery codes — turning a stolen session into a
+  lasting second factor that changing the password would not undo.
+- **Authenticator secrets and recovery codes are encrypted at rest.**
+  ASP.NET Core Identity stores both in plaintext by default; this release
+  encrypts the column with a key from a Data Protection key ring held in the
+  same database, so a database backup captures ciphertext and key together.
+  **Restoring one without the other permanently destroys every enrolled
+  authenticator and recovery code** — see the key ring section of
+  `docs/operations/DEPLOYMENT-BASELINE.md` before planning a restore.
+- Sign-in answers identically for an unknown address and a wrong password, and
+  the log does not distinguish them either, so neither can be used to discover
+  which addresses have accounts.
+- A Content-Security-Policy is served on every response and is verified in a
+  real browser rather than by checking that the header exists.
+- `--migrate` refuses to complete if the database grants a permission this
+  version does not define, so a stale grant blocks the deployment instead of
+  silently granting nothing.
+
 ## [0.1.0-alpha.1]
 
 ### Added

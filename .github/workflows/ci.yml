@@ -43,10 +43,30 @@ jobs:
   build-test:
     name: Build and unit tests
     runs-on: ubuntu-latest
-    # Restore + Release build + three in-process suites (unit 26, architecture 8,
-    # compliance 10). All three run in low single-digit seconds once built; the
-    # budget is dominated by a cold restore and build on a fresh runner.
+    # Restore + Release build + the five in-process suites below. No test counts are
+    # stated here on purpose: they moved on almost every task of E02a, and CLAUDE.md
+    # dropped its own counts for the same reason -- a stale number invites "something
+    # broke" against a baseline nobody updated. Take the numbers from the run.
+    #
+    # Every suite that needs neither Docker nor a browser belongs in this list. Two of
+    # them were missing until this was written, and a compiling-but-never-executed suite
+    # is the worst of both worlds: the build break is caught, so it looks covered, while
+    # not one assertion ever runs. That silently disarmed
+    # The_claims_principal_factory_is_the_permission_factory, the Web.UnitTests guard
+    # written specifically because a unit test over a class passes whether or not the
+    # class is registered.
+    #
+    # All five run in low single-digit seconds once built; the budget is dominated by a
+    # cold restore and build on a fresh runner.
     timeout-minutes: 15
+    env:
+      # Insurance, not a known requirement -- same as the integration and ui jobs.
+      # Fakturenn.Web.UnitTests builds real hosts through FakturennWebApplication.Build,
+      # and every host adds a configuration file watcher. A bare runner has no desktop
+      # session competing for inotify instances, so the default limit is very likely
+      # enough; the reason to set it anyway is that going over shows up as whole classes
+      # failing inside Build with an IOException that looks nothing like a test failure.
+      DOTNET_USE_POLLING_FILE_WATCHER: 1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -58,6 +78,10 @@ jobs:
         run: dotnet build --configuration Release --no-restore
       - name: Unit tests
         run: dotnet test --project tests/Fakturenn.UnitTests --configuration Release --no-build
+      - name: Identity module unit tests
+        run: dotnet test --project tests/Fakturenn.Modules.Identity.UnitTests --configuration Release --no-build
+      - name: Web host unit tests
+        run: dotnet test --project tests/Fakturenn.Web.UnitTests --configuration Release --no-build
       - name: Architecture tests
         run: dotnet test --project tests/Fakturenn.ArchitectureTests --configuration Release --no-build
       - name: Compliance tests
@@ -66,10 +90,27 @@ jobs:
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
-    # Testcontainers starts three postgres:17-alpine containers across the suite.
-    # The suite itself runs in ~25s once images are warm; the budget covers a cold
-    # image pull plus restore/build on a fresh runner.
+    # Testcontainers starts TWELVE postgres:17-alpine containers across the suite, not
+    # three: one per each of the ten classes taking IClassFixture<PostgresFixture>, one
+    # for the RealHost collection fixture that every host-driving class shares, and one
+    # more that DatabaseMigratorTests starts itself to migrate a second clean database.
+    # xUnit runs the class-fixture classes in parallel, so these overlap rather than
+    # running one after another: sampling `docker ps` once a second through a local run
+    # measured a PEAK OF ELEVEN alive at once. That peak, not the total, is what has to
+    # fit the runner's memory -- eleven PostgreSQL servers is the number to check against
+    # if this job ever starts failing for reasons that are not test failures.
+    # The whole suite takes about 45s locally once the image is warm; the budget covers a
+    # cold image pull plus restore and build on a fresh runner.
     timeout-minutes: 20
+    env:
+      # Insurance, NOT a known requirement here. The dev host needs it because a desktop
+      # session has already spent most of fs.inotify.max_user_instances and each host
+      # this suite builds adds a configuration file watcher; a bare runner has no desktop
+      # competing for instances, so the default 128 is probably ample for the hosts above.
+      # It is set anyway because the failure mode is unrecognisable: whole classes fail
+      # inside FakturennWebApplication.Build with an inotify error that looks nothing like
+      # a test failure. Polling costs a little CPU and removes the question.
+      DOTNET_USE_POLLING_FILE_WATCHER: 1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -81,9 +122,17 @@ jobs:
   ui:
     name: UI tests
     runs-on: ubuntu-latest
-    # The suite itself is a few seconds; the budget mostly covers playwright.ps1
-    # downloading + installing Chromium plus its OS dependencies on a bare runner.
+    # The suite takes about 93 seconds, not "a few" -- it drives a real browser through
+    # first-run setup, TOTP enrolment and several sign-ins. It also needs DOCKER now:
+    # AuthenticatedWebAppFixture starts its own postgres:17-alpine container and hosts the
+    # real application against it, so this job is no longer browser-only. The rest of the
+    # budget covers playwright.ps1 downloading and installing Chromium plus its OS
+    # dependencies on a bare runner.
     timeout-minutes: 15
+    env:
+      # Same insurance as the integration job, and for the same reason: this suite builds
+      # a host too. See the comment there.
+      DOTNET_USE_POLLING_FILE_WATCHER: 1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6

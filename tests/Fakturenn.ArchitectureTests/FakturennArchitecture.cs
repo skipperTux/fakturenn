@@ -23,6 +23,11 @@ public static class FakturennArchitecture
             typeof(Infrastructure.Storage.FilesystemBlobWriter).Assembly,
             typeof(Modules.Invoices.Contracts.InvoiceId).Assembly,
             typeof(Modules.Invoices.InvoicesModule).Assembly,
+            typeof(Modules.Identity.Contracts.UserId).Assembly,
+            typeof(Modules.Identity.IdentityModule).Assembly,
+            typeof(Infrastructure.Persistence.AuditSaveChangesInterceptor).Assembly,
+            typeof(Infrastructure.DataProtection.DataProtectionDbContext).Assembly,
+            typeof(Infrastructure.Logging.MessageFieldJsonFormatter).Assembly,
             typeof(Web.FakturennWebApplication).Assembly)
         .Build();
 

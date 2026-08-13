@@ -117,7 +117,265 @@
   <resheader name="writer">
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
+  <data name="Account_ChangePassword_Current" xml:space="preserve">
+    <value>Aktuelles Passwort</value>
+  </data>
+  <data name="Account_ChangePassword_Explanation" xml:space="preserve">
+    <value>Ihr aktuelles Passwort wurde von jemand anderem vergeben. Wählen Sie ein Passwort, das nur Sie kennen.</value>
+  </data>
+  <data name="Account_ChangePassword_New" xml:space="preserve">
+    <value>Neues Passwort</value>
+  </data>
+  <data name="Account_ChangePassword_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Passwort ändern</value>
+  </data>
+  <data name="Account_ChangePassword_Submit" xml:space="preserve">
+    <value>Passwort ändern</value>
+  </data>
+  <data name="Account_ChangePassword_Title" xml:space="preserve">
+    <value>Passwort ändern</value>
+  </data>
+  <data name="Account_Denied_Message" xml:space="preserve">
+    <value>Sie haben keine Berechtigung, diese Seite aufzurufen.</value>
+  </data>
+  <data name="Account_Denied_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Zugriff verweigert</value>
+  </data>
+  <data name="Account_EnrolTotp_Code" xml:space="preserve">
+    <value>Code aus der Authenticator-App</value>
+  </data>
+  <data name="Account_EnrolTotp_Explanation" xml:space="preserve">
+    <value>Zwei-Faktor-Authentifizierung ist verpflichtend. Übernehmen Sie den folgenden Schlüssel in eine Authenticator-App und geben Sie dann den sechsstelligen Code ein, den sie anzeigt.</value>
+  </data>
+  <data name="Account_EnrolTotp_InvalidCode" xml:space="preserve">
+    <value>Dieser Code wurde nicht akzeptiert.</value>
+  </data>
+  <data name="Account_EnrolTotp_ManualEntryKey" xml:space="preserve">
+    <value>Schlüssel zur manuellen Eingabe</value>
+  </data>
+  <data name="Account_EnrolTotp_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Zwei-Faktor-Authentifizierung einrichten</value>
+  </data>
+  <data name="Account_EnrolTotp_Submit" xml:space="preserve">
+    <value>Bestätigen und aktivieren</value>
+  </data>
+  <data name="Account_EnrolTotp_Title" xml:space="preserve">
+    <value>Zwei-Faktor-Authentifizierung einrichten</value>
+  </data>
+  <data name="Account_Error_FormExpired" xml:space="preserve">
+    <value>Das Formular konnte nicht gesendet werden, weil es zu lange geöffnet war oder die zugehörige Sitzung beendet wurde. Bitte prüfen Sie die Angaben und versuchen Sie es erneut.</value>
+  </data>
+  <data name="Account_Error_NoSuchAccount" xml:space="preserve">
+    <value>Es existiert kein Konto mit dieser E-Mail-Adresse.</value>
+  </data>
+  <data name="Account_Lockout_Message" xml:space="preserve">
+    <value>Dieses Konto ist nach zu vielen Fehlversuchen vorübergehend gesperrt. Versuchen Sie es später noch einmal.</value>
+  </data>
+  <data name="Account_Lockout_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Konto gesperrt</value>
+  </data>
+  <data name="Account_Login_Email" xml:space="preserve">
+    <value>E-Mail</value>
+  </data>
+  <data name="Account_Login_InvalidCredentials" xml:space="preserve">
+    <value>Diese Kombination aus E-Mail-Adresse und Passwort wurde nicht erkannt.</value>
+  </data>
+  <data name="Account_Login_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Anmelden</value>
+  </data>
+  <data name="Account_Login_Password" xml:space="preserve">
+    <value>Passwort</value>
+  </data>
+  <data name="Account_Login_Submit" xml:space="preserve">
+    <value>Anmelden</value>
+  </data>
+  <data name="Account_Login_Title" xml:space="preserve">
+    <value>Anmelden</value>
+  </data>
+  <data name="Account_RecoveryCodes_Continue" xml:space="preserve">
+    <value>Weiter</value>
+  </data>
+  <data name="Account_RecoveryCodes_Empty" xml:space="preserve">
+    <value>Diese Codes werden nur einmal angezeigt. Wenn Sie sie nicht mehr haben, kann ein Administrator Ihre Zwei-Faktor-Einrichtung zurücksetzen; bei der erneuten Einrichtung erhalten Sie einen neuen Satz.</value>
+  </data>
+  <data name="Account_RecoveryCodes_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Wiederherstellungscodes</value>
+  </data>
+  <data name="Account_RecoveryCodes_StoreNow" xml:space="preserve">
+    <value>Sichern Sie diese Codes jetzt. Sie werden nur einmal angezeigt und lassen sich nicht erneut aufrufen. Jeder Code funktioniert genau einmal.</value>
+  </data>
+  <data name="Account_RecoveryCodes_Title" xml:space="preserve">
+    <value>Wiederherstellungscodes</value>
+  </data>
+  <data name="Account_RecoveryLogin_Code" xml:space="preserve">
+    <value>Wiederherstellungscode</value>
+  </data>
+  <data name="Account_RecoveryLogin_Explanation" xml:space="preserve">
+    <value>Jeder Wiederherstellungscode lässt sich nur einmal verwenden.</value>
+  </data>
+  <data name="Account_RecoveryLogin_InvalidCode" xml:space="preserve">
+    <value>Dieser Code wurde nicht akzeptiert.</value>
+  </data>
+  <data name="Account_RecoveryLogin_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Wiederherstellungscode</value>
+  </data>
+  <data name="Account_RecoveryLogin_Submit" xml:space="preserve">
+    <value>Anmelden</value>
+  </data>
+  <data name="Account_RecoveryLogin_Title" xml:space="preserve">
+    <value>Mit einem Wiederherstellungscode anmelden</value>
+  </data>
+  <data name="Account_TwoFactor_Code" xml:space="preserve">
+    <value>Code aus der Authenticator-App</value>
+  </data>
+  <data name="Account_TwoFactor_InvalidCode" xml:space="preserve">
+    <value>Dieser Code wurde nicht akzeptiert.</value>
+  </data>
+  <data name="Account_TwoFactor_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Zwei-Faktor-Authentifizierung</value>
+  </data>
+  <data name="Account_TwoFactor_Submit" xml:space="preserve">
+    <value>Bestätigen</value>
+  </data>
+  <data name="Account_TwoFactor_Title" xml:space="preserve">
+    <value>Zwei-Faktor-Authentifizierung</value>
+  </data>
+  <data name="Account_TwoFactor_UseRecoveryCode" xml:space="preserve">
+    <value>Stattdessen einen Wiederherstellungscode verwenden</value>
+  </data>
+  <data name="Admin_Users_ClearTwoFactor" xml:space="preserve">
+    <value>Zwei-Faktor zurücksetzen</value>
+  </data>
+  <data name="Admin_Users_Column_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="Admin_Users_Column_DisplayName" xml:space="preserve">
+    <value>Anzeigename</value>
+  </data>
+  <data name="Admin_Users_Column_Email" xml:space="preserve">
+    <value>E-Mail</value>
+  </data>
+  <data name="Admin_Users_Column_LockedUntil" xml:space="preserve">
+    <value>Gesperrt bis</value>
+  </data>
+  <data name="Admin_Users_Column_TwoFactor" xml:space="preserve">
+    <value>Zwei-Faktor</value>
+  </data>
+  <data name="Admin_Users_CreateDisplayName" xml:space="preserve">
+    <value>Anzeigename</value>
+  </data>
+  <data name="Admin_Users_CreateEmail" xml:space="preserve">
+    <value>E-Mail</value>
+  </data>
+  <data name="Admin_Users_CreateInitialPassword" xml:space="preserve">
+    <value>Erstes Passwort</value>
+  </data>
+  <data name="Admin_Users_CreateSubmit" xml:space="preserve">
+    <value>Benutzer anlegen</value>
+  </data>
+  <data name="Admin_Users_CreateTitle" xml:space="preserve">
+    <value>Benutzer anlegen</value>
+  </data>
+  <data name="Admin_Users_Lock" xml:space="preserve">
+    <value>Sperren</value>
+  </data>
+  <data name="Admin_Users_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Benutzer</value>
+  </data>
+  <data name="Admin_Users_ResetEmail" xml:space="preserve">
+    <value>E-Mail</value>
+  </data>
+  <data name="Admin_Users_ResetExplanation" xml:space="preserve">
+    <value>Das Konto wird entsperrt und der Benutzer muss bei der nächsten Anmeldung ein eigenes Passwort wählen.</value>
+  </data>
+  <data name="Admin_Users_ResetNewPassword" xml:space="preserve">
+    <value>Neues Passwort</value>
+  </data>
+  <data name="Admin_Users_ResetSubmit" xml:space="preserve">
+    <value>Passwort zurücksetzen</value>
+  </data>
+  <data name="Admin_Users_ResetTitle" xml:space="preserve">
+    <value>Passwort zurücksetzen</value>
+  </data>
+  <data name="Admin_Users_Title" xml:space="preserve">
+    <value>Benutzer</value>
+  </data>
+  <data name="Admin_Users_TwoFactorEnrolled" xml:space="preserve">
+    <value>eingerichtet</value>
+  </data>
+  <data name="Admin_Users_TwoFactorPending" xml:space="preserve">
+    <value>ausstehend</value>
+  </data>
+  <data name="Admin_Users_Unlock" xml:space="preserve">
+    <value>Entsperren</value>
+  </data>
   <data name="AppTagline" xml:space="preserve">
     <value>Ihre Rechnungen, Ihre Identität, Ihre Infrastruktur.</value>
+  </data>
+  <data name="Identity_DuplicateEmail" xml:space="preserve">
+    <value>Es existiert bereits ein Konto mit der E-Mail-Adresse {0}.</value>
+  </data>
+  <data name="Identity_DuplicateUserName" xml:space="preserve">
+    <value>Es existiert bereits ein Konto mit der E-Mail-Adresse {0}.</value>
+  </data>
+  <data name="Identity_InvalidEmail" xml:space="preserve">
+    <value>{0} ist keine gültige E-Mail-Adresse.</value>
+  </data>
+  <data name="Identity_InvalidToken" xml:space="preserve">
+    <value>Dieser Code ist nicht mehr gültig. Bitte versuchen Sie es erneut.</value>
+  </data>
+  <data name="Identity_InvalidUserName" xml:space="preserve">
+    <value>Diese E-Mail-Adresse kann nicht verwendet werden. Verwenden Sie nur Buchstaben, Ziffern und die Zeichen - . _ @ +.</value>
+  </data>
+  <data name="Identity_PasswordMismatch" xml:space="preserve">
+    <value>Dieses Passwort ist nicht korrekt.</value>
+  </data>
+  <data name="Identity_PasswordRequiresDigit" xml:space="preserve">
+    <value>Passwörter müssen mindestens eine Ziffer enthalten.</value>
+  </data>
+  <data name="Identity_PasswordRequiresLower" xml:space="preserve">
+    <value>Passwörter müssen mindestens einen Kleinbuchstaben enthalten.</value>
+  </data>
+  <data name="Identity_PasswordRequiresNonAlphanumeric" xml:space="preserve">
+    <value>Passwörter müssen mindestens ein Zeichen enthalten, das weder Buchstabe noch Ziffer ist.</value>
+  </data>
+  <data name="Identity_PasswordRequiresUniqueChars" xml:space="preserve">
+    <value>Passwörter müssen mindestens {0} unterschiedliche Zeichen verwenden.</value>
+  </data>
+  <data name="Identity_PasswordRequiresUpper" xml:space="preserve">
+    <value>Passwörter müssen mindestens einen Großbuchstaben enthalten.</value>
+  </data>
+  <data name="Identity_PasswordTooShort" xml:space="preserve">
+    <value>Passwörter müssen mindestens {0} Zeichen lang sein.</value>
+  </data>
+  <data name="Identity_UserLockoutNotEnabled" xml:space="preserve">
+    <value>Für dieses Konto ist die Sperrung nicht aktiviert.</value>
+  </data>
+  <data name="Layout_SignOut" xml:space="preserve">
+    <value>Abmelden</value>
+  </data>
+  <data name="Setup_AlreadyConfigured" xml:space="preserve">
+    <value>Bereits eingerichtet</value>
+  </data>
+  <data name="Setup_CreateAdministrator" xml:space="preserve">
+    <value>Ersten Administrator anlegen</value>
+  </data>
+  <data name="Setup_DisplayName" xml:space="preserve">
+    <value>Anzeigename</value>
+  </data>
+  <data name="Setup_Email" xml:space="preserve">
+    <value>E-Mail</value>
+  </data>
+  <data name="Setup_Explanation" xml:space="preserve">
+    <value>Diese Seite steht nur zur Verfügung, solange noch kein Konto vorhanden ist. Sobald der erste Administrator angelegt ist, verschwindet sie dauerhaft.</value>
+  </data>
+  <data name="Setup_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Einrichtung</value>
+  </data>
+  <data name="Setup_Password" xml:space="preserve">
+    <value>Passwort</value>
+  </data>
+  <data name="Setup_Submit" xml:space="preserve">
+    <value>Administrator anlegen</value>
   </data>
 </root>

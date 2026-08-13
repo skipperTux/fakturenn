@@ -22,8 +22,13 @@ public sealed class ModuleBoundaryTests
         assemblies.Should().Contain([
             "Fakturenn.SharedKernel",
             "Fakturenn.Infrastructure.Storage",
+            "Fakturenn.Infrastructure.Persistence",
+            "Fakturenn.Infrastructure.DataProtection",
+            "Fakturenn.Infrastructure.Logging",
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
+            "Fakturenn.Modules.Identity",
+            "Fakturenn.Modules.Identity.Contracts",
         ]);
 
         // The assembly list alone is not enough: a typo in any of FakturennArchitecture's regexes

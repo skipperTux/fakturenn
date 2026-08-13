@@ -1,4 +1,8 @@
 @inherits LayoutComponentBase
+@* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
+@using Microsoft.AspNetCore.Components.Forms
+@inject IHttpContextAccessor HttpContextAccessor
+@inject IStringLocalizer<SharedResource> Localizer
 
 <MudThemeProvider />
 <MudPopoverProvider />
@@ -7,6 +11,28 @@
 <MudLayout>
     <MudAppBar Elevation="1">
         <MudText Typo="Typo.h6">Fakturenn</MudText>
+        <MudSpacer />
+        @* Spec section 8: sign-out is "rendered in the layout when signed in". Every page
+           in this application is static SSR today, so the signed-in test is the request's
+           own principal rather than an AuthorizeView -- nothing registers a cascading
+           authentication state, and adding one to answer a yes/no question the request
+           already carries would be a registration with a single consumer.
+
+           A real form post, not a link: POST /account/logout is the only shape that can
+           carry an antiforgery token, and Round A made every /account post require one.
+           A GET link would also let any third-party page sign a user out by embedding an
+           image. IdentityJourneyTests.A_signed_in_user_can_sign_out_from_the_layout is
+           what proves the token actually arrives -- without it the endpoint answers 400
+           and the button looks broken. *@
+        @if (IsSignedIn)
+        {
+            <form method="post" action="/account/logout" data-testid="sign-out-form">
+                <AntiforgeryToken />
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit" data-testid="sign-out-submit">
+                    @Localizer["Layout_SignOut"]
+                </MudButton>
+            </form>
+        }
     </MudAppBar>
     <MudMainContent>
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-8">
@@ -14,3 +40,8 @@
         </MudContainer>
     </MudMainContent>
 </MudLayout>
+
+@code {
+    private bool IsSignedIn =>
+        HttpContextAccessor.HttpContext?.User.Identity?.IsAuthenticated == true;
+}

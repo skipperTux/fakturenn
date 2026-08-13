@@ -69,7 +69,11 @@ the build, not the review:
    assembly. This is what keeps E-Invoice-EU adapter types out of the domain.
 5. `Fakturenn.Modules.X` must not reference `Fakturenn.Modules.Y`. It may
    reference `Fakturenn.Modules.Y.Contracts`.
-6. No dependency cycles between `Fakturenn.Modules.*` assemblies.
+6. No dependency cycles between **namespace slices** under `Fakturenn.Modules.*`.
+   The rule is `Slices().Matching("Fakturenn.Modules.(*)")`, and `(*)` captures the
+   whole remaining namespace — so `Fakturenn.Modules.Identity.Authorization` and
+   `Fakturenn.Modules.Identity.Persistence` are two separate slices. It therefore
+   constrains namespaces *within* one module as well as across modules.
 
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
@@ -80,13 +84,22 @@ or `.Documents*` eventually appears, the rule does not newly switch on — it
 gets **narrower**, carving out an exemption for the one assembly now allowed
 to use the library.
 
-Rules 5 and 6 are the ones that are genuinely vacuous today: rule 5 compares
-`ModuleNameOf(origin) != ModuleNameOf(target)`, which cannot be satisfied
-while `Fakturenn.Modules.Invoices` is the only module — there is no second
-module to depend on. Rule 6 needs two modules to have a cycle between; one
-module means one slice, so there is nothing to cycle. Both become binding the
-moment a second `Fakturenn.Modules.*` assembly appears. Do not delete a rule
-because it currently matches nothing.
+Rules 5 and 6 are binding too. Rule 5 compares
+`ModuleNameOf(origin) != ModuleNameOf(target)`, which needs a second module to
+be satisfiable; `Fakturenn.Modules.Identity` supplied one in E02a Task 1, so it
+has constrained real code ever since. Rule 6 was **never** vacuous:
+`Fakturenn.Modules.Invoices` has carried three namespaces — and therefore three
+slices — since it existed.
+
+Rule 6 fired for the first time in E02a Task 8, on
+`Identity.Authorization` ↔ `Identity.Persistence`: the planned layout put the
+pure `PermissionCatalogValidator` under `Persistence/` while
+`PermissionClaimsPrincipalFactory`, which needs `IdentityDbContext`, sat under
+`Authorization/`. It was a real cycle, not a false positive, and it was resolved
+by moving the validator into `Authorization/` and the claims factory into
+`Persistence/` — leaving `Persistence → Authorization` in one direction only,
+with `Authorization` as the pure policy vocabulary. Do not delete a rule because
+it currently matches nothing.
 
 ## Design principles
 
@@ -122,11 +135,39 @@ Testcontainers for real infrastructure. Playwright for critical journeys.
 
 ## CI/CD status
 
-The three workflows under `.github/` (`ci.yml`, `codeql.yml`, `release.yml`)
-are syntactically valid and built from commands verified locally, but this
-repository has no remote yet, so **none of them has ever executed**. The first
-push is their first real run. Do not describe them as known-working, and do
-not assume a green run without watching the Actions tab for that push.
+The remote is `git@github.com:skipperTux/fakturenn.git`. Two of the three
+workflows under `.github/` have run there; one has not.
+
+- **`ci.yml`** — has run on `push` and on `pull_request`. Every run to date
+  succeeded.
+- **`codeql.yml`** — has run on `push`, on `pull_request` and on `schedule`.
+  Every run to date succeeded.
+- **`release.yml`** — **has never executed.** It triggers on a tag and no tag
+  exists yet. It is still unproven, including the multi-arch container publish
+  that has no local equivalent. Do not describe it as known-working.
+
+**The green history covers `main` only.** The most recent CI run was against
+`main` at `c861376`, which is the commit *before* the E02a identity foundation
+branched. Everything E02a added — the 200-odd extra tests, Testcontainers at
+this scale (the integration suite starts several PostgreSQL containers), and
+the Playwright journeys — has only ever run on one developer workstation. Do
+not assume the branch is green in CI because it is green locally; the first
+push of `feat/e02a-identity-foundation` is the first time CI sees any of it.
+Two known local-only workarounds are the likeliest sources of a first-run
+surprise: `DOTNET_USE_POLLING_FILE_WATCHER=1` (an inotify limit on that one
+host — see `IMPLEMENTATION-NOTES.md`; `ci.yml` now sets it on the `integration`
+and `ui` jobs as insurance, not because a runner is known to need it) and the
+browser-install command, which CI runs through `pwsh` and the dev host does not.
+
+**`ci.yml` ran three of the five in-process suites until the final E02a review.**
+`Fakturenn.Web.UnitTests` and `Fakturenn.Modules.Identity.UnitTests` were added
+to the solution by this branch and never added to the workflow, so they compiled
+in CI — catching a build break — while not one of their assertions ever ran.
+That silently disarmed `The_claims_principal_factory_is_the_permission_factory`,
+which exists precisely because a unit test over a class passes whether or not the
+class is registered. Both are in the `build-test` job now. **When a new test
+project is added, add it to `ci.yml` in the same change**; nothing fails if you
+forget.
 
 ## Commands
 
@@ -141,11 +182,23 @@ dotnet build --configuration Release
 dotnet test
 
 # One suite at a time — SDK 10.0.110 rejects a bare directory; use --project
-dotnet test --project tests/Fakturenn.UnitTests           # domain, fakes, NSubstitute boundary — 26 tests
-dotnet test --project tests/Fakturenn.ArchitectureTests   # the six architecture rules, plus pattern guards, anti-vacuity and loader-omission checks — 14 tests
-dotnet test --project tests/Fakturenn.IntegrationTests    # Testcontainers PostgreSQL, needs Docker — 6 tests
-dotnet test --project tests/Fakturenn.ComplianceTests     # golden-file XML comparer — 10 tests
-dotnet test --project tests/Fakturenn.UiTests             # Playwright, needs browsers installed — 4 tests
+# Seven test projects. No test counts are listed here on purpose: they moved on
+# almost every task of E02a and a stale number is worse than none, because it
+# invites "something broke" against a baseline nobody updated. Take the current
+# numbers from the run you just did.
+dotnet test --project tests/Fakturenn.UnitTests                  # shared kernel and Invoices domain objects, fakes, the NSubstitute boundary
+dotnet test --project tests/Fakturenn.Modules.Identity.UnitTests # pure Identity logic: permission handler, policy provider, enrolment-gate predicate, permission-catalogue validation
+dotnet test --project tests/Fakturenn.Web.UnitTests              # host composition: forwarded-header parsing, DI registrations, the localization resource guards
+dotnet test --project tests/Fakturenn.ArchitectureTests          # the six architecture rules, plus pattern guards, anti-vacuity and loader-omission checks
+dotnet test --project tests/Fakturenn.IntegrationTests           # Testcontainers PostgreSQL and real hosts, needs Docker — see the polling note below
+dotnet test --project tests/Fakturenn.ComplianceTests            # golden-file XML comparer
+dotnet test --project tests/Fakturenn.UiTests                    # Playwright, needs browsers installed
+
+# The integration suite needs this on this workstation. It builds many hosts, each
+# adding a configuration file watcher, and the desktop session has already spent
+# most of fs.inotify.max_user_instances — over the limit, whole classes fail for a
+# reason unrelated to them. See IMPLEMENTATION-NOTES.md, "Environment and SDK".
+DOTNET_USE_POLLING_FILE_WATCHER=1 dotnet test --project tests/Fakturenn.IntegrationTests
 
 # Formatting, checked in CI
 dotnet format --verify-no-changes
@@ -160,8 +213,22 @@ playwright -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install chromium
 # Run the app locally
 dotnet run --project src/Fakturenn.Web --urls http://127.0.0.1:5099
 
-# Apply migrations — never happens automatically
+# Apply migrations — never happens automatically. Also seeds the system roles and
+# refuses (exit 1) if the database stores a permission this version does not define.
 dotnet run --project src/Fakturenn.Web -- --migrate
+
+# Operator recovery entrypoints. They bypass authentication, the rate limiter, the
+# enrolment gate and every permission policy on purpose — they exist for the case
+# where those have locked the operator out — and are safe only because reaching them
+# needs a shell on the host. Never map one as an endpoint.
+# No flag takes a password as an argument: argv is visible in `ps` and lands in shell
+# history, so every password is read from standard input. Passing one positionally or
+# via --password exits 2 and changes nothing.
+dotnet run --project src/Fakturenn.Web -- --create-admin <email>    # first/replacement administrator; takes the same advisory lock as /account/setup
+dotnet run --project src/Fakturenn.Web -- --reset-password <email>  # also clears lockout and forces a change at next sign-in
+dotnet run --project src/Fakturenn.Web -- --reset-mfa <email>       # clears the authenticator and the recovery codes; forces re-enrolment
+dotnet run --project src/Fakturenn.Web -- --unlock-user <email>     # also rotates the security stamp, ending any session the account still holds
+dotnet run --project src/Fakturenn.Web -- --list-users              # five columns, no secrets: no authenticator key, recovery code or password hash
 
 # Add a migration to a module (the module owns its migrations)
 dotnet ef migrations add <Name> \
@@ -175,8 +242,8 @@ dotnet ef migrations add <Name> \
 # Reference deployment — pin a single RID locally; a multi-arch index needs a
 # containerd image store this host does not have (CONTAINER1020 without it).
 # The release workflow (release.yml) is the only place multi-arch is designed
-# to be exercised, via a registry push rather than a local load — see the note
-# on .github/ below, though: that workflow has never actually run.
+# to be exercised, via a registry push rather than a local load — see the CI/CD
+# status section above, though: that workflow has never actually run.
 dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
   -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
 docker compose up --detach
@@ -220,6 +287,10 @@ edit sites, not assumed:**
      `createMigrationContexts` array passed to `DatabaseMigrator.RunAsync`.
      `DatabaseMigrator.RunAsync` takes `IReadOnlyList<Func<DbContext>>`
      specifically so this is a one-line addition, not a signature change.
+     Position in the array does **not** matter: E02a Task 7C measured it by
+     migrating Identity before Data Protection against a clean database and
+     everything still applied. The current order is for readability. Do not
+     add a note claiming an ordering constraint that does not exist.
 3. `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`'s
    `The_architecture_contains_the_assemblies_the_rules_govern` hardcodes an
    assembly-name list, but asserts it with `.Should().Contain(...)`, not an
@@ -230,18 +301,29 @@ edit sites, not assumed:**
    directly needs its own `<ProjectReference>` — nothing adds this
    automatically. Today, for reference: `Fakturenn.UnitTests` references
    `Fakturenn.Modules.Invoices` and `.Contracts` for domain-object tests;
-   `Fakturenn.IntegrationTests` references `Fakturenn.Modules.Invoices` and
-   `Fakturenn.Web` for `DatabaseMigratorTests`/`PostgresFixture`.
-5. If the module gets its own test project, give it a local `.editorconfig`
+   `Fakturenn.Modules.Identity.UnitTests` covers that module's pure logic;
+   `Fakturenn.IntegrationTests` references `Fakturenn.Modules.Invoices`,
+   `Fakturenn.Modules.Identity` and `Fakturenn.Web`.
+5. If the module registers anything in DI that the host must resolve to a
+   *specific* concrete type, put the guard in `tests/Fakturenn.Web.UnitTests`.
+   That is the host-composition test site, and it exists because a unit test
+   over a class passes whether or not the class is registered — which is
+   exactly how the missing `AddClaimsPrincipalFactory` call in E02a hid until
+   `The_claims_principal_factory_is_the_permission_factory` was written to
+   assert the resolved type.
+6. If the module gets its own test project, give it a local `.editorconfig`
    suppressing CA1707 (underscore test names) and CA1859 (concrete-type
    preference for test collaborators declared by interface) — copy
    `tests/Fakturenn.UnitTests/.editorconfig`. No test checks for this file's
    existence; its absence just resurfaces CA1707/CA1859 as build errors the
-   first time a test in that project uses the naming convention.
-6. If the module gets EF Core migrations, apply the `.editorconfig` pattern
-   from Task 8 (see the migration command above) to its
-   `Persistence/Migrations/` folder.
-7. The containment and boundary rules (rules 1–6 above) apply automatically —
+   first time a test in that project uses the naming convention. All seven
+   existing test projects carry an identical copy.
+7. If the module gets EF Core migrations, copy the `.editorconfig` from
+   `src/Fakturenn.Modules.Identity/Persistence/Migrations/` (see the migration
+   command above) into its own `Persistence/Migrations/` folder. Use the
+   Identity copy rather than the Invoices one: it also silences IDE0005, which
+   the generated code needs to stay at zero warnings.
+8. The containment and boundary rules (rules 1–6 above) apply automatically —
    they match on the `Fakturenn.Modules.*` name pattern. Do not add a rule per
    module.
 

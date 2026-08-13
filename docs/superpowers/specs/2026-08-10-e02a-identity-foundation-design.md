@@ -129,6 +129,8 @@ src/Fakturenn.Web/
   Program.cs                     three context factories instead of one
 
 tests/Fakturenn.Modules.Identity.UnitTests/   new, the first per-module test project
+tests/Fakturenn.Web.UnitTests/                new, host composition — forwarded headers,
+                                              DI registrations, resource parity
 tests/Fakturenn.UnitTests/                    AuditStamp, alongside the existing fakes
 tests/Fakturenn.IntegrationTests/             migrations, audit stamping, token encryption
 tests/Fakturenn.UiTests/                      the SPIKE-009 journey
@@ -164,10 +166,20 @@ AspNetUserTokens     stock; holds the authenticator key and the recovery codes,
                      Value encrypted at rest (§9)
 AspNetUserClaims     stock, unused — permissions are derived, never stored per user (§6)
 AspNetUserLogins     stock, unused until OIDC
-Role                 Id, Name, Description, IsSystemRole, + IAuditable
-RolePermission       RoleId, Permission, + IAuditable
-UserRole             UserId, RoleId, + IAuditable
+Roles                Id, Name, Description, IsSystemRole, + IAuditable
+                     PK Id; unique index on Name
+RolePermissions      RoleId, Permission, + IAuditable
+                     PK {RoleId, Permission}; FK RoleId -> Roles.Id, ON DELETE CASCADE
+UserRoles            UserId, RoleId, + IAuditable
+                     PK {UserId, RoleId}; FK RoleId -> Roles.Id and
+                     FK UserId -> AspNetUsers.Id, both ON DELETE CASCADE
 ```
+
+Entity names are singular (`Role`, `RolePermission`, `UserRole`); table names are plural because EF Core takes them from the `DbSet` property, and we follow the framework's naming rather than overriding it with `ToTable`. Below, a plural name means the table and a singular name means the C# entity.
+
+The cascades mean a deleted role takes its permission grants and its role assignments with it, and a deleted user takes its assignments with it. No navigation properties back the foreign keys — the entities stay POCOs and nothing traverses these relationships; the constraint is the point.
+
+`RolePermissions`' composite primary key is load-bearing: collapsing it to `RoleId` alone would cap a role at exactly one permission.
 
 Every table Fakturenn defines carries `CreatedAt`, `CreatedBy`, `ModifiedAt` and `ModifiedBy` per §7. `AspNetUsers` does too, because we extend that entity; the stock tables we do not define are left alone.
 
@@ -175,7 +187,7 @@ Every table Fakturenn defines carries `CreatedAt`, `CreatedBy`, `ModifiedAt` and
 
 `AspNetRoles` and `AspNetUserRoles` are deliberately not used.
 
-`UserRole` gains an `OrganizationId` in E02b. It is a separate table now specifically so that migration is an added column rather than a swap of role systems.
+`UserRole` gains an `OrganizationId` in E02b. It is a table of our own now specifically so that migration is an added column rather than a swap of role systems.
 
 Schema `dataprotection`:
 
@@ -227,7 +239,25 @@ Seeded role: `Administrator`, `IsSystemRole = true`, holding all four.
 
 A startup validation fails fast when `RolePermission` holds a permission string the code does not define. Without it a stale or misspelt row silently grants nothing, which looks identical to a working configuration until someone is denied access they believe they have.
 
-`IsSystemRole` marks roles the application depends on. The last user holding `users.manage` cannot be stripped of it, and a system role cannot be deleted — otherwise an instance can be locked out of its own administration through the UI, with only the CLI to recover.
+`IsSystemRole` marks roles the application depends on. In E02a it is **written by
+`RoleSeeder` and read by nothing**: it selects which roles the seeder re-syncs, and no
+other code in `src/` looks at it.
+
+The protections an earlier draft attached to it — "the last user holding `users.manage`
+cannot be stripped of it, and a system role cannot be deleted" — are **not implemented,
+and they are vacuously true rather than missing.** E02a ships no way to delete a role and
+no way to remove a permission or a role assignment: roles are seeded by `--migrate` and
+edited by SQL, and the administration page creates users, resets passwords, clears
+two-factor and locks accounts, none of which touches a grant. There is therefore nothing
+for a guard to refuse. A guard was in fact written during the epic
+(`AdministratorGuard.WouldRemoveLastAdministrator`, unit-tested, called by nothing) and
+was deleted in the final review under this project's YAGNI rule: a type only useful in a
+later epic belongs in that epic, next to the caller that makes it real.
+
+E02b adds role management, and the guard and the deletion refusal belong to it. Note the
+boundary that survives either way: **locking** the last administrator is permitted and
+always was — that is what `--unlock-user` is for (§10) — so no guard here should ever be
+extended to lock state.
 
 ### YAGNI justification
 
@@ -287,30 +317,36 @@ The decisions live in `AuditStamp`, a pure function, so they are unit-tested wit
 
 ## 8. Flows
 
+A page and the endpoint its form posts to are always different routes, because a
+static-SSR page component answers `POST` as well as `GET` and would otherwise collide
+with the endpoint — hence the `/submit` and `/verify` suffixes below.
+
 ```text
 no users in database
-  GET  /                    302 -> /setup
+  GET  /                    200. The home page is public and does NOT redirect
+  GET  /account/login       302 -> /setup while no user exists
   GET  /setup               form: email, display name, password
-  POST /setup               create admin, assign Administrator, redirect to TOTP enrolment
-  GET  /setup               404 once any user exists
+  POST /account/setup       create admin, assign Administrator, redirect to sign-in
+  GET  /setup               302 -> /account/login once any user exists
 
 TOTP enrolment (forced while MustEnrolTotp)
-  GET  /account/enrol-totp  QR code plus manual entry key
-  POST /account/enrol-totp  verify a code, then show recovery codes ONCE
-                            leaving without acknowledging keeps MustEnrolTotp set
+  GET  /account/enrol-totp         the manual entry key; no QR code
+  POST /account/enrol-totp/verify  verify a code, then show recovery codes ONCE
+                                   leaving without acknowledging keeps MustEnrolTotp set
 
 sign-in
   GET  /account/login
-  POST /account/login       password; Identity counts lockout
-                            success -> /account/login-2fa
-  POST /account/login-2fa   TOTP code, or a recovery code, consumed on use
-                            success -> MustChangePassword ? /account/change-password
-                                                          : returnUrl
-                            locked   -> /account/lockout
+  POST /account/login/submit         password; Identity counts lockout
+                                     success -> /account/login-2fa
+  POST /account/login-2fa/submit     TOTP code
+  POST /account/login-recovery/submit  a recovery code, consumed on use
+                                     success -> MustChangePassword ? /account/change-password
+                                                                   : /
+                                     locked   -> /account/lockout
 
 forced password change (while MustChangePassword)
   GET  /account/change-password
-  POST /account/change-password   current + new; clears the flag, rotates the stamp
+  POST /account/change-password/submit   current + new; clears the flag, rotates the stamp
 
 sign-out
   POST /account/logout      always available; rendered in the layout when signed in
@@ -321,15 +357,76 @@ administration
                             create, reset password, clear TOTP, lock, unlock
 ```
 
+### Four route behaviours this section originally specified differently
+
+Recorded as decisions rather than silently rewritten, because the earlier text is what a
+reader may remember.
+
+**`GET /setup` redirects, it does not 404.** An earlier draft said 404 once any user
+exists. The shipped page runs the same user-count query and navigates to
+`/account/login` instead. A redirect is the better answer to the same question: the
+operator who bookmarked `/setup` during installation is taken somewhere useful, and the
+route still refuses to create a second administrator, which is the property that
+mattered. Nothing is disclosed by it either — `/account/login` is public. `IdentityJourneyTests.The_setup_page_is_gone_once_a_user_exists`
+asserts the redirect, so this is the locked-in behaviour.
+
+**`GET /` is public and does not redirect to `/setup`.** The redirect the earlier draft
+described would put a database query on the application's most-requested anonymous
+route to serve a case that exists once in an instance's lifetime. The discovery path
+that shipped instead is `/account/login`, which *does* redirect to `/setup` while no
+user exists — so an operator who opens a fresh instance and tries to sign in is taken
+to setup. Anyone following `DEPLOYMENT-BASELINE.md` runs `--create-admin` and never
+needs either.
+
+**`returnUrl` is not honoured.** Sign-in always lands on `/` unless
+`MustChangePassword` sends it to the password form. The cookie handler's `LoginPath`
+does append a `ReturnUrl` query when it challenges, and `AccountEndpoints` ignores it.
+This is deliberate for E02a: an unvalidated return URL is an open redirect, and the
+correct version needs a local-URL check plus a decision about what a returning URL means
+for a user who still owes an enrolment. E02a also has exactly one page worth deep-linking
+to. It becomes worth building in the epic that adds a navigable application; until then
+the honest statement is that the deep link is lost, not that it is honoured.
+
+**Sign-out is rendered in the layout.** `POST /account/logout` shipped in Task 13 with no
+caller in the user interface, so a signed-in user could not leave through the browser at
+all. The layout now renders the form for an authenticated request, and
+`IdentityJourneyTests.A_signed_in_user_can_sign_out_from_the_layout` walks it — which is
+also what proves the form carries an antiforgery token, since every `/account` post
+rejects one that does not.
+
 Every `/setup` and `/account/*` page is static SSR posting a real form. The rest of the application stays Interactive Server.
+
+### The enrolment gate
+
+Both "forced" states above are forced by **middleware running on every request**, not by the redirect the sign-in handler issues. A redirect is a suggestion: a user carrying `MustChangePassword` who types any other URL walks straight past it. The gate reads the flags for the signed-in user on each request and confines them to the page that discharges the outstanding obligation.
+
+When a user carries **both** flags — which is the normal state of an account an administrator has just created — **TOTP enrolment goes first**, then the password change. Sending them to choose a new password first would have them pick that password while the account still has only one factor; enrolling first means the replacement credential is chosen by an account already protected by two.
+
+The gate acts only on a request that resolves to a real user. Anonymous callers pass through untouched, or sign-in itself would be closed.
 
 ### Guards and state
 
 `/setup` is guarded by a user-count query, not a configuration flag. A flag can be left on; a populated table cannot.
 
-**The setup race.** The count query and the insert are not atomic: two concurrent posts, or a replica racing a `--create-admin` Job, can both pass the check. The guard is therefore a **unique index on the normalized user name plus a caught constraint violation** — the loser of the race receives the same "already configured" response as a late visitor. A count query alone is a check-then-act bug.
+**The setup race.** The count query and the insert are not atomic: two concurrent posts, or a replica racing a `--create-admin` Job, can both pass the check. A count query alone is a check-then-act bug.
 
-**A fresh instance is owned by whoever reaches `/setup` first.** This is accepted, as most self-hosted software accepts it. The mitigation is documented rather than coded: run `--create-admin` before exposing the instance, or do not expose it until setup is complete.
+An earlier revision of this section named the guard as a **unique index on the normalized user name plus a caught constraint violation**. That was measured during E02a Task 9 and is **wrong**. A unique index only rejects rows that collide on the indexed value: it serialises two posts using the *same* e-mail address and does nothing at all about two posts using different ones. Four concurrent posts with distinct addresses against an empty database produced **four administrators**, reproduced both in an integration test and with concurrent `curl` against real PostgreSQL. The same four posts sharing one address produced exactly one user — which is why the wrong mechanism looked plausible.
+
+The guard is therefore a **PostgreSQL transaction-scoped advisory lock**. The count check, the user creation and the role assignment run inside one transaction whose first statement is `pg_advisory_xact_lock` on a fixed key; the lock releases on commit or rollback, so there is no cleanup path to forget. The duplicate-key catch and the `DuplicateUserName` branch are kept as belt and braces for a writer that does not take the same key, not as the mechanism. Any operator entrypoint that creates the first administrator must take the **same** key.
+
+A marker row was rejected as the alternative. It is a flag, and this design's own rule is that the guard is a query rather than a flag — a flag can be left on, a populated table cannot. A marker creates a second source of truth for one fact, and the two diverge: restore a partial backup, or delete the administrator during recovery, and the marker says "configured" while zero users exist, leaving the instance bricked with no way to reopen `/setup`. The advisory lock records no state, so zero users reopens setup, which is both the correct self-healing behaviour and the recovery path the CLI entrypoints assume.
+
+**A fresh, unconfigured instance that an attacker can reach is claimable by whoever posts to `/setup` first.** This is accepted, as most self-hosted software accepts it. What the advisory lock adds is that there is exactly **one** winner rather than everyone who arrives inside the password-hashing window. The mitigation for the remaining risk is documented rather than coded: run `--create-admin` before exposing the instance, or do not expose it until setup is complete.
+
+**Manual entry is the only enrolment path, and there is no QR code.** An earlier draft of
+this section promised "QR code plus manual entry key". The enrolment page renders the
+base32 shared secret in four-character groups and nothing else. Every authenticator app
+in common use accepts a typed key, so the deferral costs convenience on one screen that
+each user sees once, not compatibility — which is why it was decided rather than built.
+A QR code means an `otpauth://` URI and a renderer for it: either a new dependency in
+the page that displays a live secret, or a hand-rolled encoder. Neither earns its place
+against typing 32 characters once. Recorded in `docs/planning/BACKLOG.md` with the epic
+it would land in.
 
 **Enrolment idempotency.** A user who verifies TOTP but leaves before acknowledging the recovery codes keeps `MustEnrolTotp` set. Returning to the enrolment page **reuses the existing authenticator key** rather than resetting it, so the entry already added to their authenticator app keeps working. The key is reset only by `--reset-mfa` or the administrator's clear-TOTP action.
 
@@ -408,6 +505,24 @@ Sources for whoever picks this up:
 Lockout: five failures, fifteen-minute window.
 
 **Locking a user must end their session.** Identity rotates the security stamp automatically on password reset and on two-factor changes, but **not** on lockout. Every administrative and CLI action that changes credentials or lock state therefore rotates the security stamp explicitly, and `SecurityStampValidatorOptions.ValidationInterval` is set to **one minute** rather than the default thirty. A lock that leaves a working session for half an hour is not a lock. The one-minute interval is also what bounds how stale a cookie's permission claims can be (§6).
+
+**Automatic lockout does not rotate the stamp, and that asymmetry is deliberate.** An
+administrator or an operator locking an account rotates it; five failed passwords do not,
+because nothing in Identity's automatic path rotates it and E02a adds nothing there. The
+two are not the same act. An *administrative* lock is a revocation decision by somebody
+who is entitled to make it, and revocation that leaves the victim's existing session
+alive is not revocation. *Automatic* lockout is an anti-brute-force throttle triggered by
+whoever is typing wrong passwords — which, in the case that matters, is the attacker, not
+the account holder. Rotating there would hand any anonymous caller a way to end a chosen
+user's session on demand: fail their password five times and the real user is signed out
+of the work they were doing. That converts a control meant to protect the account into a
+denial-of-service primitive aimed at it. The account is already protected during the
+window — the lockout itself refuses the sign-in the attacker is trying to complete, and
+the attacker never held a session to keep. So the shipped behaviour is the correct one
+and is recorded here as a decision, not left to be rediscovered as an inconsistency. The
+consequence is the one `--unlock-user` already handles: an account locked by failed
+attempts may still hold a live session, so unlocking it *does* rotate, which is why that
+entrypoint rotates even though unlocking grants access rather than removing it.
 
 **Rate limiting** partitions on **username plus client IP**, not IP alone: IP alone is either useless behind a shared address or a self-DoS behind a proxy. Ten attempts per minute per partition on `/account/login`, `/account/login-2fa` and `/account/login-recovery`.
 
@@ -490,9 +605,30 @@ The value converter depends on `IDataProtector`. How the ring itself is protecte
 
 `SECURITY-BASELINE.md` requires private keys to be referenced from mounted secret files rather than stored as ordinary database columns. A Data Protection key ring is key material, so the baseline points toward separation for deployments that can carry the operational burden.
 
-E02a therefore supports optional `ProtectKeysWithCertificate`, reading a certificate from a configured path — a mounted secret file, a Docker secret, or a Kubernetes secret. It is **off by default**, because requiring certificate management to run `docker compose up` on a laptop is disproportionate. When it is off, the application logs once at startup that the ring is unprotected at rest, that full database compromise therefore yields TOTP secrets, and when it is on, that restoring a database without the certificate will invalidate every enrolled authenticator.
+An earlier draft of this section committed E02a to an optional `ProtectKeysWithCertificate`,
+reading a certificate from a configured path and off by default, plus two startup warnings —
+one when the ring is unprotected, one when certificate protection is on and a restore
+without the certificate would invalidate every enrolled authenticator.
 
-`docs/operations/DEPLOYMENT-BASELINE.md` gains a section covering the backup implication, the certificate option, and the restore hazard that comes with it.
+**None of that was built, and this spec is the stale artefact rather than the code being
+incomplete.** There is no `ProtectKeysWithCertificate` call, no certificate path setting
+and neither warning anywhere in `src` or `tests`. The shipped position is the simple one:
+the ring is persisted to PostgreSQL, unprotected at rest, and the database is the single
+artifact that must be protected and backed up.
+
+That is the right E02a scope. The certificate option is only meaningful for a deployment
+that can carry certificate lifecycle management, and buying it here would have added a
+second, independent way to lose every TOTP secret (§12) in exchange for a trust boundary
+that self-hosted single-operator installations mostly cannot maintain. The seam it needs —
+`IXmlEncryptor` — is a configuration change, so nothing about deferring it forecloses it,
+which is the whole argument two paragraphs above.
+
+The consequence is documented for operators rather than logged at startup:
+`docs/operations/DEPLOYMENT-BASELINE.md` ("The keys are not encrypted at rest") states
+that the keys are readable by anything that can read the database or an unencrypted
+backup, and that adding certificate protection later introduces the second restore hazard.
+That section is the authority; this one records why the spec no longer promises the
+feature.
 
 ### Forwarded headers
 
@@ -574,7 +710,7 @@ Alongside `--migrate`:
 --list-users                diagnostic: email, display name, lockout state, TOTP state
 ```
 
-`--unlock-user` exists because the `IsSystemRole` guard prevents *stripping* the last administrator's permissions but does not prevent **locking** them. Without it, an administrator who locks themselves out — or is locked by another administrator — has no route back, and the guard would have protected the wrong thing. `--reset-password` clears lockout for the same reason: an operator resetting a password almost always wants the account usable afterwards, and a reset that leaves the account locked is a surprise.
+`--unlock-user` exists because **locking** the last administrator is permitted and nothing in the web interface can undo it. Their permissions cannot be stripped either, but not because anything refuses — E02a has no path that removes a role or a permission at all (§6). Lock state is the one property of the last administrator the UI *can* change against itself, so without this entrypoint an administrator who locks themselves out, or is locked by another administrator, has no route back. `--reset-password` clears lockout for the same reason: an operator resetting a password almost always wants the account usable afterwards, and a reset that leaves the account locked is a surprise.
 
 Every entrypoint that changes credentials or lock state rotates the security stamp, so any existing session for that user stops working. This is the CLI half of §8's rule; an administrator locking a user through the UI and an operator locking them through the CLI must not behave differently.
 
@@ -590,9 +726,10 @@ Per `SPEC-v0.1.md` §10, in order of preference: real objects, then fakes, then 
 
 | Tier | Coverage |
 | --- | --- |
-| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the startup validation rejecting an undefined permission; `IsSystemRole` protection; the last-administrator guard; the enrolment-gate path policy; forwarded-header trust parsing, including that a configured-but-unparseable list throws |
+| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the permission authorization handler; the startup validation rejecting an undefined permission; the enrolment-gate path policy. **Not** `IsSystemRole` protection or a last-administrator guard: neither exists, and §6 explains why |
+| Unit (`Fakturenn.Web.UnitTests`) | host composition — forwarded-header trust parsing including that a configured-but-unparseable list throws, the RFC 7239 translation, the resolved claims-principal factory, the localization resource guards, the `_msg` JSON formatter |
 | Integration | both new migrations apply to a clean database and are idempotent; a TOTP secret round-trips through the value converter and is **not** readable as plaintext in the column; the Data Protection ring survives a simulated restart; **the claims factory derives a user's permissions from their roles**; seeding re-syncs a system role that is missing a permission the code defines; audit stamping, including that `CreatedBy` survives an update that tries to change it |
-| UI (Playwright) | the full password + TOTP journey; `/setup` returning 404 after the first user; lockout after five failures; recovery-code sign-in consuming the code; **an authorized page reaching a permitted user rather than 403**; forced password change on first sign-in; that the Content Security Policy does not block the application's own scripts or styles |
+| UI (Playwright) | the full password + TOTP journey; `/setup` redirecting to sign-in after the first user; **signing out from the layout control and landing without a session**; lockout after five failures; recovery-code sign-in consuming the code; **an authorized page reaching a permitted user rather than 403**; forced password change on first sign-in; that the Content Security Policy does not block the application's own scripts or styles |
 
 ### The two tests that exist because of the spec review
 
@@ -619,7 +756,7 @@ The integration test asserting that the stored token is not plaintext is the one
 - **`Otp.NET` must match Identity's algorithm.** Identity's authenticator provider implements standard RFC 6238 over the shared key, so a standard library agrees — but this is an assumption to verify in the first task that uses it, not at the end.
 - **Three new migration contexts at once.** `--migrate` now applies three sets. The existing wall-clock startup budget covers all of them collectively, not each individually; the integration tests must confirm the budget is still adequate.
 - **`MustEnrolTotp` as a partial-authentication state.** A user who authenticated by password but has not finished enrolling must be able to reach only the enrolment page. Getting that wrong either locks users out or opens a hole; it is worth an explicit test rather than trust.
-- **Losing the Data Protection key ring invalidates every enrolled authenticator.** This is the availability cost of encrypting TOTP secrets, accepted deliberately in §9. Keeping the ring in the database makes it atomic under backup and restore, which is the mitigation; `--reset-mfa` is the recovery path if it happens anyway. An operator who enables certificate protection takes on a second, independent way to lose the same data.
+- **Losing the Data Protection key ring invalidates every enrolled authenticator.** This is the availability cost of encrypting TOTP secrets, accepted deliberately in §9. Keeping the ring in the database makes it atomic under backup and restore, which is the mitigation; `--reset-mfa` is the recovery path if it happens anyway. Certificate protection is **not** offered in E02a (§9); whichever epic adds it takes on a second, independent way to lose the same data.
 
 ### Accepted risks
 
@@ -628,4 +765,4 @@ Stated rather than mitigated, so that a later reader knows they were considered:
 - **TOTP codes are replayable within their time window.** Identity keeps no cache of used codes, so a code captured in transit can be reused for up to the validity window. Mitigating it means a per-user store of consumed codes and the cache-invalidation problems that come with it. Standard practice is to accept this and rely on TLS; E02a does the same.
 - **Rate limits multiply by replica count.** The in-memory limiter is per replica. Accepted in §8, with lockout as the durable control.
 - **CLI actions leave a thinner trail than their UI equivalents.** An operator running `--reset-mfa` is recorded as `system` by §7's provenance, because no user is authenticated. The authentication event log (§9) records that the action happened, but not who ran it — that is inherent to a recovery path whose whole point is working when nobody can sign in. Host and database access is the control.
-- **A fresh instance is claimed by whoever reaches `/setup` first.** Accepted in §8, with `--create-admin` before exposure as the documented mitigation.
+- **A fresh, unconfigured instance an attacker can reach is claimed by whoever posts to `/setup` first.** Accepted in §8, with `--create-admin` before exposure as the documented mitigation. The advisory lock described there guarantees exactly one winner; it does not, and cannot, decide *which* one.
