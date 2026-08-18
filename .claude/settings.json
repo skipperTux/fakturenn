@@ -94,6 +94,7 @@
       "Bash(gh pr create:*)",
 
       "Bash(git commit:*)",
+      "Bash(git push:*)",
       "Bash(git switch:*)",
       "Bash(git worktree add:*)",
       "Bash(git worktree remove:*)",
@@ -127,7 +128,6 @@
       "Bash(git clean -fdx:*)",
       "Bash(git commit --no-verify:*)",
       "Bash(git filter-branch:*)",
-      "Bash(git push:*)",
       "Bash(git reflog delete:*)",
       "Bash(git reset --hard:*)",
       "Bash(git restore:*)",
