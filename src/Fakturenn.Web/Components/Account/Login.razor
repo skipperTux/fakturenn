@@ -18,8 +18,8 @@
 
 <form method="post" action="/account/login/submit" data-testid="login-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="@Localizer["Account_Login_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" data-testid="login-email" />
-    <MudTextField T="string" Label="@Localizer["Account_Login_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="login-password" />
+    <MudTextField T="string" Label="@Localizer["Account_Login_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" autocomplete="username" data-testid="login-email" />
+    <MudTextField T="string" Label="@Localizer["Account_Login_Password"]" InputType="InputType.Password" name="password" Required="true" autocomplete="current-password" data-testid="login-password" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="login-submit">
         @Localizer["Account_Login_Submit"]
     </MudButton>
