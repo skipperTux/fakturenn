@@ -27,9 +27,9 @@ else
 
     <form method="post" action="/account/setup" data-testid="setup-form">
         <AntiforgeryToken />
-        <MudTextField T="string" Label="@Localizer["Setup_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" data-testid="setup-email" />
-        <MudTextField T="string" Label="@Localizer["Setup_DisplayName"]" name="displayName" Value="@DisplayName" Required="true" data-testid="setup-display-name" />
-        <MudTextField T="string" Label="@Localizer["Setup_Password"]" InputType="InputType.Password" name="password" Required="true" data-testid="setup-password" />
+        <MudTextField T="string" Label="@Localizer["Setup_Email"]" InputType="InputType.Email" name="email" Value="@Email" Required="true" autocomplete="username" data-testid="setup-email" />
+        <MudTextField T="string" Label="@Localizer["Setup_DisplayName"]" name="displayName" Value="@DisplayName" Required="true" autocomplete="name" data-testid="setup-display-name" />
+        <MudTextField T="string" Label="@Localizer["Setup_Password"]" InputType="InputType.Password" name="password" Required="true" autocomplete="new-password" data-testid="setup-password" />
         <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="setup-submit">
             @Localizer["Setup_Submit"]
         </MudButton>

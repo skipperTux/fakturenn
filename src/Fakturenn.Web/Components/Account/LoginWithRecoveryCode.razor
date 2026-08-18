@@ -12,7 +12,7 @@
 
 <form method="post" action="/account/login-recovery/submit" data-testid="recovery-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="@Localizer["Account_RecoveryLogin_Code"]" name="code" Required="true" data-testid="recovery-login-code" />
+    <MudTextField T="string" Label="@Localizer["Account_RecoveryLogin_Code"]" name="code" Required="true" autocomplete="off" data-testid="recovery-login-code" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="recovery-submit">
         @Localizer["Account_RecoveryLogin_Submit"]
     </MudButton>
