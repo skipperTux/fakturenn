@@ -11,7 +11,7 @@
 
 <form method="post" action="/account/login-2fa/submit" data-testid="twofa-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="@Localizer["Account_TwoFactor_Code"]" name="code" Required="true" data-testid="twofa-code" />
+    <MudTextField T="string" Label="@Localizer["Account_TwoFactor_Code"]" name="code" Required="true" autocomplete="one-time-code" InputMode="InputMode.numeric" data-testid="twofa-code" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="twofa-submit">
         @Localizer["Account_TwoFactor_Submit"]
     </MudButton>

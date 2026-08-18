@@ -27,7 +27,7 @@
 
 <form method="post" action="/account/enrol-totp/verify" data-testid="enrol-form">
     <AntiforgeryToken />
-    <MudTextField T="string" Label="@Localizer["Account_EnrolTotp_Code"]" name="code" Required="true" data-testid="enrol-code" />
+    <MudTextField T="string" Label="@Localizer["Account_EnrolTotp_Code"]" name="code" Required="true" autocomplete="one-time-code" InputMode="InputMode.numeric" data-testid="enrol-code" />
     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="enrol-submit">
         @Localizer["Account_EnrolTotp_Submit"]
     </MudButton>
