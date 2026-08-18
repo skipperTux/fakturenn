@@ -31,6 +31,11 @@
     <PackageVersion Include="Otp.NET" Version="1.4.1" />
     <PackageVersion Include="Serilog" Version="4.4.0" />
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <!-- Pinned forward, not referenced directly. Testcontainers.PostgreSql pulls
+         SSH.NET transitively, and the version it selects was flagged high severity
+         by GHSA-q939-rpr3-3284, which fails the build on NU1903. Pinning was chosen
+         over suppressing the advisory. Removing this pin reopens it; check the
+         advisory is resolved upstream before dropping the line. -->
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
     <PackageVersion Include="TngTech.ArchUnitNET.xUnitV3" Version="0.13.3" />
