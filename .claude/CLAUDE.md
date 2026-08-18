@@ -78,8 +78,9 @@ the build, not the review:
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
 "every assembly that is NOT Mail/Documents" — today that is all five loaded
-assemblies. Task 6 proved this by making `Fakturenn.Modules.Invoices` depend
-on real MimeKit and watching the rule fail. When `Fakturenn.Infrastructure.Mail*`
+assemblies. The testing-and-release harness epic proved this in its own Task 6,
+by making `Fakturenn.Modules.Invoices` depend on real MimeKit and watching the
+rule fail. (Not E02a's Task 6, which is the encrypted-token converter.) When `Fakturenn.Infrastructure.Mail*`
 or `.Documents*` eventually appears, the rule does not newly switch on — it
 gets **narrower**, carving out an exemption for the one assembly now allowed
 to use the library.
@@ -146,18 +147,23 @@ workflows under `.github/` have run there; one has not.
   exists yet. It is still unproven, including the multi-arch container publish
   that has no local equivalent. Do not describe it as known-working.
 
-**The green history covers `main` only.** The most recent CI run was against
-`main` at `c861376`, which is the commit *before* the E02a identity foundation
-branched. Everything E02a added — the 200-odd extra tests, Testcontainers at
-this scale (the integration suite starts several PostgreSQL containers), and
-the Playwright journeys — has only ever run on one developer workstation. Do
-not assume the branch is green in CI because it is green locally; the first
-push of `feat/e02a-identity-foundation` is the first time CI sees any of it.
-Two known local-only workarounds are the likeliest sources of a first-run
-surprise: `DOTNET_USE_POLLING_FILE_WATCHER=1` (an inotify limit on that one
-host — see `IMPLEMENTATION-NOTES.md`; `ci.yml` now sets it on the `integration`
-and `ui` jobs as insurance, not because a runner is known to need it) and the
-browser-install command, which CI runs through `pwsh` and the dev host does not.
+**E02a has now been through CI, and every check passed on the first run.** That
+run is the evidence for the numbers below; they were measured on
+`ubuntu-latest`, not estimated. Build and the five in-process suites: 50s.
+Integration: 1m39s, and it starts **eleven concurrent PostgreSQL containers** at
+peak — a figure worth knowing before adding another fixture, because a runner
+has two cores. UI: 2m31s including the browser install. CodeQL: 2m45s.
+
+`DOTNET_USE_POLLING_FILE_WATCHER=1` is set on **all three** test jobs
+(`build-test`, `integration`, `ui`). It is insurance, not a known requirement:
+it works around an inotify limit on one developer workstation, and the runners
+did not need it. Keep it — the failure it prevents is whole test classes dying
+inside `FakturennWebApplication.Build` with an `IOException` that looks nothing
+like a test failure. See `IMPLEMENTATION-NOTES.md`.
+
+The browser install is the one command with no local equivalent: CI runs it
+through `pwsh`, which `ubuntu-latest` ships and the dev host does not. Do not
+"fix" either invocation to match the other; each is correct for its own host.
 
 **`ci.yml` ran three of the five in-process suites until the final E02a review.**
 `Fakturenn.Web.UnitTests` and `Fakturenn.Modules.Identity.UnitTests` were added
