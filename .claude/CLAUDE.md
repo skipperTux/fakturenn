@@ -366,3 +366,78 @@ The global style rules apply. Only the deltas are listed here:
 - Every new module assembly is named `Fakturenn.Modules.<Name>`, and its
   cross-module surface `Fakturenn.Modules.<Name>.Contracts`. The architecture
   tests match on these names.
+
+## Code style
+
+Anything a tool can check lives in `.editorconfig` and `Directory.Build.props`,
+not here — `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`, file-scoped
+namespaces, brace style, naming. Read those first; this section is only what
+they cannot express.
+
+- Elegant, readable, concise. Prefer the shorter word: `fix`, not
+  "implement a solution for".
+- Comment **why**, not **what**. The code already says what.
+- In scripts and workflows use the long parameter form — `--verbose`, not `-v`.
+  A reader should not need the man page to review a diff.
+
+## Secrets
+
+- **Never read a plaintext secret file.** If one is committed by mistake, say so
+  immediately and do not open it.
+- Local development uses `dotnet user-secrets`, never `appsettings.json`.
+  Deployment uses environment variables or the platform secret store — see
+  `docs/operations/DEPLOYMENT-BASELINE.md`.
+- Anything secret that must be committed is SOPS ciphertext (`*.enc.*`,
+  `*.sops.*`). Only the plaintext counterpart is ignored.
+- **Changing secret keys uses a `.scaffold` file.** Never touch an operator's
+  real secret file. Add `<realfile>.scaffold` carrying the expected keys with
+  descriptive placeholders (`<postgres admin password>`), and list what changed.
+  The operator fills it in, renames it and encrypts it; the scaffold disappears
+  by design. A missing `.scaffold` is never an error.
+- Placeholders only — never a real or realistic-looking value.
+- Document every expected key and its origin in the component's `README.md`.
+- Where a platform has native secret handling, use it rather than layering SOPS
+  on top.
+
+## Commits, versioning and documentation
+
+- [Conventional Commits](https://www.conventionalcommits.org/) —
+  `feat(identity): …`, `fix(ci): …`.
+- [Semantic Versioning](https://semver.org/), bumped with
+  [`bump-my-version`](https://callowayproject.github.io/bump-my-version/).
+  Releases trigger on the resulting tag.
+- [Keep a Changelog](https://keepachangelog.com/) — every user-visible change
+  under `[Unreleased]`, written for someone using the software.
+- [Make a README](https://www.makeareadme.com/).
+- This repository uses the `dotgit` tool: **never edit `.gitattributes` or
+  `.gitignore` directly.** Edit `Project.gitattributes` / `Project.gitignore`,
+  then run `dotgit ga` / `dotgit gi`.
+- Do not commit unless asked. If the working tree is dirty, say so and confirm
+  before changing files — traceability matters more than speed.
+- **`git checkout -- <path>` and `git restore` discard uncommitted work
+  silently.** Both are denied in `.claude/settings.json`. To undo an edit to a
+  file whose current content is not committed, copy it aside first or regenerate
+  it. This rule exists because the shortcut has destroyed real work here.
+
+## Networking
+
+Every path that handles an IP address handles **both families**. IPv6 is not an
+optional extra: `ForwardedHeaderTrust` parses IPv4 and bracketed IPv6 with
+ports, and its tests cover both. A change that works only for IPv4 is
+incomplete.
+
+Outbound HTTP has a known dual-stack gap recorded in
+`docs/planning/BACKLOG.md`; read it before adding an HTTP client.
+
+## Rule precedence
+
+A rule belongs in the most specific place that can hold it:
+
+1. **Executable config in the repo** — `.editorconfig`,
+   `Directory.Build.props`, analyzer severities, CI workflows.
+2. **A committed path-scoped rule** — `.claude/rules/*.md`.
+3. **This file.**
+
+Prefer 1 wherever possible. A stale ruleset fails loudly in CI; stale prose
+fails silently. If prose here contradicts executable config, the config wins and
+the prose is the bug.
