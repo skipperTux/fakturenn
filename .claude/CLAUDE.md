@@ -78,8 +78,9 @@ the build, not the review:
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
 "every assembly that is NOT Mail/Documents" — today that is all five loaded
-assemblies. Task 6 proved this by making `Fakturenn.Modules.Invoices` depend
-on real MimeKit and watching the rule fail. When `Fakturenn.Infrastructure.Mail*`
+assemblies. The testing-and-release harness epic proved this in its own Task 6,
+by making `Fakturenn.Modules.Invoices` depend on real MimeKit and watching the
+rule fail. (Not E02a's Task 6, which is the encrypted-token converter.) When `Fakturenn.Infrastructure.Mail*`
 or `.Documents*` eventually appears, the rule does not newly switch on — it
 gets **narrower**, carving out an exemption for the one assembly now allowed
 to use the library.
@@ -146,18 +147,23 @@ workflows under `.github/` have run there; one has not.
   exists yet. It is still unproven, including the multi-arch container publish
   that has no local equivalent. Do not describe it as known-working.
 
-**The green history covers `main` only.** The most recent CI run was against
-`main` at `c861376`, which is the commit *before* the E02a identity foundation
-branched. Everything E02a added — the 200-odd extra tests, Testcontainers at
-this scale (the integration suite starts several PostgreSQL containers), and
-the Playwright journeys — has only ever run on one developer workstation. Do
-not assume the branch is green in CI because it is green locally; the first
-push of `feat/e02a-identity-foundation` is the first time CI sees any of it.
-Two known local-only workarounds are the likeliest sources of a first-run
-surprise: `DOTNET_USE_POLLING_FILE_WATCHER=1` (an inotify limit on that one
-host — see `IMPLEMENTATION-NOTES.md`; `ci.yml` now sets it on the `integration`
-and `ui` jobs as insurance, not because a runner is known to need it) and the
-browser-install command, which CI runs through `pwsh` and the dev host does not.
+**E02a has now been through CI, and every check passed on the first run.** That
+run is the evidence for the numbers below; they were measured on
+`ubuntu-latest`, not estimated. Build and the five in-process suites: 50s.
+Integration: 1m39s, and it starts **eleven concurrent PostgreSQL containers** at
+peak — a figure worth knowing before adding another fixture, because a runner
+has two cores. UI: 2m31s including the browser install. CodeQL: 2m45s.
+
+`DOTNET_USE_POLLING_FILE_WATCHER=1` is set on **all three** test jobs
+(`build-test`, `integration`, `ui`). It is insurance, not a known requirement:
+it works around an inotify limit on one developer workstation, and the runners
+did not need it. Keep it — the failure it prevents is whole test classes dying
+inside `FakturennWebApplication.Build` with an `IOException` that looks nothing
+like a test failure. See `IMPLEMENTATION-NOTES.md`.
+
+The browser install is the one command with no local equivalent: CI runs it
+through `pwsh`, which `ubuntu-latest` ships and the dev host does not. Do not
+"fix" either invocation to match the other; each is correct for its own host.
 
 **`ci.yml` ran three of the five in-process suites until the final E02a review.**
 `Fakturenn.Web.UnitTests` and `Fakturenn.Modules.Identity.UnitTests` were added
@@ -366,3 +372,78 @@ The global style rules apply. Only the deltas are listed here:
 - Every new module assembly is named `Fakturenn.Modules.<Name>`, and its
   cross-module surface `Fakturenn.Modules.<Name>.Contracts`. The architecture
   tests match on these names.
+
+## Code style
+
+Anything a tool can check lives in `.editorconfig` and `Directory.Build.props`,
+not here — `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`, file-scoped
+namespaces, brace style, naming. Read those first; this section is only what
+they cannot express.
+
+- Elegant, readable, concise. Prefer the shorter word: `fix`, not
+  "implement a solution for".
+- Comment **why**, not **what**. The code already says what.
+- In scripts and workflows use the long parameter form — `--verbose`, not `-v`.
+  A reader should not need the man page to review a diff.
+
+## Secrets
+
+- **Never read a plaintext secret file.** If one is committed by mistake, say so
+  immediately and do not open it.
+- Local development uses `dotnet user-secrets`, never `appsettings.json`.
+  Deployment uses environment variables or the platform secret store — see
+  `docs/operations/DEPLOYMENT-BASELINE.md`.
+- Anything secret that must be committed is SOPS ciphertext (`*.enc.*`,
+  `*.sops.*`). Only the plaintext counterpart is ignored.
+- **Changing secret keys uses a `.scaffold` file.** Never touch an operator's
+  real secret file. Add `<realfile>.scaffold` carrying the expected keys with
+  descriptive placeholders (`<postgres admin password>`), and list what changed.
+  The operator fills it in, renames it and encrypts it; the scaffold disappears
+  by design. A missing `.scaffold` is never an error.
+- Placeholders only — never a real or realistic-looking value.
+- Document every expected key and its origin in the component's `README.md`.
+- Where a platform has native secret handling, use it rather than layering SOPS
+  on top.
+
+## Commits, versioning and documentation
+
+- [Conventional Commits](https://www.conventionalcommits.org/) —
+  `feat(identity): …`, `fix(ci): …`.
+- [Semantic Versioning](https://semver.org/), bumped with
+  [`bump-my-version`](https://callowayproject.github.io/bump-my-version/).
+  Releases trigger on the resulting tag.
+- [Keep a Changelog](https://keepachangelog.com/) — every user-visible change
+  under `[Unreleased]`, written for someone using the software.
+- [Make a README](https://www.makeareadme.com/).
+- This repository uses the `dotgit` tool: **never edit `.gitattributes` or
+  `.gitignore` directly.** Edit `Project.gitattributes` / `Project.gitignore`,
+  then run `dotgit ga` / `dotgit gi`.
+- Do not commit unless asked. If the working tree is dirty, say so and confirm
+  before changing files — traceability matters more than speed.
+- **`git checkout -- <path>` and `git restore` discard uncommitted work
+  silently.** Both are denied in `.claude/settings.json`. To undo an edit to a
+  file whose current content is not committed, copy it aside first or regenerate
+  it. This rule exists because the shortcut has destroyed real work here.
+
+## Networking
+
+Every path that handles an IP address handles **both families**. IPv6 is not an
+optional extra: `ForwardedHeaderTrust` parses IPv4 and bracketed IPv6 with
+ports, and its tests cover both. A change that works only for IPv4 is
+incomplete.
+
+Outbound HTTP has a known dual-stack gap recorded in
+`docs/planning/BACKLOG.md`; read it before adding an HTTP client.
+
+## Rule precedence
+
+A rule belongs in the most specific place that can hold it:
+
+1. **Executable config in the repo** — `.editorconfig`,
+   `Directory.Build.props`, analyzer severities, CI workflows.
+2. **A committed path-scoped rule** — `.claude/rules/*.md`.
+3. **This file.**
+
+Prefer 1 wherever possible. A stale ruleset fails loudly in CI; stale prose
+fails silently. If prose here contradicts executable config, the config wins and
+the prose is the bug.

@@ -981,6 +981,27 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
   probe that is unused here, since this deployment authenticates with a
   password. Not an error to chase.
 
+## Small facts that cost an afternoon each
+
+- **EF Core does not pluralise a model name. The table takes the `DbSet`
+  property's name**, which convention makes plural, which is why the Identity
+  tables are `Roles` / `RolePermissions` / `UserRoles` while the entities are
+  singular. A `DbSet` deliberately named singular would produce a singular
+  table. Decided during E02a as "do not fight the framework"; the spec records
+  the outcome, this records the mechanism.
+- **`CA1725` forces each `OnModelCreating` override to keep *its own base's*
+  parameter name.** `IdentityUserContext` declares `builder`;
+  `DbContext` declares `modelBuilder`. So `IdentityDbContext` uses `builder`
+  and `InvoicesDbContext` uses `modelBuilder`, and that is correct rather than
+  inconsistent. Unifying them reproduces `error CA1725`, because warnings are
+  errors here.
+- **With no connection string the application starts and `GET /` answers 200,
+  but the log carries a noisy `CryptographicException` chain** — antiforgery
+  asks the database-backed key ring for a key that cannot be fetched. Starting
+  without a database is deliberate (`/alive` 200, `/health` 503); this symptom
+  of it is not a fault, and an operator meeting it is looking at the expected
+  behaviour of a misconfigured instance, not a defect.
+
 ## Mutation testing: how to revert, and how to read a green
 
 Nearly every task in E02a proved a guard load-bearing by breaking it and

@@ -231,13 +231,15 @@ The alternative, a database lookup per request, was rejected: it puts a query on
 
 The `Administrator` system role is seeded **by the `--migrate` entrypoint**, not at application startup. Startup seeding on multiple replicas races on the unique role-name index, and `--migrate` already runs exactly once by design.
 
-Seeding is a **re-sync, not a create-if-absent**: it grants the system role every permission in `Permissions.All` that it does not already hold. Without that rule, an installation upgraded to a version defining a fifth permission would have an `Administrator` role silently missing it — the startup validation catches permission strings the code does not define, but nothing would catch grants the code defines and the database lacks.
+Seeding is a **re-sync, not a create-if-absent**: it grants the system role every permission in `Permissions.All` that it does not already hold. Without that rule, an installation upgraded to a version defining a fifth permission would have an `Administrator` role silently missing it — the `--migrate` validation catches permission strings the code does not define, but nothing would catch grants the code defines and the database lacks.
 
 System roles are re-synced. Operator-created roles are never touched.
 
 Seeded role: `Administrator`, `IsSystemRole = true`, holding all four.
 
-A startup validation fails fast when `RolePermission` holds a permission string the code does not define. Without it a stale or misspelt row silently grants nothing, which looks identical to a working configuration until someone is denied access they believe they have.
+The `--migrate` entrypoint fails fast (exit 1) when `RolePermission` holds a permission string the code does not define. Without it a stale or misspelt row silently grants nothing, which looks identical to a working configuration until someone is denied access they believe they have.
+
+**It runs in `--migrate`, not at application startup, and that is deliberate.** A startup-time query would require a reachable database to boot, and this application is designed to start without one — `/alive` answers 200 and `/health` answers 503, which is what lets an orchestrator distinguish "starting" from "broken". `--migrate` already runs exactly once per deployment, with the database guaranteed present, and blocks a bad deployment before it serves traffic. Do not move this to startup without replacing that property.
 
 `IsSystemRole` marks roles the application depends on. In E02a it is **written by
 `RoleSeeder` and read by nothing**: it selects which roles the seeder re-syncs, and no
@@ -532,6 +534,8 @@ This requires correct client addresses, so forwarded-header trust is configured 
 
 Sign-in failures never distinguish an unknown user from a wrong password.
 
+**Residual, recorded rather than solved:** every partition key is an identity *and* an address, and there is no address-only bucket. One host trying one password against many distinct user names is therefore throttled per account, not in aggregate — password spraying is the shape this does not blunt. Lockout still applies per account, and a sprayer collecting one weak password out of many accounts is exactly what mandatory TOTP is there for. An address-only bucket would add a self-denial-of-service behind a shared address, which is the failure this key was changed to avoid.
+
 ## 9. Data Protection, web hardening and observability
 
 The key ring is persisted to PostgreSQL with `PersistKeysToDbContext<DataProtectionDbContext>()` and a fixed application name, so every replica shares one ring and it is covered by the existing database backup rather than needing a second backup story.
@@ -726,7 +730,7 @@ Per `SPEC-v0.1.md` §10, in order of preference: real objects, then fakes, then 
 
 | Tier | Coverage |
 | --- | --- |
-| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the permission authorization handler; the startup validation rejecting an undefined permission; the enrolment-gate path policy. **Not** `IsSystemRole` protection or a last-administrator guard: neither exists, and §6 explains why |
+| Unit (`Fakturenn.Modules.Identity.UnitTests`) | permission-to-policy mapping; the permission authorization handler; the `--migrate` validation rejecting an undefined permission; the enrolment-gate path policy. **Not** `IsSystemRole` protection or a last-administrator guard: neither exists, and §6 explains why |
 | Unit (`Fakturenn.Web.UnitTests`) | host composition — forwarded-header trust parsing including that a configured-but-unparseable list throws, the RFC 7239 translation, the resolved claims-principal factory, the localization resource guards, the `_msg` JSON formatter |
 | Integration | both new migrations apply to a clean database and are idempotent; a TOTP secret round-trips through the value converter and is **not** readable as plaintext in the column; the Data Protection ring survives a simulated restart; **the claims factory derives a user's permissions from their roles**; seeding re-syncs a system role that is missing a permission the code defines; audit stamping, including that `CreatedBy` survives an update that tries to change it |
 | UI (Playwright) | the full password + TOTP journey; `/setup` redirecting to sign-in after the first user; **signing out from the layout control and landing without a session**; lockout after five failures; recovery-code sign-in consuming the code; **an authorized page reaching a permitted user rather than 403**; forced password change on first sign-in; that the Content Security Policy does not block the application's own scripts or styles |
