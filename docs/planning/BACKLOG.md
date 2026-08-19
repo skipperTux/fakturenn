@@ -85,3 +85,37 @@ Off by default, threshold in configuration.
 **The real risk is allocating that counter concurrently.** Two invoices generated at the same instant both read the same "highest counter today" and both compute the same next value; a unique index then turns the loser into a *failure* rather than a correct second number. This is the same check-then-act shape as first-administrator creation, and E02a already established the pattern: a PostgreSQL advisory lock held for the transaction — see `SetupLock` and the notes in `IMPLEMENTATION-NOTES.md` under Persistence, including the requirement that an explicit transaction under `EnableRetryOnFailure` goes through `CreateExecutionStrategy().ExecuteAsync(...)` and builds its entities inside the delegate, because that delegate can re-run.
 
 **Also needs:** a uniqueness constraint on the invoice number in the database, so the guarantee does not rest on the allocator alone.
+
+## xunit v3 4.0.0: the parallelism attribute has no drop-in replacement
+
+**Lands in:** its own change, whenever it is convenient. Nothing depends on it.
+
+**Why it is not just a version bump.** 4.0.0 marks
+`CollectionBehavior.DisableTestParallelization` obsolete, and this repository
+treats warnings as errors, so the bump is a build failure rather than a warning.
+`tests/Fakturenn.UiTests/AssemblyInfo.cs` is the only place that uses it — and it
+is load-bearing: it keeps the browser suite serial so three EF Core hosts do not
+build models concurrently in one process. The comment above that line explains
+what happens when they do.
+
+**The blocker.** The release notes give the replacement as
+`[assembly: Parallelization(Mode = ParallelMode.Off)]`, but neither
+`ParallelizationAttribute` nor `ParallelMode` resolves from the packages
+`xunit.v3.mtp-v2` 4.0.0 restores — `xunit.v3.core` stays at 3.0.1 in the graph
+while `xunit.v3.core.mtp-v2` moves to 4.0.0. So this is a question about how the
+metapackage composes its dependencies, not a rename to look up. Answer that
+before editing the attribute.
+
+**Do not** work around it by suppressing the obsolete diagnostic, or by widening
+a timeout, or by deleting the attribute and hoping. Serial execution is the
+property under discussion, and a green run proves nothing about it — the failure
+it prevents was 2 reds in 13 runs.
+
+**Also worth checking while there:** 4.0.0 relaxes
+`TestContext.Current.CancellationToken` so it no longer throws once the context
+is disposed. This suite uses that token everywhere. A relaxation cannot break a
+correct caller, but it can hide an incorrect one, so it is worth a look rather
+than an assumption.
+
+**Dependabot PR #13 was closed rather than left open**, because a stale red PR
+on the board teaches everyone to ignore reds. Dependabot will re-raise it.
