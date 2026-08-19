@@ -126,8 +126,7 @@ jobs:
     # first-run setup, TOTP enrolment and several sign-ins. It also needs DOCKER now:
     # AuthenticatedWebAppFixture starts its own postgres:17-alpine container and hosts the
     # real application against it, so this job is no longer browser-only. The rest of the
-    # budget covers playwright.ps1 downloading and installing Chromium plus its OS
-    # dependencies on a bare runner.
+    # budget covers playwright.ps1 downloading Chromium on a bare runner.
     timeout-minutes: 15
     env:
       # Same insurance as the integration job, and for the same reason: this suite builds
@@ -151,11 +150,19 @@ jobs:
         # verified alternative for developers on that host). --with-deps installs
         # the OS packages Chromium needs (fonts, libgtk, etc.); a bare runner has
         # none of them, and --with-deps needs root, which the runner user has via
-        # passwordless sudo. ubuntu-latest is an officially supported Playwright OS
-        # -- unlike the Fedora host, where --with-deps could not be exercised (no
-        # non-interactive sudo, unsupported OS), so this flag is chosen but
-        # unverified locally.
-        run: pwsh tests/Fakturenn.UiTests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+        # ubuntu-latest is an officially supported Playwright OS, so the browser
+        # download alone is enough; the dev host installs the same browser through
+        # the Microsoft.Playwright.CLI global tool instead, because Fedora ships no
+        # pwsh. Do not "fix" either invocation to match the other.
+        # NOT --with-deps. That flag shells out to apt-get, and three consecutive runs
+        # hung there for the full 15-minute job timeout -- each stalling at the same
+        # point, reaching archive.ubuntu.com after the Azure mirror returned Ign: for
+        # every index. ubuntu-latest already ships the shared libraries headless
+        # Chromium needs, so the packages were almost certainly a no-op we were paying
+        # a network round trip for. If a library ever genuinely is missing, the browser
+        # fails to launch immediately with a named .so -- a legible failure in seconds,
+        # which is strictly better than a quarter-hour hang that says nothing.
+        run: pwsh tests/Fakturenn.UiTests/bin/Release/net10.0/playwright.ps1 install chromium
       - name: UI tests
         run: dotnet test --project tests/Fakturenn.UiTests --configuration Release --no-build
 
