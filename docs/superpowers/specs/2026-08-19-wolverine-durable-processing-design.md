@@ -86,9 +86,28 @@ Order is stated in code. Wolverine does not need the business schemas, but a
 partial `--migrate` that created messaging tables against a database with no
 business schema is a confusing halfway state.
 
-The steps stay separable so a future migration service can drive them in its own
-order without either being rewritten. That is a stated goal, not an accident of
-structure.
+**The steps are internal composition, not a public menu.** A future migration
+service is a self-contained service with one job and one operation: *migrate*.
+Its consumer calls that and gets success or failure — it does not choose which
+steps run, or in what order, or whether to skip one. Keeping the steps separable
+here is for readability and testing; the *contract* is a single operation, and
+that is what the eventual service exposes.
+
+Two consequences follow, and both belong in the code rather than in someone's
+head.
+
+**Taking a backup is not this operation's job.** It is a prerequisite the
+operator satisfies before invoking it. Nothing in `--migrate` will attempt one.
+
+**There is no full rollback, so failure must be precise.** PostgreSQL makes DDL
+transactional per migration, but this operation spans several `DbContext`
+migrations plus role seeding plus catalogue validation, and no transaction wraps
+all of them. A failure partway through therefore leaves a partially-migrated
+database. The operation's obligation is to say exactly which step failed and
+why, exit non-zero, and leave the operator to restore the backup — never to
+half-repair, and never to imply a rollback it cannot perform. The existing
+catalogue-validation failure already behaves this way: it names the offending
+permission and refuses to complete.
 
 **Nothing runs at startup.** An instance started against an un-provisioned
 database behaves like today's un-migrated one: `/alive` 200, `/health` 503.
@@ -153,6 +172,38 @@ adapter. Messaging is cross-cutting, like EF.
 This is written down because a future reviewer will see a module referencing a
 third-party messaging library, compare it to rules 2 and 3, and "fix" it by
 introducing the abstraction this section rejects.
+
+### What replacing Wolverine would actually cost
+
+The question worth asking about any abstraction is its price against the
+probability of needing it. Estimated here so the decision can be revisited with
+numbers rather than taste.
+
+**Portable as-is.** Handler bodies are plain methods taking a message — they move
+to MassTransit, NServiceBus or Rebus close to verbatim. Message types are POCOs
+in `.Contracts`. Neither carries Wolverine in its shape.
+
+**Contained already.** Transport choice, persistence, retry policy and
+provisioning — the genuinely heavy part — live entirely in
+`Fakturenn.Infrastructure.Messaging` and the host's registration. A swap
+rewrites that assembly, which is what it is for.
+
+**What leaks into slices** is the publish call itself: one line per call site.
+
+**Blast radius today is zero** — nothing publishes. At v0.1 completion, across
+E10, E12 and E14, realistically five to fifteen call sites.
+
+**Probability is low.** Wolverine with a PostgreSQL outbox is a deliberate fit
+for a self-hosted single-database application. The plausible trigger is
+abandonment or a licence change, not dissatisfaction.
+
+So the abstraction would cost an interface with one implementation and no test
+double — which `CLAUDE.md` bans outright — to save roughly a dozen one-line
+edits at low probability. Rejected.
+
+**The cheap insurance is a convention, not an interface:** keep publish calls
+thin and inside slice code, and keep Wolverine types out of domain types. That
+costs nothing and preserves most of the flexibility an abstraction would buy.
 
 ## 7. Testing: the seam we configured, not the library behind it
 
