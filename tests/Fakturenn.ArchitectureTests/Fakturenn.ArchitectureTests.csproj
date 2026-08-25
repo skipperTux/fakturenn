@@ -33,6 +33,7 @@
     <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Logging\Fakturenn.Infrastructure.Logging.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Messaging\Fakturenn.Infrastructure.Messaging.csproj" />
   </ItemGroup>
 
 </Project>
