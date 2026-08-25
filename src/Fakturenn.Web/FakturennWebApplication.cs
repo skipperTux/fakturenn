@@ -1,3 +1,4 @@
+using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
 using Fakturenn.Web.Components.Account;
@@ -99,6 +100,7 @@ public static class FakturennWebApplication
                 errorCodesToAdd: null)));
 
         builder.AddFakturennIdentity(connectionString, databaseOptions);
+        builder.AddFakturennMessaging(connectionString);
 
         WebApplication app = builder.Build();
 

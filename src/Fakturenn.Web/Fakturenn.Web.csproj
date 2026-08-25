@@ -52,6 +52,7 @@
     <ProjectReference Include="..\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
+    <ProjectReference Include="..\Fakturenn.Infrastructure.Messaging\Fakturenn.Infrastructure.Messaging.csproj" />
   </ItemGroup>
 
 </Project>

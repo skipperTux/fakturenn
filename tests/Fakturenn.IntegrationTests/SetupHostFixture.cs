@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Web;
@@ -93,6 +94,12 @@ public sealed class SetupHostFixture : IAsyncLifetime
             "--Serilog:WriteTo:1:Name=Sink",
             $"--Serilog:WriteTo:1:Args:sink={HostLogCapture.ConfigurationName}",
         ]);
+
+        // Wolverine's own durability agent queries its node table unconditionally during
+        // StartAsync -- there is no configuration that lets it start cleanly against a real
+        // connection string whose schema does not exist yet, the same way the DataProtection
+        // and Identity contexts above need their own schema before the host boots.
+        await MessagingStorage.ProvisionAsync(_app.Services, CancellationToken.None);
 
         await _app.StartAsync();
 

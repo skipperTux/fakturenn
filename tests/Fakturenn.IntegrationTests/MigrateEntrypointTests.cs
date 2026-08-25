@@ -1,8 +1,10 @@
+using System.Globalization;
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Fakturenn.IntegrationTests;
 
@@ -67,6 +69,27 @@ public sealed class MigrateEntrypointTests(PostgresFixture postgres) : IClassFix
             context.RolePermissions.Remove(stale);
             await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+    }
+
+    [Fact]
+    public async Task Migrate_provisions_the_messaging_schema()
+    {
+        // Wolverine's tables are created here and nowhere else: the host deliberately
+        // omits UseResourceSetupOnStartup, so an application that has never been
+        // migrated has no message storage at all.
+        (int exitCode, string output) = await RunMigrateAsync();
+        exitCode.Should().Be(0, output);
+
+        await using var connection = new NpgsqlConnection(postgres.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'messaging'";
+        object? found = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+
+        Convert.ToInt64(found, CultureInfo.InvariantCulture).Should().Be(
+            1,
+            "--migrate is the only thing that may create Wolverine's schema");
     }
 
     private static Guid ReadAdministratorRoleId(IdentityDbContext context) =>
