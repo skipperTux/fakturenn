@@ -228,10 +228,13 @@ Add to `tests/Fakturenn.IntegrationTests/MigrateEntrypointTests.cs`:
     [Fact]
     public async Task Migrate_provisions_the_messaging_schema()
     {
-        // Wolverine's tables are created here and nowhere else: the host deliberately
-        // omits UseResourceSetupOnStartup, so an application that has never been
-        // migrated has no message storage at all.
-        await using PostgresFixture database = await PostgresFixture.StartAsync();
+        // Wolverine's tables are created here and nowhere else: the host omits
+        // UseResourceSetupOnStartup *and* sets AutoBuildMessageStorageOnStartup to
+        // AutoCreate.None, so an application that has never been migrated has no
+        // message storage at all. Both knobs are needed -- see the design's section 4.
+        //
+        // Sketch only: PostgresFixture.StartAsync() does not exist. The committed test
+        // takes the database from the class fixture instead.
 
         int exitCode = await RunMigrateAsync(database.ConnectionString);
         exitCode.Should().Be(0);
@@ -317,21 +320,24 @@ Expected: PASS.
 
 Delete the `MessagingStorage.ProvisionAsync` call added in Step 4, rebuild, and re-run the integration suite. Confirm `Migrate_provisions_the_messaging_schema` reddens and nothing else does. Restore it, and confirm `git status --short src/` is empty afterwards.
 
-- [ ] **Step 7: Verify the startup invariant by hand**
+- [ ] **Step 7: Superseded -- the startup invariant is now covered by a test**
 
-Start the application against a database that has **not** been migrated and confirm no `messaging` schema appears — Wolverine must not provision on boot.
+This step originally started the application against an unmigrated database and
+expected `/alive` 200 with no `messaging` schema. **That expectation is wrong and the
+step cannot pass.** The design's section 4, amended after this plan was written, rules
+that a host configured with a connection string against an unprovisioned database
+*crashes during `StartAsync`*, deliberately: Wolverine's durability agent queries
+`messaging.wolverine_nodes` unconditionally, and a database that has never been
+migrated is a deployment error rather than a transient fault.
 
-```bash
-cd /home/christoph/Projects/fakturenn
-docker run --detach --name fakturenn-msg -e POSTGRES_DB=dev -e POSTGRES_USER=dev -e POSTGRES_PASSWORD=dev --publish 55433:5432 postgres:17-alpine
-DOTNET_USE_POLLING_FILE_WATCHER=1 ConnectionStrings__Fakturenn='Host=127.0.0.1;Port=55433;Database=dev;Username=dev;Password=dev' \
-  dotnet run --project src/Fakturenn.Web --configuration Release --urls http://127.0.0.1:5099 &
-sleep 15
-curl --silent --output /dev/null --write-out 'alive=%{http_code} health=%{http_code}\n' http://127.0.0.1:5099/alive
-docker exec fakturenn-msg psql -U dev -d dev -c '\dn'
-```
-
-Expected: `/alive` 200, and `\dn` shows **no** `messaging` schema. Stop the app and remove the container.
+The invariant itself still holds and is now enforced automatically, which is better
+than a manual step nobody re-runs:
+`MessagingStartupTests.Startup_does_not_provision_the_messaging_schema` boots the real
+host against an EF-migrated database with no `messaging` schema and asserts both that
+startup fails and that the schema is still absent. Its companion,
+`MessagingStartupTests.A_host_with_no_connection_string_reports_that_messages_are_not_durable`,
+covers the other un-provisioned case: no connection string configured, where the host
+*does* start on in-memory queues and must say so at Critical.
 
 - [ ] **Step 8: Run everything and commit**
 
