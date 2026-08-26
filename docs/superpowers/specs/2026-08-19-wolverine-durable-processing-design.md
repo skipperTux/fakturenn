@@ -85,9 +85,31 @@ required: omit `UseResourceSetupOnStartup()` **and** set
 `AutoBuildMessageStorageOnStartup = AutoCreate.None`.
 
 **Wolverine 6.30.0 no longer bundles Roslyn**, so the default
-`TypeLoadMode.Dynamic` throws at startup. `TypeLoadMode.Auto` uses reflection
-dispatch, needs no extra package and no `codegen write` step. Revisit only if
-handler dispatch shows up in a profile.
+`TypeLoadMode.Dynamic` throws at startup.
+
+An earlier draft said `TypeLoadMode.Auto` "uses reflection dispatch" and needs no
+extra package. **It does not, and that claim survived only because there was no
+handler to dispatch.** `Auto` means *load pre-generated types from the
+application assembly, and generate them if there are none* — there is no
+reflection path in Wolverine's handler pipeline at all. The failure therefore
+appears at **dispatch**, not at startup: the first real handler produced *No
+IAssemblyGenerator is registered in the application's service provider, but
+runtime code generation was requested* from `AutoTypeLoader.Initialize`, on a
+host that had started cleanly and reported healthy, with the message left
+undelivered.
+
+So the generator has to exist, and `WolverineFx.RuntimeCompilation`'s
+`options.UseRuntimeCompilation()` registers it — option (a) in Wolverine's own
+remediation text. Option (b), pre-generating with `codegen write` and
+`TypeLoadMode.Static`, was rejected on two counts: pre-generated types load from
+the **application** assembly, so a handler living anywhere else — the integration
+suite's outbox probe, for one — could never be dispatched; and a forgotten
+regeneration is a runtime failure rather than a build error.
+
+One consequence worth knowing before E12 ships a handler: in `Auto`, generating
+also **writes the generated source to the content root**. Nothing generates today
+because nothing handles anything, and no deployment document mandates a
+read-only root filesystem, so this is a note rather than a blocker.
 
 **`--migrate` becomes a sequence of separately-invocable steps**, not one call:
 
@@ -285,6 +307,13 @@ Four assertions, each about our configuration.
    `messaging.*` before any handler runs. This is the sliver of durability that
    is ours: it proves durable storage was selected rather than an in-memory
    transport, which would pass 1 and 2 and lose everything on restart.
+
+   The table is `messaging.wolverine_incoming_envelopes`, not the outgoing one.
+   `EnvelopeTransactionExtensions.PersistAsync` routes anything whose destination
+   scheme is `local` to the inbox, and every message this application queues goes
+   to a durable **local** queue, so `wolverine_outgoing_envelopes` stays empty.
+   The count must also be scoped to the message under test — the whole table is
+   satisfied by any other test's row, or by a leftover from an earlier run.
 4. **Handler discovery is configured for the module assemblies.** A
    host-composition guard in `tests/Fakturenn.Web.UnitTests`, the same site and
    reason as `The_claims_principal_factory_is_the_permission_factory`: wiring a
