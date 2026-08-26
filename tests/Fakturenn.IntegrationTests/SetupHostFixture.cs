@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.IntegrationTests.Messaging;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Web;
@@ -15,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Testcontainers.PostgreSql;
+using Wolverine;
 
 namespace Fakturenn.IntegrationTests;
 
@@ -94,6 +96,14 @@ public sealed class SetupHostFixture : IAsyncLifetime
             "--Serilog:WriteTo:1:Name=Sink",
             $"--Serilog:WriteTo:1:Args:sink={HostLogCapture.ConfigurationName}",
         ]);
+
+        // Wolverine discovers handlers in the application assembly, which is the one that
+        // calls UseWolverine -- Fakturenn.Infrastructure.Messaging. OutboxProbeHandler lives
+        // in this test project, so its assembly is named explicitly here. This says nothing
+        // about production discovery: that the module assemblies are scanned is a separate
+        // guard, and it belongs with the host composition rather than with a test fixture.
+        _app.Services.GetRequiredService<WolverineOptions>()
+            .Discovery.IncludeAssembly(typeof(OutboxProbeHandler).Assembly);
 
         // Wolverine's own durability agent queries its node table unconditionally during
         // StartAsync -- there is no configuration that lets it start cleanly against a real

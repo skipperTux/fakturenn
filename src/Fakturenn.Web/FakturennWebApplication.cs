@@ -8,6 +8,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Extensions.Logging;
+using Wolverine.EntityFrameworkCore;
 
 namespace Fakturenn.Web;
 
@@ -88,16 +89,32 @@ public static class FakturennWebApplication
             builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()
                 ?? new DatabaseOptions();
 
+        // Enrolled with the outbox so a slice's rows and its queued messages commit in one
+        // transaction. The enrolment lives here, in the host: Fakturenn.Modules.Invoices
+        // references neither Wolverine nor Fakturenn.Infrastructure.Messaging, and its
+        // DbContext is untouched -- the same arrangement as the audit interceptor.
+        //
+        // InvoicesDbContext is schema-only today (no DbSet, one migration that creates the
+        // schema). Enrolling an empty context is fine: the outbox binds to its connection
+        // and transaction, not to its entities, and adds no entity type to its model -- so
+        // it does not drift the module's own migrations.
+        //
+        // The schema is passed rather than left to default, so the outbox writes its
+        // envelopes where MessagingStorage provisioned them.
+        //
         // EnableRetryOnFailure covers transient failures during normal operation, once the
         // application is already serving traffic (e.g. a brief network blip, a PostgreSQL
         // failover). It is deliberately NOT used by the "--migrate" entrypoint's own
         // DbContext -- see DatabaseMigrator's remarks for why nesting the two would multiply
-        // the total wait.
-        builder.Services.AddDbContext<InvoicesDbContext>(options =>
-            options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+        // the total wait. A caller that opens its own transaction on this context must hand
+        // the whole unit of work to Database.CreateExecutionStrategy(), which is what EF
+        // requires of any user-initiated transaction under a retrying strategy.
+        builder.Services.AddDbContextWithWolverineIntegration<InvoicesDbContext>(
+            options => options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
                 databaseOptions.MaxRetries,
                 TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
-                errorCodesToAdd: null)));
+                errorCodesToAdd: null)),
+            MessagingConfiguration.SchemaName);
 
         builder.AddFakturennIdentity(connectionString, databaseOptions);
         builder.AddFakturennMessaging(connectionString);

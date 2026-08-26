@@ -37,6 +37,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
     <PackageReference Include="MudBlazor" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <!-- Named directly by FakturennWebApplication: the host is where module contexts are
+         enrolled with the outbox, so the EF Core integration is a compile-time dependency
+         of this project rather than something inherited from Fakturenn.Infrastructure.Messaging. -->
+    <PackageReference Include="WolverineFx.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup>
