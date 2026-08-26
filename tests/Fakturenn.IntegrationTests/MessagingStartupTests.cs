@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using AwesomeAssertions;
 using AwesomeAssertions.Execution;
 using Fakturenn.Infrastructure.DataProtection;
@@ -24,6 +25,14 @@ namespace Fakturenn.IntegrationTests;
 /// PostgreSQL instance and creates one more database inside it. The integration suite
 /// already peaks at eleven concurrent containers on a two-core runner, so a twelfth
 /// would be a real cost for no extra coverage.
+/// </para>
+/// <para>
+/// The two tests are not independent: both swap the process-wide <see cref="Log.Logger"/>
+/// and put it back, so one that failed to restore would break the other — and every other
+/// class in the collection. That is safe only because the <see cref="RealHost"/> collection
+/// serialises its classes and xUnit runs the tests within one class one after another, so
+/// no other test observes the swapped logger. If either ever runs in parallel with
+/// anything, the save-and-restore in <see cref="StartAndStopAsync"/> stops being enough.
 /// </para>
 /// </summary>
 [Collection(RealHost.Name)]
@@ -85,6 +94,23 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
         // nothing else in this suite ever meets an unprovisioned database.
         string connectionString = await CreateEfMigratedDatabaseAsync();
 
+        // Precondition, not the behaviour under test. Everything below reads a startup
+        // failure as evidence about messaging, which only holds while messaging is the one
+        // thing missing. If a module is added to Program.cs's createMigrationContexts and
+        // CreateEfMigratedDatabaseAsync is not extended with it, startup fails on that
+        // schema instead and the assertions below still pass -- the test goes green with
+        // AutoBuildMessageStorageOnStartup regressed. Asserting the expected set here says
+        // so at the point it breaks, and naming the missing schema.
+        IReadOnlyList<string> migrated = await ListApplicationSchemasAsync(connectionString);
+
+        migrated.Should().BeEquivalentTo(
+            [
+                DataProtectionDbContext.SchemaName,
+                IdentityDbContext.SchemaName,
+                InvoicesDbContext.SchemaName,
+            ],
+            "this test's premise is a database that is fully EF-migrated and nothing more");
+
         Exception? startFailure = await StartAndStopAsync(
         [
             "--urls",
@@ -95,9 +121,11 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
         // Counted after the host is gone, so DDL applied late during startup still shows up.
         long schemas = await CountMessagingSchemasAsync(connectionString);
 
-        // Both halves, in one scope so a regression reports both. The absent schema is the
-        // load-bearing half: a throw on its own could come from an unrelated fault, and it
-        // is boot-time DDL rather than the exception that this test exists to catch.
+        // All three in one scope so a regression reports all of them. The absent schema is
+        // the load-bearing one -- it is boot-time DDL, not the exception, that this test
+        // exists to catch. The other two are what stop an unrelated fault from reading as
+        // proof: a throw alone could come from anywhere, and "no schema" is equally true of
+        // a host that fell over before Wolverine ever ran.
         using (new AssertionScope())
         {
             // The crash is the ruled behaviour, not an accident: an instance pointed at a
@@ -106,6 +134,18 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
             startFailure.Should().NotBeNull(
                 "a host whose message storage does not exist must refuse to start rather "
                 + "than serve traffic with delivery guarantees that turned out imaginary");
+
+            // Which storage it crashed over. 6.30.0 raises this from
+            // MessageDatabase.AssertStorageExistsAsync, whose message names no table -- the
+            // durability agent's messaging.wolverine_nodes query, which the design describes,
+            // belongs to configurations this one no longer reaches. So the match is on
+            // Wolverine's own noun for the missing thing rather than on a relation name or a
+            // whole sentence: short enough to survive the library rewording its diagnostics,
+            // specific enough that no unrelated startup fault produces it.
+            Describe(startFailure).Should().Contain(
+                "message storage",
+                "a startup failure only proves the invariant if it is *this* failure -- any "
+                + "other fault would satisfy the two assertions around it just as well");
 
             schemas.Should().Be(
                 0,
@@ -126,30 +166,90 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
     /// kept serving requests happily and every assertion in
     /// <c>AuthEventLoggingTests</c> failed on an empty log.
     /// </para>
+    /// <para>
+    /// Hence two nested <c>finally</c> blocks rather than one. <c>Build</c> replaces
+    /// <c>Log.Logger</c> before it can throw, so it belongs inside the outer <c>try</c>;
+    /// and <c>DisposeAsync</c> throwing must not skip the restore, which a single block
+    /// would let it do. The order the pair produces is the one the restore needs:
+    /// dispose first — it calls <c>Log.CloseAndFlush</c> on whatever logger is current —
+    /// and only then put the fixture's logger back, so it is never the one flushed shut.
+    /// </para>
     /// </summary>
     private static async Task<Exception?> StartAndStopAsync(string[] arguments)
     {
         Serilog.ILogger fixtureLogger = Log.Logger;
 
-        WebApplication app = FakturennWebApplication.Build(arguments);
-
         try
         {
-            Exception? failure = await Record.ExceptionAsync(
-                () => app.StartAsync(TestContext.Current.CancellationToken));
+            WebApplication app = FakturennWebApplication.Build(arguments);
 
-            if (failure is null)
+            try
             {
-                await app.StopAsync(TestContext.Current.CancellationToken);
-            }
+                Exception? failure = await Record.ExceptionAsync(
+                    () => app.StartAsync(TestContext.Current.CancellationToken));
 
-            return failure;
+                if (failure is null)
+                {
+                    await app.StopAsync(TestContext.Current.CancellationToken);
+                }
+
+                return failure;
+            }
+            finally
+            {
+                await app.DisposeAsync();
+            }
         }
         finally
         {
-            await app.DisposeAsync();
             Log.Logger = fixtureLogger;
         }
+    }
+
+    /// <summary>
+    /// Every message down the chain, joined. What the host throws today is an
+    /// <see cref="AggregateException"/> around Wolverine's own exception, and the number of
+    /// layers is the library's business rather than this test's, so matching the outermost
+    /// message alone would be brittle for no reason.
+    /// </summary>
+    private static string Describe(Exception? failure)
+    {
+        StringBuilder chain = new();
+
+        for (Exception? current = failure; current is not null; current = current.InnerException)
+        {
+            chain.AppendLine(current.Message);
+        }
+
+        return chain.ToString();
+    }
+
+    /// <summary>
+    /// The schemas this application owns: PostgreSQL's own are excluded, and so is
+    /// <c>public</c>, which every database has whether or not anything migrated into it.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> ListApplicationSchemasAsync(string connectionString)
+    {
+        await using NpgsqlConnection connection = new(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT schema_name FROM information_schema.schemata "
+            + "WHERE schema_name NOT IN ('public', 'information_schema') "
+            + "AND schema_name NOT LIKE 'pg\\_%'";
+
+        List<string> schemas = [];
+
+        await using NpgsqlDataReader reader =
+            await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            schemas.Add(reader.GetString(0));
+        }
+
+        return schemas;
     }
 
     private static async Task<long> CountMessagingSchemasAsync(string connectionString)
