@@ -96,7 +96,7 @@ if (args.Contains("--migrate"))
         }
         catch (Exception failure)
         {
-            MigrationSeedLog.MessagingProvisioningFailed(migrationLogger, failure.Message);
+            MigrationSeedLog.MessagingProvisioningFailed(migrationLogger, failure);
             exitCode = 1;
         }
     }
@@ -185,10 +185,14 @@ internal static partial class MigrationSeedLog
         Message = "Provisioned messaging storage.")]
     public static partial void ProvisionedMessagingStorage(ILogger logger);
 
+    // Takes the exception rather than its Message, like every other Critical in
+    // DatabaseMigrator: Wolverine wraps a provisioning fault in an AggregateException, whose
+    // Message is "One or more errors occurred." An operator told to restore a backup needs
+    // the type, the inner exception and the stack, not that sentence.
     [LoggerMessage(
         Level = LogLevel.Critical,
-        Message = "Could not provision messaging storage: {Reason}. The database may be "
-            + "partially migrated. Restore the backup taken before this run rather than "
-            + "re-running against this state.")]
-    public static partial void MessagingProvisioningFailed(ILogger logger, string reason);
+        Message = "Could not provision messaging storage. The database may be partially "
+            + "migrated. Restore the backup taken before this run rather than re-running "
+            + "against this state.")]
+    public static partial void MessagingProvisioningFailed(ILogger logger, Exception exception);
 }

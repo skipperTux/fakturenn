@@ -1,5 +1,6 @@
 using JasperFx;
 using JasperFx.CodeGeneration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Wolverine;
 using Wolverine.Postgresql;
@@ -26,6 +27,15 @@ public static class MessagingConfiguration
     // public Methods
     public static void AddFakturennMessaging(this IHostApplicationBuilder builder, string? connectionString)
     {
+        // Outside the UseWolverine lambda deliberately. The same condition is checked again
+        // inside it, but nothing there can report anything: the lambda runs without a
+        // logger, and so does registration itself. A hosted service is what gets the
+        // consequence onto the host's real logging pipeline at startup.
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            builder.Services.AddHostedService<NonDurableMessagingWarning>();
+        }
+
         builder.UseWolverine(options =>
         {
             // Default TypeLoadMode is Dynamic, which compiles handler/middleware code at
@@ -53,6 +63,8 @@ public static class MessagingConfiguration
             // the application starts without a database. Falling through to Wolverine's
             // in-memory local queues keeps that invariant for a host with nothing configured;
             // durability is meaningless there anyway, since nothing persists it either way.
+            // NonDurableMessagingWarning, registered above, is what keeps that fallback from
+            // being silent.
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 return;
