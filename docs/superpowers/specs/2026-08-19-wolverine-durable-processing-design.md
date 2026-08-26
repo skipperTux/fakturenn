@@ -72,9 +72,22 @@ found.
 
 **Auto-provisioning at startup is switched off explicitly**, with a comment
 naming the invariant it would otherwise break: *migrations never run
-automatically at startup; use the explicit `--migrate` entrypoint*. Wolverine
-would otherwise create its schema on boot, which is exactly what that rule
-forbids.
+automatically at startup; use the explicit `--migrate` entrypoint*.
+
+**Two knobs, not one.** An earlier draft of this section said that omitting
+`UseResourceSetupOnStartup()` was sufficient. It is not, and the error was found
+by starting the host rather than by reading documentation:
+`WolverineOptions.AutoBuildMessageStorageOnStartup` is a *separate* setting
+defaulting to `AutoCreate.CreateOrUpdate`, and with only the first omission the
+host created the entire `messaging` schema on boot — confirmed by Wolverine's own
+log line, `Applied database migration for Wolverine Envelope Storage`. Both are
+required: omit `UseResourceSetupOnStartup()` **and** set
+`AutoBuildMessageStorageOnStartup = AutoCreate.None`.
+
+**Wolverine 6.30.0 no longer bundles Roslyn**, so the default
+`TypeLoadMode.Dynamic` throws at startup. `TypeLoadMode.Auto` uses reflection
+dispatch, needs no extra package and no `codegen write` step. Revisit only if
+handler dispatch shows up in a profile.
 
 **`--migrate` becomes a sequence of separately-invocable steps**, not one call:
 
@@ -109,8 +122,35 @@ half-repair, and never to imply a rollback it cannot perform. The existing
 catalogue-validation failure already behaves this way: it names the offending
 permission and refuses to complete.
 
-**Nothing runs at startup.** An instance started against an un-provisioned
-database behaves like today's un-migrated one: `/alive` 200, `/health` 503.
+**Nothing provisions at startup**, and the two un-provisioned cases now behave
+differently. This is a deliberate ruling, not an accident of the library.
+
+*No connection string configured* — the host starts. `AddFakturennMessaging`
+returns before configuring persistence and Wolverine falls back to in-memory
+queues, so `/alive` answers 200 and `/health` answers 503 exactly as before. The
+database-free UI fixture depends on this.
+
+Because that fallback is silent, **the host must log at Critical when durable
+persistence is not configured**, naming the consequence: messages are held in
+memory and will not survive a restart. A silently non-durable instance is the
+failure class this design exists to prevent, and a fallback nobody is told about
+reintroduces it.
+
+*A connection string configured, but the schema not provisioned* — **the host
+crashes during `StartAsync`, and that is intended.** Wolverine's durability agent
+queries `messaging.wolverine_nodes` unconditionally in every mode that keeps
+local queues live; `ResourceMigrationFailureMode.ContinueOnFailures` and
+`DurabilityMode.Solo` were both tried and both still crashed, from a second
+touchpoint. Rather than fight the library into a "starts fine, storage silently
+absent" shape it does not support, this design accepts the crash.
+
+The reasoning, weighed against this project's stated preference for self-healing
+over crash-looping: an instance pointed at a real database that has never been
+migrated is a **deployment error**, not a transient fault. `DEPLOYMENT-BASELINE.md`
+already mandates a migration step before traffic. Retrying cannot fix a missing
+schema, so a crash loop here is a loud, correct signal rather than a failure to
+recover — unlike a database that is merely slow to accept connections, which
+`DatabaseMigrator`'s retry budget does and should absorb.
 
 ## 5. The outbox seam
 
