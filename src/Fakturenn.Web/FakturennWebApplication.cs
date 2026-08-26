@@ -96,11 +96,16 @@ public static class FakturennWebApplication
         //
         // InvoicesDbContext is schema-only today (no DbSet, one migration that creates the
         // schema). Enrolling an empty context is fine: the outbox binds to its connection
-        // and transaction, not to its entities, and adds no entity type to its model -- so
-        // it does not drift the module's own migrations.
+        // and transaction, not to its entities. Wolverine's model customizer does map its
+        // envelope entities into this context's model, but as ExcludeFromMigrations(true),
+        // so the module's own migrations cannot drift.
         //
-        // The schema is passed rather than left to default, so the outbox writes its
-        // envelopes where MessagingStorage provisioned them.
+        // The schema argument is inert in Wolverine 6.30.0 -- IL disassembly of
+        // addDbContextWithWolverineIntegration shows the parameter is never read. The schema
+        // the outbox actually writes to comes from PersistMessagesWithPostgresql in
+        // MessagingConfiguration, by way of WolverineModelCustomizer resolving
+        // DatabaseSettings. It is passed anyway so a version that starts honouring the
+        // parameter agrees with the one place that decides today.
         //
         // EnableRetryOnFailure covers transient failures during normal operation, once the
         // application is already serving traffic (e.g. a brief network blip, a PostgreSQL

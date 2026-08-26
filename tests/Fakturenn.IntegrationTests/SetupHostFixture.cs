@@ -105,10 +105,10 @@ public sealed class SetupHostFixture : IAsyncLifetime
         _app.Services.GetRequiredService<WolverineOptions>()
             .Discovery.IncludeAssembly(typeof(OutboxProbeHandler).Assembly);
 
-        // Wolverine's own durability agent queries its node table unconditionally during
-        // StartAsync -- there is no configuration that lets it start cleanly against a real
-        // connection string whose schema does not exist yet, the same way the DataProtection
-        // and Identity contexts above need their own schema before the host boots.
+        // Wolverine asserts its message storage exists during StartAsync -- there is no
+        // configuration that lets it start cleanly against a real connection string whose
+        // schema does not exist yet, the same way the DataProtection and Identity contexts
+        // above need their own schema before the host boots.
         await MessagingStorage.ProvisionAsync(_app.Services, CancellationToken.None);
 
         await _app.StartAsync();

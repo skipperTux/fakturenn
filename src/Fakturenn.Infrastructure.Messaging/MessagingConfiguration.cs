@@ -103,14 +103,18 @@ public static class MessagingConfiguration
             // database migration for Wolverine Envelope Storage". Turning this off is
             // what actually keeps startup from touching the schema.
             //
-            // It does not make startup tolerant of a missing schema, though -- verified by
-            // reading WolverineRuntime.HostService.cs (tryMigrateStorage,
-            // loadAgentRestrictionsAsync) and NodeAgentController.StartLocally.cs
-            // (StartSoloModeAsync): every durability mode that keeps local queues live
-            // (Balanced, Solo) queries messaging.wolverine_nodes unconditionally during
-            // WolverineRuntime.StartAsync, with no ResourceMigrationFailureMode guard around
-            // that particular query. A host with a real, unmigrated connection string fails
-            // to start -- which is the correct failure shape here: DEPLOYMENT-BASELINE.md's
+            // It does not make startup tolerant of a missing schema, though. With this set,
+            // Wolverine logs "Skipping automatic message storage migration on startup" and
+            // then throws from its own explicit check, MessageDatabase.AssertStorageExistsAsync:
+            // "The Wolverine message storage for database 'default' is missing or out of date".
+            // Note where that is NOT -- an earlier comment here blamed the durability agent's
+            // wolverine_nodes query, which is where ContinueOnFailures and Solo crash, not the
+            // shipped configuration; neither "wolverine_nodes" nor "messaging" appears anywhere
+            // in the resulting exception chain, so anything matching on the failure text must
+            // match on Wolverine's own noun, "message storage".
+            //
+            // A host with a real, unmigrated connection string fails to start -- which is the
+            // correct failure shape here: DEPLOYMENT-BASELINE.md's
             // migration Job always runs before a replica serves traffic, so a host that
             // reaches this point with a real connection string and no schema has skipped a
             // required step, and the intended thing to fail is startup itself, not launch

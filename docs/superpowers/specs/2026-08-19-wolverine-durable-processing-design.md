@@ -289,10 +289,23 @@ Four assertions, each about our configuration.
    from direct publishing, and the failure it catches — a failed invoice still
    firing its e-invoice — is invisible in the happy path.
 
-   The discriminator is the *handler invocation*, not the absent envelope: a
-   direct, non-transactional publish leaves no envelope row either, because it
-   never writes one. Only "the message was delivered despite the rollback"
-   separates the two.
+   **The discriminator is the envelope count, not the handler invocation.** An
+   earlier draft said the reverse, and Task 3 disproved it by mutating the test
+   itself: committing instead of rolling back left "the handler never ran" green.
+   An outbox delivers on the *flush after* a commit, not on the commit, so that
+   assertion stays green under both regressions actually reachable here — a
+   non-durable local queue, and a commit without a flush.
+
+   What carries the transactional claim is the pair of counts: one envelope
+   inside the caller's transaction, zero once it aborts. The delivery assertion
+   is that property's consequence, not its proof. Do not delete the counts as
+   redundant.
+
+   The direct, non-transactional publish this paragraph originally imagined is
+   not reachable through this test at all: `IDbContextOutbox<T>`'s constructor
+   always sets `Transaction`, so a broken enrolment surfaces as
+   `IDbContextOutbox<InvoicesDbContext>` failing to resolve, not as a message
+   escaping the transaction.
 
    **No business row is written, because there is none to write.**
    `InvoicesDbContext` is schema-only today — it declares no `DbSet` and its
@@ -325,13 +338,36 @@ enrolment fails a test rather than shipping a silently non-transactional
 publisher. Enrolment is per-context, and an unenrolled context still *publishes*
 — non-transactionally, with no error and no warning.
 
-**Each is proven by mutation.** Break the enrolment and 1 must redden; point
-storage at in-memory and 3 must redden; drop an assembly from discovery and 4
-must redden. A mutation that leaves everything green means the test is
-decorative and it is removed or fixed, not kept.
+**Each is proven by mutation.** Break the enrolment and 1 must redden; drop an
+assembly from discovery and 4 must redden. A mutation that leaves everything
+green means the test is decorative and it is removed or fixed, not kept.
+
+For 3, use `options.Policies.UseDurableLocalQueues()` — removing it reddens only
+the durability assertion, while the host still starts and the fixture still
+initialises. **Do not use the obvious mutation of removing
+`PersistMessagesWithPostgresql`.** It looks decisive and is not: `SetupHostFixture`
+provisions through `IMessageStore`, so the fixture dies in `InitializeAsync`
+before any assertion runs, and the red tells you nothing about assertion 3.
 
 **The message type and handler live in the integration test project.** Nothing
 demonstrative ships in production code.
+
+**`UseEntityFrameworkCoreTransactions()` is deliberately not called**, because
+`AddDbContextWithWolverineIntegration` already registers the persistence it
+applies. It is not a no-op, though, and the difference matters later: it also
+adds every registered `DbContext` to `GenerationRules.AlwaysUseServiceLocationFor`,
+sets `EFCorePersistenceFrameProvider.DefaultMode` to eager transaction
+middleware, and registers an ancillary store frame provider,
+`OutgoingDomainEvents` and `DatabaseCleaner`. None of that is needed while the
+only handler takes no `DbContext`.
+
+The first of those is the one E12 must check rather than rediscover. A handler
+declared as `Handle(InvoiceFinalized message, InvoicesDbContext context)` has its
+context argument sourced by generated code, and without the service-location
+allow-list that decision is Wolverine's default rather than "resolve from the
+scope". A handler holding a *different* context instance than the outbox is
+precisely the silently non-transactional publisher this design exists to prevent.
+One test at E12 settles it.
 
 ### What is deliberately not tested
 
