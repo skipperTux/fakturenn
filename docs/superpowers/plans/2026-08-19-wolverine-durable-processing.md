@@ -326,9 +326,10 @@ This step originally started the application against an unmigrated database and
 expected `/alive` 200 with no `messaging` schema. **That expectation is wrong and the
 step cannot pass.** The design's section 4, amended after this plan was written, rules
 that a host configured with a connection string against an unprovisioned database
-*crashes during `StartAsync`*, deliberately: Wolverine's durability agent queries
-`messaging.wolverine_nodes` unconditionally, and a database that has never been
-migrated is a deployment error rather than a transient fault.
+*crashes during `StartAsync`*, deliberately: Wolverine's own
+`MessageDatabase.AssertStorageExistsAsync` refuses to run against storage it did not
+find, and a database that has never been migrated is a deployment error rather than a
+transient fault.
 
 The invariant itself still holds and is now enforced automatically, which is better
 than a manual step nobody re-runs:

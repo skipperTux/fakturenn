@@ -137,12 +137,24 @@ failure class this design exists to prevent, and a fallback nobody is told about
 reintroduces it.
 
 *A connection string configured, but the schema not provisioned* — **the host
-crashes during `StartAsync`, and that is intended.** Wolverine's durability agent
-queries `messaging.wolverine_nodes` unconditionally in every mode that keeps
-local queues live; `ResourceMigrationFailureMode.ContinueOnFailures` and
-`DurabilityMode.Solo` were both tried and both still crashed, from a second
-touchpoint. Rather than fight the library into a "starts fine, storage silently
-absent" shape it does not support, this design accepts the crash.
+crashes during `StartAsync`, and that is intended.** With
+`AutoBuildMessageStorageOnStartup = AutoCreate.None`, Wolverine logs *Skipping
+automatic message storage migration on startup* and then throws from its own
+explicit check, `MessageDatabase.AssertStorageExistsAsync`: *The Wolverine message
+storage for database 'default' is missing or out of date (schema difference:
+Create).*
+
+An earlier draft attributed the crash to the durability agent's
+`messaging.wolverine_nodes` query. That was measured against
+`ResourceMigrationFailureMode.ContinueOnFailures` and `DurabilityMode.Solo` —
+both were tried, both still crashed, from that second touchpoint — but it is
+**not** where the shipped configuration dies, and neither `wolverine_nodes` nor
+`messaging` appears anywhere in the resulting exception chain. Anything matching
+on the failure text must match on Wolverine's own noun, *message storage*. The
+ruling is unchanged; only the mechanism was misdescribed.
+
+Rather than fight the library into a "starts fine, storage silently absent" shape
+it does not support, this design accepts the crash.
 
 The reasoning, weighed against this project's stated preference for self-healing
 over crash-looping: an instance pointed at a real database that has never been
