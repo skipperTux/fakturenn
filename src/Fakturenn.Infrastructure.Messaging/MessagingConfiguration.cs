@@ -40,19 +40,32 @@ public static class MessagingConfiguration
         {
             // Default TypeLoadMode is Dynamic, which compiles handler/middleware code at
             // startup through Roslyn. Core WolverineFx 6.30.0 no longer ships that
-            // compiler, so Dynamic throws at host startup with no handlers registered at
-            // all -- confirmed by starting the real host, not read off documentation. Auto
-            // falls back to reflection-based invocation when no IAssemblyGenerator is
-            // registered, which is exactly this host's situation, and needs no
-            // WolverineFx.RuntimeCompilation package and no `codegen write` pre-generation
-            // step. Revisit if a handler is ever added whose performance profile needs
-            // compiled dispatch.
+            // compiler, so Dynamic throws at host startup -- confirmed by starting the real
+            // host, not read off documentation.
             //
-            // Set before the connection-string guard below: WolverineRuntime.StartAsync
+            // Auto is "load pre-generated types from the application assembly, and generate
+            // them if there are none" (JasperFx.CodeGeneration.TypeLoadMode's own summary).
+            // It is NOT a reflection fallback. This project believed it was, and the belief
+            // survived only because there was no handler to dispatch: the failure appears at
+            // dispatch, not at startup, and the first real handler produced "No
+            // IAssemblyGenerator is registered in the application's service provider, but
+            // runtime code generation was requested" from AutoTypeLoader.Initialize, with a
+            // healthy host and an undelivered message.
+            //
+            // So the generator has to exist. UseRuntimeCompilation registers it, which is
+            // option (a) in Wolverine's own remediation text. Option (b), pre-generating
+            // with `codegen write` and TypeLoadMode.Static, was rejected: pre-generated
+            // types are loaded from the *application* assembly, so any handler living
+            // elsewhere -- the integration suite's outbox probe, for one -- could never be
+            // dispatched, and a forgotten regeneration is a runtime failure rather than a
+            // build error.
+            //
+            // Both set before the connection-string guard below: WolverineRuntime.StartAsync
             // calls logCodeGenerationConfiguration() unconditionally, before it ever looks
             // at persistence, so a host with no connection string configured hits this
             // check too.
             options.CodeGeneration.TypeLoadMode = TypeLoadMode.Auto;
+            options.UseRuntimeCompilation();
 
             // No connection string mirrors the health-check branch in
             // FakturennWebApplication.Build: "not configured yet" is a first-class state,
