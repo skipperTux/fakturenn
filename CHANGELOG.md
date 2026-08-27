@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A sign-out control in the page header**, in both languages. The sign-out
   endpoint existed but nothing in the interface used it, so a signed-in user had
   no way to leave except by discarding the browser session.
+- **Durable background processing.** Work that must survive a restart — sending
+  an invoice, writing a document — is recorded in the database in the same
+  transaction as the change that caused it, so a crash can neither lose it nor
+  send it twice. Nothing uses this yet; it is the foundation the invoicing and
+  mail features will run on.
 
 ### Changed
 
@@ -59,6 +64,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broken, in your language.
 - **A form submitted long after it was opened answers with the form again**, and
   a sentence explaining that it had been open too long, instead of an error page.
+- **`--migrate` now also provisions message storage.** Take a backup before
+  running it: the steps are not rolled back as a group, and a failure part-way
+  names the step it failed on and asks you to restore.
+- **An instance whose message storage has not been provisioned refuses to
+  start.** Running `--migrate` before serving traffic was already the documented
+  order; now skipping it fails loudly at startup instead of producing an
+  instance that accepts work and cannot guarantee delivery of it.
+- **An instance with no database configured says so at every start**, at
+  critical level, naming the consequence: messages are held in memory and will
+  not survive a restart. Such an instance still starts and still answers
+  `/alive` — that is deliberate — but it is no longer silent about it.
 
 ### Security
 

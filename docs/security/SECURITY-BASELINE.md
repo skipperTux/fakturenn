@@ -40,6 +40,24 @@ Never store private keys as ordinary database columns.
 - input limits for files and MIME attachments
 - safe filename handling
 
+## Runtime image
+
+The published image is chiseled: no shell, no package manager, non-root by
+default. Two things about it are worth stating rather than assuming.
+
+- **It now contains a C# compiler.** Wolverine 6.30.0 no longer bundles Roslyn,
+  so the host registers `WolverineFx.RuntimeCompilation` and the image carries
+  the `Microsoft.CodeAnalysis` assemblies — about 21 MB that the pre-messaging
+  image did not have. What is compiled is code Wolverine generates from the
+  application's own handler signatures at first dispatch, never anything that
+  arrives over the network, and no entrypoint exposes compilation to a caller.
+  It is still a larger runtime surface than a shell-less image implies, and a
+  hardening review should know it is there.
+- **The application process cannot write to its own content root**, and nothing
+  should be designed to. `/app` is root-owned and the process runs as UID 1654.
+  Wolverine's generated-source writing is switched off for exactly this reason;
+  see `docs/architecture/IMPLEMENTATION-NOTES.md`.
+
 ## Logging
 
 Never log:

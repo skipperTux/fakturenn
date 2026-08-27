@@ -1,7 +1,7 @@
 # Wolverine durable processing — design
 
 **Epic:** M0's final piece. Closes the milestone.
-**ADR:** ADR-007, currently *Proposed*. This design is what makes it *Accepted*.
+**ADR:** ADR-007. This design is what made it *Accepted*; Task 4 promoted it.
 
 ## 1. What this delivers, and what it does not
 
@@ -106,10 +106,29 @@ the **application** assembly, so a handler living anywhere else — the integrat
 suite's outbox probe, for one — could never be dispatched; and a forgotten
 regeneration is a runtime failure rather than a build error.
 
-One consequence worth knowing before E12 ships a handler: in `Auto`, generating
-also **writes the generated source to the content root**. Nothing generates today
-because nothing handles anything, and no deployment document mandates a
-read-only root filesystem, so this is a note rather than a blocker.
+One consequence, and the paragraph that first recorded it got its conclusion
+wrong. In `Auto`, generating also **writes the generated source to the content
+root** — `{ContentRoot}/Internal/Generated`, confirmed by the integration
+suite's probe handler producing
+`.../Internal/Generated/WolverineHandlers/OutboxProbeMessageHandler*.cs`. An
+earlier draft called this "a note rather than a blocker" on the grounds that no
+deployment document mandates a read-only root filesystem. It does not have to:
+the image gives the application no writable content root anyway. An image built
+from this branch has `/app` as `drwxr-xr-x` root-owned, with `Config.User`
+`1654` and `WorkingDir` `/app`. Nor does the profile default rescue it —
+`JasperFx.Profile` documents `SourceCodeWritingEnabled` as false in production
+mode, but nothing in this composition applies that profile and the setting reads
+`True` on a host whose `EnvironmentName` is `Production`.
+
+The failure would not be a crash: the writer catches everything and prints the
+stack trace, so the symptom is an unstructured `UnauthorizedAccessException`
+dump on stdout, outside Serilog, at first dispatch after every restart. Task 4
+therefore sets `CodeGeneration.SourceCodeWritingEnabled = false` rather than
+leaving it for E12 to meet. Nothing is lost by it: the files are never read back
+at runtime — `Auto` loads pre-generated types from the application *assembly* —
+and no entrypoint here offers `codegen write`. A host-composition guard holds the
+setting, because nothing generates in production today and the regression would
+otherwise be invisible until E12's first handler.
 
 **`--migrate` becomes a sequence of separately-invocable steps**, not one call:
 
@@ -331,6 +350,20 @@ Four assertions, each about our configuration.
    host-composition guard in `tests/Fakturenn.Web.UnitTests`, the same site and
    reason as `The_claims_principal_factory_is_the_permission_factory`: wiring a
    unit test over a class cannot see.
+
+   Writing it found that production discovery was **not configured at all**, and
+   that Wolverine's default could not have covered it: the application assembly
+   is `Fakturenn.Infrastructure.Messaging` — the assembly calling `UseWolverine`
+   — in the deployed host as much as under a test runner, measured from the
+   published host's own log line. With nothing named, the discovery set is
+   `{Wolverine.RuntimeCompilation, Fakturenn.Infrastructure.Messaging}` and no
+   module is in it. `AddFakturennMessaging` now takes the handler assemblies
+   from the host, which is also what keeps this assembly free of any module
+   reference.
+
+   The guard asserts on `WolverineOptions.Assemblies`. 6.30.0 keeps that
+   collection internal to `HandlerDiscovery`, so `Discovery.Assemblies` — which
+   this epic's plan prescribed — does not compile.
 
 Plus **the enrolment checklist guard**: every module context registered for
 migration must also be enrolled with the outbox. Adding a module and forgetting

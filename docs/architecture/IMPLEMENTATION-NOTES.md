@@ -375,6 +375,116 @@ mechanisms, on purpose:
   load-bearing, regenerate against the mutated model first, then observe which
   test actually fails. Task 4 did this for `RolePermission`'s composite key.
 
+## Wolverine, the outbox and code generation
+
+Measured while building the messaging foundation. The design decisions and their
+reasoning are in
+`docs/superpowers/specs/2026-08-19-wolverine-durable-processing-design.md`; this
+is what the running code turned out to do.
+
+- **The envelope lands in `messaging.wolverine_incoming_envelopes`, not the
+  outgoing table.** `EnvelopeTransactionExtensions.PersistAsync` routes any
+  envelope whose destination scheme is `local` to the inbox, and every message
+  this application queues goes to a durable **local** queue, so
+  `wolverine_outgoing_envelopes` stays empty. A durability assertion written
+  against the outgoing table would be green forever. Filter such a count by the
+  message under test, too: the same table also carries Wolverine's own
+  control-queue envelopes, whose bodies are not valid UTF-8 — `convert_from`
+  raises `22021` on the first one, so match bytes with `convert_to` instead.
+- **`UseWolverine` is an `IHostApplicationBuilder` extension in 6.30.0**, so
+  registration sits with the other `builder.AddFakturenn*` calls rather than on
+  `builder.Host`. The configuration lambda runs before any logger exists, which
+  is why `NonDurableMessagingWarning` is a hosted service instead of a log call
+  inside `MessagingConfiguration`.
+- **Wolverine's application assembly is `Fakturenn.Infrastructure.Messaging` —
+  the assembly that calls `UseWolverine` — in the deployed host as much as under
+  a test runner.** `WolverineOptions` takes JasperFx's application assembly,
+  discards it when it is a test-runner assembly, and falls back to the calling
+  assembly; the entry assembly being `Fakturenn.Web` does not change the answer.
+  Measured by running the published host, which logs *Starting Wolverine
+  messaging for application assembly Fakturenn.Infrastructure.Messaging*.
+  The practical consequence: **conventional discovery finds no module handler by
+  default.** With nothing named, `WolverineOptions.Assemblies` is
+  `{Wolverine.RuntimeCompilation, Fakturenn.Infrastructure.Messaging}` — measured
+  by emptying the list and reading the assertion failure. Every module whose
+  handlers this host runs is passed to `AddFakturennMessaging` explicitly, and
+  the integration fixture calls `Discovery.IncludeAssembly` for its own assembly
+  for the same reason.
+- **The discovery list is `WolverineOptions.Assemblies`, not
+  `Discovery.Assemblies`.** 6.30.0 keeps that collection internal to
+  `HandlerDiscovery` and exposes it one level up; `IncludeAssembly` is what feeds
+  it. A guard asserting on `Discovery.Assemblies` does not compile.
+- **Keeping startup out of the schema takes two settings, not one.** Omitting
+  `UseResourceSetupOnStartup()` is not enough:
+  `AutoBuildMessageStorageOnStartup` is a separate knob defaulting to
+  `AutoCreate.CreateOrUpdate`, and with only the omission the host created the
+  whole `messaging` schema on boot. Both are in `MessagingConfiguration`, with
+  the reasoning next to them, and `MessagingStartupTests` fails if either goes
+  away.
+- **A second in-process host silently kills the collection fixture's logging.**
+  `UseSerilog` reconfigures the bootstrap logger that
+  `FakturennWebApplication.Build` installs, and the already-running fixture host
+  writes through whatever `Log.Logger` currently is; disposing the second host
+  calls `Log.CloseAndFlush`, which swaps in a silent logger. The symptom names
+  nothing useful: the fixture host keeps serving requests perfectly and the seven
+  `AuthEventLoggingTests` assertions fail on an empty log. Save `Log.Logger`
+  before building and restore it **after** disposing — dispose flushes whatever
+  logger is current, so restoring first would shut the fixture's own logger
+  instead. `MessagingStartupTests.StartAndStopAsync` is the working shape, with
+  two nested `finally` blocks so a throwing `DisposeAsync` cannot skip the
+  restore.
+- **`TypeLoadMode.Auto` is not a reflection fallback**, and core WolverineFx
+  6.30.0 no longer ships Roslyn, so the default `Dynamic` throws at startup.
+  `Auto` means "load pre-generated types from the application assembly, generate
+  them if there are none", and generation needs an assembly generator that only
+  `WolverineFx.RuntimeCompilation`'s `UseRuntimeCompilation()` registers. Without
+  it the host starts, reports healthy, and the **first dispatch** fails with *No
+  IAssemblyGenerator is registered in the application's service provider* — which
+  is why the gap survived until an integration test published a real message.
+- **Nothing is pre-generated, so every cold start pays Roslyn compilation of
+  every handler at first dispatch.** Pre-generating with `codegen write` and
+  `TypeLoadMode.Static` was rejected because pre-generated types load from the
+  *application* assembly, which the entry above shows is
+  `Fakturenn.Infrastructure.Messaging` — a handler living anywhere else could
+  never be dispatched.
+- **Roslyn now ships in the production image.** An image built from this branch
+  carries ten `Microsoft.CodeAnalysis*` assemblies totalling 21 MB, and the image
+  went from 183 MB to 230 MB across this epic; the pre-epic image contained no
+  `Microsoft.CodeAnalysis*` assembly at all. Both figures measured with
+  `docker export | tar --list` against locally built images, not estimated.
+- **Generated source is written to `{ContentRoot}/Internal/Generated`, and the
+  "off in production" default does not apply here.** `JasperFx.Profile`
+  documents `SourceCodeWritingEnabled` as false in production mode, but nothing
+  in this composition applies that profile: on a host whose `EnvironmentName` is
+  `Production` the setting reads `True`. The write is real — the integration
+  suite's probe handler produced
+  `bin/Release/net10.0/Internal/Generated/WolverineHandlers/OutboxProbeMessageHandler*.cs`
+  — and in the container it cannot succeed: an image built from this branch has
+  `/app` as `drwxr-xr-x` root-owned with `Config.User` `1654` and `WorkingDir`
+  `/app`. The failure is swallowed and printed, so the symptom would be an
+  unstructured stack trace on stdout, outside Serilog, at first dispatch after
+  every restart. `MessagingConfiguration` therefore sets
+  `CodeGeneration.SourceCodeWritingEnabled = false`, and a guard in
+  `Fakturenn.Web.UnitTests` holds it there. Nothing is lost: the files are never
+  read back at runtime, and no entrypoint offers `codegen write`.
+- **`UseEntityFrameworkCoreTransactions()` is deliberately not called.**
+  `AddDbContextWithWolverineIntegration` already registers the persistence it
+  applies, but it is not a no-op — the full delta, and the one part of it E12
+  must check rather than rediscover, is in the design document's §7.
+- **Both messaging test classes borrow the collection fixture's PostgreSQL
+  container** rather than starting one of their own. The suite already peaks at
+  eleven concurrent containers on a two-core CI runner, and Wolverine adds a node
+  registry and background sender loops to every host those tests build. The
+  un-provisioned-schema case creates an extra *database* inside the fixture's
+  container instead. No stalled shutdown, port pressure or cross-test envelope
+  leak was observed.
+- **This workstation talks to rootless podman, CI talks to real Docker.**
+  `docker` is a shell alias for `podman`, and both `DOCKER_HOST` and
+  `~/.testcontainers.properties` point Testcontainers at
+  `unix:///run/user/1000/podman/podman.sock`. `/var/run/docker.sock` exists as a
+  root-owned symlink to the rootful podman socket and is not what the suite uses.
+  Container-behaviour differences between a local run and CI start here.
+
 ## Host and forwarded headers
 
 - `IPNetwork` is ambiguous. `System.Net.IPNetwork` is the real one;

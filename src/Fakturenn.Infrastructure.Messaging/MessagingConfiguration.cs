@@ -1,3 +1,4 @@
+using System.Reflection;
 using JasperFx;
 using JasperFx.CodeGeneration;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,7 +26,10 @@ public static class MessagingConfiguration
     public const string SchemaName = "messaging";
 
     // public Methods
-    public static void AddFakturennMessaging(this IHostApplicationBuilder builder, string? connectionString)
+    public static void AddFakturennMessaging(
+        this IHostApplicationBuilder builder,
+        string? connectionString,
+        IReadOnlyCollection<Assembly> handlerAssemblies)
     {
         // Outside the UseWolverine lambda deliberately. The same condition is checked again
         // inside it, but nothing there can report anything: the lambda runs without a
@@ -66,6 +70,48 @@ public static class MessagingConfiguration
             // check too.
             options.CodeGeneration.TypeLoadMode = TypeLoadMode.Auto;
             options.UseRuntimeCompilation();
+
+            // Generating also writes the generated .cs to {ContentRoot}/Internal/Generated,
+            // and that default survives a Production environment -- JasperFx's profile
+            // documents "false by default in production mode", but nothing in this
+            // composition applies the profile, and the setting reads True on a host whose
+            // EnvironmentName is Production.
+            //
+            // In the container that write cannot succeed: an image built from this branch has
+            // /app as drwxr-xr-x root:root with Config.User 1654 and WorkingDir /app. It is
+            // not a crash -- the writer catches everything and prints the stack trace -- but
+            // a raw UnauthorizedAccessException on stdout, outside Serilog, at first dispatch
+            // after every restart is not something to ship and then explain.
+            //
+            // Nothing is lost by turning it off. The files are never read back: Auto loads
+            // pre-generated types from the application *assembly*, not from source on disk,
+            // so every cold start compiles through Roslyn either way. They exist for
+            // `codegen write` and for reading, and no entrypoint here offers that command --
+            // the epic that wants it turns this line back on deliberately.
+            options.CodeGeneration.SourceCodeWritingEnabled = false;
+
+            // The handler assemblies are the caller's to name. This one is infrastructure
+            // and references no module -- architecture rule 4 would be pointless if it
+            // reached for one -- so the host passes them in.
+            //
+            // Wolverine's own default is to scan the application assembly, and that is THIS
+            // assembly -- the one calling UseWolverine -- in the deployed host as much as
+            // under a test runner. Measured by running the published host, which logs
+            // "Starting Wolverine messaging for application assembly
+            // Fakturenn.Infrastructure.Messaging"; the entry assembly is Fakturenn.Web, but
+            // WolverineOptions falls through to the calling assembly. No handler will ever
+            // live in either, because slices live in Fakturenn.Modules.*, so a module whose
+            // assembly is not named here contributes nothing -- silently, with the failure
+            // appearing only once a real handler exists. Fakturenn.Web.UnitTests'
+            // MessagingCompositionTests is what notices.
+            //
+            // Above the connection-string guard because discovery is not persistence: a host
+            // with nothing configured still dispatches, through in-memory queues, and its
+            // handler set must be the same one.
+            foreach (Assembly handlerAssembly in handlerAssemblies)
+            {
+                options.Discovery.IncludeAssembly(handlerAssembly);
+            }
 
             // No connection string mirrors the health-check branch in
             // FakturennWebApplication.Build: "not configured yet" is a first-class state,

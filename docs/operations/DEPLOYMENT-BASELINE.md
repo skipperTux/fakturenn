@@ -131,6 +131,27 @@ the runtime execution strategy's retry count — are deliberately not unified
 into a single setting: they have different lifetimes and a count-based budget
 makes the real wait depend on how the database is unavailable.
 
+`--migrate` is one operation with several steps: the EF Core migrations, then
+Wolverine's message storage, then role seeding and permission-catalogue
+validation. **Take a backup before running it.** Taking one is not this
+operation's job, and no transaction spans the steps, so a failure part-way
+leaves a partially-migrated database. What the operation guarantees is that it
+names the step that failed and why, exits non-zero, and never half-repairs or
+implies a rollback it cannot perform. Restore the backup and try again.
+
+Message storage is part of that, which makes running `--migrate` before traffic
+a hard requirement rather than good practice: **an instance pointed at a
+database whose message storage has not been provisioned refuses to start**, with
+Wolverine reporting that the message storage is missing or out of date. That is
+deliberate. Retrying cannot create a missing schema, so a crash loop here is a
+correct signal that a required deployment step was skipped — unlike a database
+that is merely slow to accept connections, which the retry budget above absorbs.
+
+An instance with **no** connection string configured still starts, still answers
+`/alive` with 200 and `/health` with 503, and now logs at critical level that
+message persistence is not durable: messages are held in memory and will not
+survive a restart. Treat that line as a misconfiguration alert, not as noise.
+
 ## Authentication event log
 
 Every authentication decision is written to the standard logging pipeline under

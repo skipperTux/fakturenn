@@ -655,14 +655,19 @@ public sealed class MessagingCompositionTests
 }
 ```
 
-Confirm the discovery surface exposed by the restored Wolverine version — if `WolverineOptions.Discovery.Assemblies` is not the shape available, find the equivalent and assert on it rather than deleting the test. A guard that cannot be written is a finding to report, not a step to skip.
+**Both caveats above fired. The prescribed code is wrong as written; keep the reasoning, not the snippet.**
 
-If the second test fails because discovery is not configured at all, add the module assemblies to `MessagingConfiguration.AddFakturennMessaging` and say so.
+`WolverineOptions.Discovery.Assemblies` does not exist — 6.30.0 keeps that collection internal to `HandlerDiscovery` and exposes it one level up as `WolverineOptions.Assemblies`. The guard asserts on that.
+
+Discovery was also not configured at all, so `AddFakturennMessaging` now takes the handler assemblies from the host and the caller names `typeof(InvoicesDbContext).Assembly`.
+
+The first test is wrong too, for a third reason: the prescribed host has no connection string, and `EfCoreEnvelopeTransaction`'s constructor throws *This Wolverine application is not using Database backed message persistence* when durable persistence was never configured — so no host built that way can resolve an outbox, however well it is enrolled. The test passes a deliberately unreachable connection string; building the host opens no connection.
 
 - [ ] **Step 2: Run them**
 
 Run: `cd /home/christoph/Projects/fakturenn && DOTNET_USE_POLLING_FILE_WATCHER=1 dotnet test --project tests/Fakturenn.Web.UnitTests --configuration Release`
-Expected: 69 passed (67 baseline plus these two).
+Expected: 70 passed. 67 baseline plus these two, plus a third guard this task added —
+`The_host_does_not_write_generated_source_to_the_content_root`; see Step 6.
 
 - [ ] **Step 3: Prove both guards bite**
 
@@ -753,7 +758,10 @@ Add under `[Unreleased]` in `CHANGELOG.md`, written for someone using the softwa
 - [ ] **Step 8: Full verification and commit**
 
 Run every suite, `dotnet build --configuration Release`, `dotnet format --verify-no-changes`.
-Expected: unit 31, Identity unit 31, Web unit 69, architecture 14, compliance 10, integration 115, UI 15.
+Measured on completion: unit 31, Identity unit 31, Web unit 70, architecture 14,
+compliance 10, integration 117, UI 15 — 272 in all. The counts written when this plan
+was drafted (Web unit 69, integration 115) predated Task 3's two tests and this task's
+third guard; take them from the run you actually do.
 
 ```bash
 cd /home/christoph/Projects/fakturenn
