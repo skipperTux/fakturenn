@@ -464,10 +464,17 @@ is what the running code turned out to do.
   `Fakturenn.Infrastructure.Messaging` — a handler living anywhere else could
   never be dispatched.
 - **Roslyn now ships in the production image.** An image built from this branch
-  carries ten `Microsoft.CodeAnalysis*` assemblies totalling 21 MB, and the image
-  went from 183 MB to 230 MB across this epic; the pre-epic image contained no
-  `Microsoft.CodeAnalysis*` assembly at all. Both figures measured with
-  `docker export | tar --list` against locally built images, not estimated.
+  carries ten `Microsoft.CodeAnalysis*` assemblies in `/app` totalling 21 MB —
+  but the full Roslyn footprint is **33.7 MB**, because the glob also matches 117
+  localized satellite resource DLLs across 13 culture directories worth a further
+  12.6 MB. Quote the larger figure: the image grew 46 MB across this epic
+  (184 MB to 230 MB), and 21 MB explains under half of it. A Visual Basic
+  compiler ships alongside the C# one, unused.
+
+  The 183 MB reference point published elsewhere came from an image built before
+  E02a merged, so it predates this epic by more than this epic. Rebuilding the
+  actual merge-base gives 184 MB, which is why the comparison stands. Measured
+  with `docker export | tar --list` against locally built images, not estimated.
 - **Generated source is written to `{ContentRoot}/Internal/Generated`, and the
   "off in production" default is a documentation bug in the library, not an
   unapplied profile.** The profile *is* applied: `AddWolverine` calls

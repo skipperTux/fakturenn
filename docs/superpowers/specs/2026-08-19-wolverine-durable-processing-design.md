@@ -438,8 +438,11 @@ present on `InvoicesDbContext`, absent on the two deliberately unenrolled
 contexts. The second half is not decoration: without it the assertion could
 be true of every context and guard nothing.
 
-**Each is proven by mutation.** Break the enrolment and 1 must redden; drop an
-assembly from discovery and 4 must redden. A mutation that leaves everything
+**Each is proven by mutation.** Break the enrolment and 1 must redden — but read
+that redness correctly: with no context enrolled, Wolverine's open-generic
+`IDbContextOutbox<>` registration never happens, so the test dies on service
+resolution, not because a message escaped a transaction. Drop an assembly from
+discovery and 4 must redden. A mutation that leaves everything
 green means the test is decorative and it is removed or fixed, not kept.
 
 For 3, use `options.Policies.UseDurableLocalQueues()` — removing it reddens only
