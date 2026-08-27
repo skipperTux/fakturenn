@@ -254,8 +254,12 @@ dotnet ef migrations add <Name> \
 # status section above, though: that workflow has never actually run.
 dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
   -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
-docker compose up --detach
+# Migrate FIRST, then start. Not interchangeable: an app container started against
+# an unmigrated database aborts during StartAsync (Wolverine's message storage check)
+# and compose.yaml sets no restart: policy, so it stays Exited. "compose run" starts
+# the postgres dependency itself, so it is a valid first step against a clean volume.
 docker compose --profile migrate run --rm migrate
+docker compose up --detach
 docker compose down --volumes
 
 # Version bump; releases trigger on the resulting tag

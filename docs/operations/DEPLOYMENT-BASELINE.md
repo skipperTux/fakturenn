@@ -326,3 +326,26 @@ Back up consistently:
 Restore must verify artifact hashes and database/storage consistency, and must be
 verified by a real sign-in through the second factor rather than by `/health`
 alone.
+
+**A restore replays queued work.** The `messaging` schema holds Wolverine's
+envelopes, and an envelope is deleted only once its handler has succeeded. A dump
+therefore captures every message that was still in flight when it was taken, and
+restoring it hands those messages back to the running instance — which delivers
+them again. Once E12 and E14 land, that means an e-invoice send or an outbound
+mail that already happened can fire a second time.
+
+Nothing publishes today, so there is nothing to replay yet. Plan for it before the
+first publisher ships:
+
+- Treat the restored `messaging` schema as *pending work*, not as history. Decide
+  per restore whether the queued messages should run again, and record the
+  decision alongside the restore.
+- To restore without replaying, truncate `messaging.wolverine_incoming_envelopes`
+  and `messaging.wolverine_outgoing_envelopes` **before** starting an application
+  replica against the restored database — the migration entrypoint is the natural
+  window, since no host is running then. This discards in-flight work rather than
+  duplicating it; which of the two is worse is a per-restore judgement, and the
+  point is to make it deliberately.
+- Do **not** exclude the `messaging` schema from the dump. Restoring a database
+  without it leaves an instance that refuses to start (see the `--migrate`
+  section: the schema is provisioned there, never at boot).

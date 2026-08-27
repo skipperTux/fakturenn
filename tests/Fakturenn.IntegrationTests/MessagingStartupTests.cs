@@ -16,19 +16,19 @@ using Serilog.Events;
 namespace Fakturenn.IntegrationTests;
 
 /// <summary>
-/// What the host does at startup about message storage, for the two un-provisioned
-/// cases the design rules on separately.
+/// What the host does at startup about message storage, for the un-provisioned cases
+/// the design rules on separately — and how a database in that state is repaired.
 /// <para>
-/// Both tests build the real host through <see cref="FakturennWebApplication.Build"/>.
-/// Neither starts a container of its own: the no-connection-string case needs no
-/// database at all, and the un-provisioned case borrows the collection fixture's
-/// PostgreSQL instance and creates one more database inside it. The integration suite
+/// Every test here builds the real host through <see cref="FakturennWebApplication.Build"/>.
+/// None starts a container of its own: the no-connection-string case needs no
+/// database at all, and the others borrow the collection fixture's PostgreSQL
+/// instance and create one more database inside it. The integration suite
 /// already peaks at eleven concurrent containers on a two-core runner, so a twelfth
 /// would be a real cost for no extra coverage.
 /// </para>
 /// <para>
-/// The two tests are not independent: both swap the process-wide <see cref="Log.Logger"/>
-/// and put it back, so one that failed to restore would break the other — and every other
+/// The tests are not independent: they swap the process-wide <see cref="Log.Logger"/>
+/// and put it back, so one that failed to restore would break the others — and every other
 /// class in the collection. That is safe only because the <see cref="RealHost"/> collection
 /// serialises its classes and xUnit runs the tests within one class one after another, so
 /// no other test observes the swapped logger. If either ever runs in parallel with
@@ -45,6 +45,14 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
     /// storage.
     /// </summary>
     private const string UnprovisionedDatabase = "messaging_unprovisioned";
+
+    /// <summary>
+    /// A second database in the same state, for the upgrade test. Separate from
+    /// <see cref="UnprovisionedDatabase"/> on purpose: that one must stay un-provisioned
+    /// for the test above to mean anything, and this one gets <c>--migrate</c> run against
+    /// it. Sharing one name would make the pair order-dependent.
+    /// </summary>
+    private const string UpgradedDatabase = "messaging_upgrade";
 
     [Fact]
     public async Task A_host_with_no_connection_string_reports_that_messages_are_not_durable()
@@ -92,7 +100,7 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
         // a deleted line in MessagingConfiguration, brings boot-time DDL back with every
         // suite still green. Both host-starting fixtures provision before they start, so
         // nothing else in this suite ever meets an unprovisioned database.
-        string connectionString = await CreateEfMigratedDatabaseAsync();
+        string connectionString = await CreateEfMigratedDatabaseAsync(UnprovisionedDatabase);
 
         // Precondition, not the behaviour under test. Everything below reads a startup
         // failure as evidence about messaging, which only holds while messaging is the one
@@ -136,12 +144,14 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
                 + "than serve traffic with delivery guarantees that turned out imaginary");
 
             // Which storage it crashed over. 6.30.0 raises this from
-            // MessageDatabase.AssertStorageExistsAsync, whose message names no table -- the
-            // durability agent's messaging.wolverine_nodes query, which the design describes,
-            // belongs to configurations this one no longer reaches. So the match is on
-            // Wolverine's own noun for the missing thing rather than on a relation name or a
-            // whole sentence: short enough to survive the library rewording its diagnostics,
-            // specific enough that no unrelated startup fault produces it.
+            // MessageDatabase.AssertStorageExistsAsync, whose message names no table. The
+            // durability agent's messaging.wolverine_nodes query is the attribution the
+            // design explicitly *retracts*: it is where ContinueOnFailures and Solo crash,
+            // not where this configuration does, and neither noun appears anywhere in the
+            // exception chain raised here. So the match is on Wolverine's own noun for the
+            // missing thing rather than on a relation name or a whole sentence: short enough
+            // to survive the library rewording its diagnostics, specific enough that no
+            // unrelated startup fault produces it.
             Describe(startFailure).Should().Contain(
                 "message storage",
                 "a startup failure only proves the invariant if it is *this* failure -- any "
@@ -151,6 +161,54 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
                 0,
                 "--migrate is the only thing that may create Wolverine's schema");
         }
+    }
+
+    [Fact]
+    public async Task Migrate_provisions_the_messaging_schema_in_an_already_migrated_database()
+    {
+        // The upgrade path, and the only state every existing installation is actually in:
+        // EF-migrated by a previous version, with no messaging schema because no previous
+        // version had one. MigrateEntrypointTests covers --migrate from *empty*, which is
+        // the state a new installation starts from and nobody upgrades from. The two are
+        // different code paths through DatabaseMigrator: the EF contexts have nothing to
+        // apply here, so this asserts that Wolverine's provisioning is not conditional on
+        // them having done work.
+        string connectionString = await CreateEfMigratedDatabaseAsync(UpgradedDatabase);
+
+        long before = await CountMessagingSchemasAsync(connectionString);
+
+        before.Should().Be(
+            0,
+            "the premise is a database migrated by a version that had no message storage");
+
+        (int exitCode, string output) = await HostProcess.RunAsync(
+            connectionString,
+            ["--migrate"],
+            standardInput: null,
+            TestContext.Current.CancellationToken);
+
+        exitCode.Should().Be(0, output);
+
+        long after = await CountMessagingSchemasAsync(connectionString);
+
+        after.Should().Be(
+            1,
+            "--migrate must provision message storage into a database that already carries "
+            + "the EF schemas, not only into an empty one");
+
+        // The claim that matters to an operator is not "a schema appeared" but "the host
+        // that refused to start now starts". Same arguments as the test above, same
+        // database state apart from this one step.
+        Exception? startFailure = await StartAndStopAsync(
+        [
+            "--urls",
+            "http://127.0.0.1:0",
+            $"--ConnectionStrings:Fakturenn={connectionString}",
+        ]);
+
+        startFailure.Should().BeNull(
+            "running --migrate is the whole of the upgrade procedure: after it, a host "
+            + "against the same database must start");
     }
 
     /// <summary>
@@ -266,11 +324,11 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
         return Convert.ToInt64(found, CultureInfo.InvariantCulture);
     }
 
-    private async Task<string> CreateEfMigratedDatabaseAsync()
+    private async Task<string> CreateEfMigratedDatabaseAsync(string database)
     {
         NpgsqlConnectionStringBuilder builder = new(host.ConnectionString)
         {
-            Database = UnprovisionedDatabase,
+            Database = database,
         };
 
         await using (NpgsqlConnection administration = new(host.ConnectionString))
@@ -279,11 +337,11 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
 
             // Dropped first so a re-run inside one container starts from the same state.
             await using NpgsqlCommand drop = administration.CreateCommand();
-            drop.CommandText = $"DROP DATABASE IF EXISTS {UnprovisionedDatabase} WITH (FORCE)";
+            drop.CommandText = $"DROP DATABASE IF EXISTS {database} WITH (FORCE)";
             await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
             await using NpgsqlCommand create = administration.CreateCommand();
-            create.CommandText = $"CREATE DATABASE {UnprovisionedDatabase}";
+            create.CommandText = $"CREATE DATABASE {database}";
             await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 

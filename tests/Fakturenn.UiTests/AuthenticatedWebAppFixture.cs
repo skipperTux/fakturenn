@@ -150,10 +150,10 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             $"--ConnectionStrings:Fakturenn={_postgres.GetConnectionString()}",
         ]);
 
-        // Wolverine's own durability agent queries its node table unconditionally during
-        // StartAsync -- there is no configuration that lets it start cleanly against a real
-        // connection string whose schema does not exist yet, the same way MigrateAsync above
-        // provisions DataProtection, Identity and Invoices before the host boots.
+        // Wolverine asserts its message storage exists during StartAsync -- there is no
+        // configuration that lets it start cleanly against a real connection string whose
+        // schema does not exist yet, the same way MigrateAsync above provisions
+        // DataProtection, Identity and Invoices before the host boots.
         await MessagingStorage.ProvisionAsync(_app.Services, CancellationToken.None);
 
         await _app.StartAsync();

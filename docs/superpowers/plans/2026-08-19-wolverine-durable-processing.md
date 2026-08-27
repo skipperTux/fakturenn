@@ -524,7 +524,11 @@ public sealed class OutboxTransactionTests(SetupHostFixture host)
         await using var connection = new NpgsqlConnection(host.ConnectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using NpgsqlCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM messaging.wolverine_outgoing_envelopes";
+        // Corrected in flight: this table stays empty forever. Every message this
+        // application queues goes to a durable *local* queue, and
+        // EnvelopeTransactionExtensions.PersistAsync routes a "local" destination to
+        // PersistIncomingAsync -- so the row lands in the inbox.
+        command.CommandText = "SELECT count(*) FROM messaging.wolverine_incoming_envelopes";
         object? count = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return Convert.ToInt64(count, System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -588,7 +592,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 4: Guards, conventions and documentation
 
-Turns two conventions into tests, and makes the documentation true. Without this task, adding a module and forgetting to enrol it ships a silently non-transactional publisher.
+Turns two conventions into tests, and makes the documentation true. Without this task, adding a module and forgetting to enrol it goes unnoticed.
+
+**Corrected after this plan was written:** forgetting enrolment does *not* ship a non-transactional publisher. `EfCoreEnvelopeTransaction` falls back to raw ADO on the context's own connection and `CurrentTransaction`, so the envelope still commits or rolls back with the caller's work. What it costs is stated in `.claude/CLAUDE.md`'s "Adding a new module", item 9 — the sharpest part being that a slice which then commits with plain `SaveChangesAsync` loses its **business rows**.
 
 **Files:**
 - Create: `tests/Fakturenn.Web.UnitTests/MessagingCompositionTests.cs`
@@ -625,10 +631,11 @@ public sealed class MessagingCompositionTests
     [Fact]
     public void The_invoices_context_is_enrolled_with_the_outbox()
     {
-        // Enrolment is per-context. A context nobody enrols still publishes --
-        // non-transactionally, with no error and no warning -- so a rollback leaves the
-        // row gone and the message sent. This is the guard against adding a module and
-        // forgetting the step.
+        // Enrolment is per-context, and forgetting it is silent. (Corrected after this
+        // plan was written: an unenrolled context still publishes *transactionally* -- the
+        // fallback is raw ADO on the context's own connection and CurrentTransaction. What
+        // it costs is the shape, not the atomicity.) This is the guard against adding a
+        // module and forgetting the step.
         WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
 
         using AsyncServiceScope scope = app.Services.CreateAsyncScope();
@@ -685,9 +692,12 @@ In `.claude/CLAUDE.md`, under "Adding a new module", in the numbered list of con
 9. If the module owns an EF Core `DbContext` that a slice will publish messages
    from, enrol it with the outbox in `FakturennWebApplication.Build` using
    `AddDbContextWithWolverineIntegration<...>` rather than `AddDbContext<...>`.
-   Enrolment is per-context: a context nobody enrols still publishes, but
-   non-transactionally and with no error, so a rollback leaves the row gone and
-   the message sent. `tests/Fakturenn.Web.UnitTests/MessagingCompositionTests.cs`
+   Enrolment is per-context and forgetting it is silent. (Corrected after this
+   plan was written: an unenrolled context still publishes transactionally; what
+   changes is how the envelope is written, and the real cost is that a slice
+   committing with plain `SaveChangesAsync` afterwards loses its business rows.
+   The shipped wording is in `.claude/CLAUDE.md` item 9.)
+   `tests/Fakturenn.Web.UnitTests/MessagingCompositionTests.cs`
    guards the contexts enrolled today — extend it when you add one, because
    nothing else will notice.
 ```
@@ -771,9 +781,10 @@ cd /home/christoph/Projects/fakturenn
 git add tests/Fakturenn.Web.UnitTests .claude/CLAUDE.md docs CHANGELOG.md
 git commit --message "feat(messaging): guard outbox enrolment and close ADR-007
 
-Enrolment is per-context and silent when missing: an unenrolled context still
-publishes, non-transactionally, so a rollback leaves the row gone and the message
-sent. That is now a test rather than a sentence in a checklist.
+Enrolment is per-context and silent when missing. That is now a test rather than
+a sentence in a checklist. (The commit as prescribed here went on to call an
+unenrolled publish non-transactional; it is not, and the following fix commit
+corrects it in every document that carried the claim.)
 
 Handler discovery in the production host is configured and, until E12 publishes
 something, exercised by nothing else -- the integration tests register their own

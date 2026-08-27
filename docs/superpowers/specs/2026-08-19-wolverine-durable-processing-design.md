@@ -490,3 +490,58 @@ and Wolverine adds a node registry and background sender loops to every host
 those tests build. If that interacts badly — stalled shutdowns, port pressure,
 envelopes leaking between tests — it is reported as a finding, not absorbed by
 widening a timeout.
+
+## 9. Human test
+
+Five minutes, one terminal, a Docker-compatible engine and nothing else. Nothing
+in this epic has a user interface, so all three checks are operational: the
+correct sequence works, a misconfigured host says so, and an unprovisioned one
+refuses to run.
+
+**1. The Compose sequence, in the order that works.** From a clean checkout:
+
+```bash
+dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
+  -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
+docker compose down --volumes            # start from an empty database
+docker compose --profile migrate run --rm migrate
+docker compose up --detach
+curl --include http://localhost:8080/health
+```
+
+Expect the migration step to exit `0` (it starts the database itself — no
+preceding `up` is needed), and `/health` to answer `200` within a few seconds.
+
+**2. The same two commands the other way round — the failure this ordering
+exists to prevent.** Still worth doing once, because the symptom is silence:
+
+```bash
+docker compose down --volumes
+docker compose up --detach
+docker compose ps                        # fakturenn-app is Exited, not Up
+docker compose logs fakturenn-app | tail -20
+```
+
+Expect `The Wolverine message storage for database 'default' is missing or out of
+date (schema difference: Create)` and an exited container. There is no `restart:`
+policy, so it never recovers on its own; running the migration afterwards does not
+bring it back, only another `up` does. This is the ruled behaviour, not a bug —
+see section 4.
+
+**3. A host that is not durable says so at Critical.** Run the image with no
+connection string at all — the image rather than `dotnet run`, so a developer's
+`user-secrets` entry cannot quietly supply one:
+
+```bash
+docker run --rm fakturenn:dev
+```
+
+Expect it to start anyway — *Now listening on: http://[::]:8080* — and expect a
+`[FTL]` line naming the consequence: *Durable message persistence is not
+configured … will not survive a restart*. Data-protection and identity `[ERR]`
+lines scroll past first, because those contexts have no connection string either;
+the `[FTL]` line is the one to look for. The point of reading it
+by eye is that this is the one failure the software is allowed to continue
+through, so its only defence is being impossible to miss in a log.
+
+Stop with `Ctrl+C`, then `docker compose down --volumes`.

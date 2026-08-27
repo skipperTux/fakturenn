@@ -69,9 +69,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running it: the steps are not rolled back as a group, and a failure part-way
   names the step it failed on and asks you to restore.
 - **An instance whose message storage has not been provisioned refuses to
-  start.** Running `--migrate` before serving traffic was already the documented
-  order; now skipping it fails loudly at startup instead of producing an
-  instance that accepts work and cannot guarantee delivery of it.
+  start.** Running `--migrate` before serving traffic was already what
+  `DEPLOYMENT-BASELINE.md` required; now skipping it fails loudly at startup
+  instead of producing an instance that accepts work and cannot guarantee
+  delivery of it.
+- **The Compose instructions run the migration first.** The published order used
+  to be `docker compose up --detach` and then the migration; with the change
+  above that leaves the application container exited and nothing on port 8080,
+  because there is no restart policy. `docker compose --profile migrate run --rm
+  migrate` now comes first — it starts the database itself, so it works against
+  an empty volume — and `docker compose up --detach` follows.
 - **An instance with no database configured says so at every start**, at
   critical level, naming the consequence: messages are held in memory and will
   not survive a restart. Such an instance still starts and still answers

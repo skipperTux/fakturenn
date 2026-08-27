@@ -18,16 +18,29 @@ services:
       timeout: 5s
       retries: 20
 
-  # Run once before starting the app: docker compose --profile migrate run --rm migrate
+  # Run once BEFORE starting the app: docker compose --profile migrate run --rm migrate
+  # ('run' starts the postgres dependency itself, so this works as the very first
+  # step against a clean volume -- no preceding 'up' is needed.)
+  #
+  # That order is required, not merely recommended, since Wolverine arrived: an app
+  # container started against a database with no 'messaging' schema does not wait,
+  # it aborts during StartAsync ("The Wolverine message storage for database
+  # 'default' is missing or out of date"), which is the ruled behaviour -- see
+  # MessagingConfiguration.cs. There is no restart: policy here, so such a container
+  # stays Exited and nothing ever answers /health.
+  #
   # DEPLOYMENT-BASELINE.md requires an explicit migration step, so this is not
   # part of the default 'up'. fakturenn-app intentionally does NOT depend_on this
   # service: Compose refuses to start a profile-gated dependency implicitly, so a
   # depends_on here would break a plain 'docker compose up' instead of merely
-  # skipping the migration. Postgres' own healthcheck (below) already gates how
-  # long Compose waits before starting this container; once started, the
-  # "--migrate" entrypoint applies its own Database:StartupTimeoutSeconds budget
-  # (120s default) on top, in case the database accepts TCP connections (making
-  # pg_isready happy) before it is actually ready to run migrations.
+  # skipping the migration -- the ordering is enforced by running the two commands
+  # in the documented sequence, not by the file.
+  #
+  # Postgres' own healthcheck (below) already gates how long Compose waits before
+  # starting this container; once started, the "--migrate" entrypoint applies its
+  # own Database:StartupTimeoutSeconds budget (120s default) on top, in case the
+  # database accepts TCP connections (making pg_isready happy) before it is
+  # actually ready to run migrations.
   migrate:
     image: fakturenn:dev
     command: ["--migrate"]

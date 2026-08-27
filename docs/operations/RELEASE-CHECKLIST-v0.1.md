@@ -61,14 +61,17 @@ release:
 
 ## Operational verification
 
+- [ ] The migration Job (`docker compose --profile migrate run --rm migrate`)
+      applies from an empty database. This runs **first**: `compose run` starts
+      the database dependency itself, and an app container started before the
+      schema exists aborts at startup instead of waiting
 - [ ] From a clean checkout, publishing the image locally and then running
-      `docker compose up --detach` (see `CLAUDE.md`'s Commands section for the
-      exact `dotnet publish .../t:PublishContainer` invocation — `compose.yaml`
+      `docker compose up --detach` *after* the migration Job above (see
+      `CLAUDE.md`'s Commands section for the exact
+      `dotnet publish .../t:PublishContainer` invocation — `compose.yaml`
       references `fakturenn:dev` with no `build:` stanza and no such tag exists
       in any registry, so `docker compose up` alone cannot pull it) reaches
       `/health` healthy
-- [ ] The migration Job (`docker compose --profile migrate run --rm migrate`)
-      applies from an empty database
 - [ ] A backup taken per `DEPLOYMENT-BASELINE.md` restores with matching
       artifact hashes
 
