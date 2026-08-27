@@ -348,9 +348,24 @@ edit sites, not assumed:**
    - **Enrol the module's `DbContext` with the outbox** in
      `FakturennWebApplication.Build`, with
      `AddDbContextWithWolverineIntegration<...>` instead of `AddDbContext<...>`.
-     Enrolment is per-context. An unenrolled context still publishes — non-
-     transactionally, with no error and no warning — so a rollback leaves the
-     row gone and the message sent.
+     Enrolment is per-context.
+
+     **What it buys is less than this epic first claimed, and the honest version
+     is here because the overstated one was load-bearing for a while.** An
+     unenrolled context does **not** publish non-transactionally.
+     `EfCoreEnvelopeTransaction` branches on the context's model annotation and,
+     without it, writes the envelope with raw ADO on the context's own
+     connection and `CurrentTransaction`, beginning one if absent — so a publish
+     through `IDbContextOutbox<T>`, whose constructor always sets `Transaction`,
+     commits or rolls back with the caller's work either way. Enrolment changes
+     *how* the envelope is written: an EF-tracked row saved by the same
+     `SaveChangesAsync` as the business rows, instead of an eager INSERT inside
+     a transaction Wolverine opened behind the caller's back. The real cost of
+     forgetting it: on an unenrolled context, a slice that publishes and then
+     commits with plain `SaveChangesAsync` instead of
+     `SaveChangesAndFlushMessagesAsync` silently loses the **business rows**
+     too, because nothing commits that transaction. Plus a round trip per
+     publish, and no per-context entry in Wolverine's own diagnostics.
    - **Add the module assembly to `AddFakturennMessaging`'s handler
      assemblies.** Wolverine's conventional discovery scans its *application*
      assembly, which is `Fakturenn.Infrastructure.Messaging` and never a module,
@@ -359,7 +374,16 @@ edit sites, not assumed:**
 
    `tests/Fakturenn.Web.UnitTests/MessagingCompositionTests.cs` guards what is
    wired **today**; extend it when you add a module, because nothing else will
-   notice.
+   notice. **Extend it with the model annotation, not with an outbox
+   resolution.** `IDbContextOutbox<>` is registered as an *open generic*, so
+   once any context is enrolled it resolves for every `DbContext` in the
+   container — measured: `IDbContextOutbox<IdentityDbContext>` and
+   `IDbContextOutbox<DataProtectionDbContext>` both resolve and neither is
+   enrolled. A `GetService<IDbContextOutbox<YourDbContext>>().Should()
+   .NotBeNull()` would therefore pass with your enrolment forgotten. Copy the
+   shape the two existing tests use instead:
+   `dbContext.Model.FindAnnotation("WolverineEnabled")`, asserted present for an
+   enrolled context and absent for an unenrolled one.
 
 ## Definition of Done
 

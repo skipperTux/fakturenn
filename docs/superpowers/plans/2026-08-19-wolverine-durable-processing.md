@@ -744,9 +744,10 @@ Add under `[Unreleased]` in `CHANGELOG.md`, written for someone using the softwa
 
 - Durable background processing. Work that must survive a restart — sending an
   invoice, writing a document — is recorded in the database in the same
-  transaction as the change that caused it, so a crash cannot lose it or send it
-  twice. Nothing uses this yet; it is the foundation the invoicing and mail
-  features will run on.
+  transaction as the change that caused it, so work that was never committed is
+  never started, and work that was committed is not lost when the process stops.
+  Nothing uses this yet; it is the foundation the invoicing and mail features
+  will run on.
 
 ### Changed
 
@@ -758,10 +759,12 @@ Add under `[Unreleased]` in `CHANGELOG.md`, written for someone using the softwa
 - [ ] **Step 8: Full verification and commit**
 
 Run every suite, `dotnet build --configuration Release`, `dotnet format --verify-no-changes`.
-Measured on completion: unit 31, Identity unit 31, Web unit 70, architecture 14,
-compliance 10, integration 117, UI 15 — 272 in all. The counts written when this plan
-was drafted (Web unit 69, integration 115) predated Task 3's two tests and this task's
-third guard; take them from the run you actually do.
+Measured on completion: unit 31, Identity unit 31, Web unit 71, architecture 14,
+compliance 10, integration 117, UI 15 — 289 in all. An earlier revision of this line
+said 272, which is not the sum of its own figures. The counts written when this plan
+was drafted (Web unit 69, integration 115) predated Task 3's two tests, this task's
+third guard, and the fix round's fourth (the unenrolled-context guard that keeps the
+enrolment assertion from being vacuous); take them from the run you actually do.
 
 ```bash
 cd /home/christoph/Projects/fakturenn

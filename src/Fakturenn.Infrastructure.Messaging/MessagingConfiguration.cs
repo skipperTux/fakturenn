@@ -72,10 +72,19 @@ public static class MessagingConfiguration
             options.UseRuntimeCompilation();
 
             // Generating also writes the generated .cs to {ContentRoot}/Internal/Generated,
-            // and that default survives a Production environment -- JasperFx's profile
-            // documents "false by default in production mode", but nothing in this
-            // composition applies the profile, and the setting reads True on a host whose
-            // EnvironmentName is Production.
+            // and that default survives a Production environment. Not because the profile
+            // goes unapplied -- AddWolverine calls options.ReadJasperFxOptions(...), and
+            // JasperFxOptions.ReadHostEnvironment, wired through PostConfigure, does set
+            // ActiveProfile = Production for a Production host. The setting reads True
+            // because JasperFx 2.55.0's Production profile itself initialises
+            // SourceCodeWritingEnabled = true: its _development and _production profiles are
+            // byte-identical (ResourceAutoCreate = CreateOrUpdate, GeneratedCodeMode =
+            // Dynamic, SourceCodeWritingEnabled = true). The library's own XML doc, "false by
+            // default in production mode", is the stale part -- not this composition.
+            //
+            // Setting it here is also what keeps it: ReadJasperFxOptions copies the profile
+            // value only while SourceCodeWritingEnabledHasChanged is false, and this setter
+            // is what raises that flag.
             //
             // In the container that write cannot succeed: an image built from this branch has
             // /app as drwxr-xr-x root:root with Config.User 1654 and WorkingDir /app. It is
@@ -83,16 +92,26 @@ public static class MessagingConfiguration
             // a raw UnauthorizedAccessException on stdout, outside Serilog, at first dispatch
             // after every restart is not something to ship and then explain.
             //
-            // Nothing is lost by turning it off. The files are never read back: Auto loads
+            // Nothing is lost at runtime. The files are never read back: Auto loads
             // pre-generated types from the application *assembly*, not from source on disk,
-            // so every cold start compiles through Roslyn either way. They exist for
-            // `codegen write` and for reading, and no entrypoint here offers that command --
-            // the epic that wants it turns this line back on deliberately.
+            // so every cold start compiles through Roslyn either way.
+            //
+            // It does cost the dev loop, and that is the honest half of the trade: this is
+            // unconditional, not scoped to the read-only content root that motivates it, so a
+            // developer who wants to read generated handler source from a running local host
+            // has to edit production code AND break the guard test that holds this setting.
+            // `codegen write` is the way out that costs neither -- DynamicCodeBuilder
+            // .WriteGeneratedCode writes unconditionally and never consults this setting, so
+            // that command would keep working with the line exactly as it stands -- but no
+            // entrypoint here offers it yet.
             options.CodeGeneration.SourceCodeWritingEnabled = false;
 
-            // The handler assemblies are the caller's to name. This one is infrastructure
-            // and references no module -- architecture rule 4 would be pointless if it
-            // reached for one -- so the host passes them in.
+            // The handler assemblies are the caller's to name, because this one is
+            // infrastructure and references no module: its csproj carries no ProjectReference
+            // at all. That is convention, not a rule. Architecture rule 4 runs the *forward*
+            // direction -- no Fakturenn.Modules.* may reference a Fakturenn.Infrastructure.*
+            // -- so an Infrastructure.Messaging -> Modules.Invoices reference would not
+            // violate it, and nothing enforces the reverse direction today.
             //
             // Wolverine's own default is to scan the application assembly, and that is THIS
             // assembly -- the one calling UseWolverine -- in the deployed host as much as
@@ -148,6 +167,14 @@ public static class MessagingConfiguration
             // schema and every wolverine_* table appeared anyway, logged as "Applied
             // database migration for Wolverine Envelope Storage". Turning this off is
             // what actually keeps startup from touching the schema.
+            //
+            // The line below is therefore NOT redundant, whatever the JasperFx profile
+            // appears to say. ReadJasperFxOptions fills this setting from
+            // ActiveProfile.ResourceAutoCreate whenever it was not set explicitly, and both
+            // JasperFx 2.55.0 profiles -- Development and Production alike -- carry
+            // ResourceAutoCreate = CreateOrUpdate. Deleting this line does not fall back to
+            // a safe default; it falls back to boot-time DDL, which is exactly the invariant
+            // MessagingStartupTests exists to defend.
             //
             // It does not make startup tolerant of a missing schema, though. With this set,
             // Wolverine logs "Skipping automatic message storage migration on startup" and

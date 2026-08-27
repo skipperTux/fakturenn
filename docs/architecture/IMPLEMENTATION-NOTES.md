@@ -398,9 +398,18 @@ is what the running code turned out to do.
   inside `MessagingConfiguration`.
 - **Wolverine's application assembly is `Fakturenn.Infrastructure.Messaging` —
   the assembly that calls `UseWolverine` — in the deployed host as much as under
-  a test runner.** `WolverineOptions` takes JasperFx's application assembly,
-  discards it when it is a test-runner assembly, and falls back to the calling
-  assembly; the entry assembly being `Fakturenn.Web` does not change the answer.
+  a test runner.** Two mechanisms are easy to conflate here, and only one of
+  them is doing the work. `WolverineOptions.ReadJasperFxOptions` does discard
+  JasperFx's application assembly when it is a *test-runner* assembly — but that
+  branch never fires in the deployed host, and it is not what produces the answer
+  under the test runner either. The answer comes from JasperFx's own
+  `DetermineCallingAssembly()`: it walks the stack past the last `JasperFx` frame
+  and returns the first assembly that is not `System*`, not `Microsoft*`, not a
+  test runner, and **not a critter-stack assembly** (`IsCritterStackAssembly`,
+  which matches `Wolverine` and `Wolverine.*`). That skip list is what steps over
+  Wolverine and lands on `Fakturenn.Infrastructure.Messaging`, the assembly that
+  called `UseWolverine`. The entry assembly being `Fakturenn.Web` does not change
+  the answer.
   Measured by running the published host, which logs *Starting Wolverine
   messaging for application assembly Fakturenn.Infrastructure.Messaging*.
   The practical consequence: **conventional discovery finds no module handler by
@@ -421,6 +430,13 @@ is what the running code turned out to do.
   whole `messaging` schema on boot. Both are in `MessagingConfiguration`, with
   the reasoning next to them, and `MessagingStartupTests` fails if either goes
   away.
+
+  The explicit `AutoCreate.None` is **not** redundant with the Production
+  profile, and the entry above is why: `ReadJasperFxOptions` fills
+  `AutoBuildMessageStorageOnStartup` from `ActiveProfile.ResourceAutoCreate`
+  whenever it was not set explicitly, and *both* JasperFx 2.55.0 profiles carry
+  `ResourceAutoCreate = CreateOrUpdate`. Deleting the line does not fall back to
+  a safe default — it falls back to boot-time DDL.
 - **A second in-process host silently kills the collection fixture's logging.**
   `UseSerilog` reconfigures the bootstrap logger that
   `FakturennWebApplication.Build` installs, and the already-running fixture host
@@ -453,10 +469,19 @@ is what the running code turned out to do.
   `Microsoft.CodeAnalysis*` assembly at all. Both figures measured with
   `docker export | tar --list` against locally built images, not estimated.
 - **Generated source is written to `{ContentRoot}/Internal/Generated`, and the
-  "off in production" default does not apply here.** `JasperFx.Profile`
-  documents `SourceCodeWritingEnabled` as false in production mode, but nothing
-  in this composition applies that profile: on a host whose `EnvironmentName` is
-  `Production` the setting reads `True`. The write is real — the integration
+  "off in production" default is a documentation bug in the library, not an
+  unapplied profile.** The profile *is* applied: `AddWolverine` calls
+  `options.ReadJasperFxOptions(...)`, and `JasperFxOptions.ReadHostEnvironment`,
+  wired through `PostConfigure`, sets `ActiveProfile = Production` on a host
+  whose `EnvironmentName` is `Production`. The setting still reads `True`
+  because **JasperFx 2.55.0's Production profile itself initialises
+  `SourceCodeWritingEnabled = true`** — `_development` and `_production` are
+  byte-identical (`ResourceAutoCreate = CreateOrUpdate`,
+  `GeneratedCodeMode = Dynamic`, `SourceCodeWritingEnabled = true`). It is
+  `Profile`'s own XML doc, "false by default in production mode", that is stale.
+  Do not restate the old version: believing the profile goes unapplied is what
+  makes the explicit `AutoCreate.None` below look redundant.
+  The write is real — the integration
   suite's probe handler produced
   `bin/Release/net10.0/Internal/Generated/WolverineHandlers/OutboxProbeMessageHandler*.cs`
   — and in the container it cannot succeed: an image built from this branch has
@@ -464,9 +489,54 @@ is what the running code turned out to do.
   `/app`. The failure is swallowed and printed, so the symptom would be an
   unstructured stack trace on stdout, outside Serilog, at first dispatch after
   every restart. `MessagingConfiguration` therefore sets
-  `CodeGeneration.SourceCodeWritingEnabled = false`, and a guard in
-  `Fakturenn.Web.UnitTests` holds it there. Nothing is lost: the files are never
-  read back at runtime, and no entrypoint offers `codegen write`.
+  `CodeGeneration.SourceCodeWritingEnabled = false`, which also pins it:
+  `ReadJasperFxOptions` copies the profile value only while
+  `SourceCodeWritingEnabledHasChanged` is false, and that setter raises the flag.
+  A guard in `Fakturenn.Web.UnitTests` holds it there.
+
+  **Nothing is lost at runtime; the dev loop pays for it.** The files are never
+  read back — `Auto` loads pre-generated types from the application *assembly*,
+  not from source on disk. But the setting is unconditional, not scoped to the
+  read-only content root that motivates it, so a developer who wants to read
+  generated handler source from a running local host must edit production code
+  **and** break the guard test. The cheap fix, if that ever matters, is a
+  `codegen write` entrypoint rather than flipping the line:
+  `DynamicCodeBuilder.WriteGeneratedCode` writes unconditionally and never
+  consults `SourceCodeWritingEnabled`, so that command works with the setting
+  exactly as it stands.
+- **`IDbContextOutbox<T>` resolving proves nothing about enrolment.**
+  `addDbContextWithWolverineIntegration` registers
+  `TryAddScoped(typeof(IDbContextOutbox<>), typeof(DbContextOutbox<>))` — an
+  **open generic** — and `DbContextOutbox<T>` needs nothing of `T` beyond DI
+  resolvability. So once *any* context is enrolled, the resolution succeeds for
+  every `DbContext` in the container. Measured against the real host:
+  `IDbContextOutbox<IdentityDbContext>` and
+  `IDbContextOutbox<DataProtectionDbContext>` both resolve, and neither is
+  enrolled. What is true only of an enrolled context is the model annotation
+  `WolverineEnabled`, which `WolverineModelCustomizer` sets and
+  `EfCoreEnvelopeTransaction` itself branches on:
+  `dbContext.Model.FindAnnotation("WolverineEnabled")`. That is what
+  `MessagingCompositionTests` asserts, in both directions — present on
+  `InvoicesDbContext`, absent on the two deliberately unenrolled contexts. The
+  annotation needs a connection string configured, because the customizer
+  resolves `DatabaseSettings` before it annotates.
+- **Forgetting enrolment does not make the publish non-transactional.** This
+  epic's earlier claim, repeated for two tasks, was wrong.
+  `EfCoreEnvelopeTransaction.PersistIncomingAsync` / `PersistOutgoingAsync`
+  branch on `IsWolverineEnabled()`; for an unenrolled context they fall back to
+  raw ADO on the context's own `DbConnection` and `CurrentTransaction`,
+  beginning one if there is none. Through `IDbContextOutbox<T>` — whose
+  constructor always sets `Transaction` — the envelope commits or rolls back
+  with the caller's work either way. What enrolment actually changes is *how*
+  the envelope is written: an EF-tracked row saved by the same
+  `SaveChangesAsync` as the business rows, rather than an eager INSERT executed
+  at publish time inside a transaction Wolverine opened behind the caller's back
+  and only `SaveChangesAndFlushMessagesAsync` closes. The consequence worth
+  naming: on an unenrolled context, a slice that publishes and then commits with
+  plain `SaveChangesAsync` instead of `SaveChangesAndFlushMessagesAsync` loses
+  the business rows too, because nobody commits that transaction. On an enrolled
+  context the same mistake commits the rows and leaves the envelope for the
+  durability agent.
 - **`UseEntityFrameworkCoreTransactions()` is deliberately not called.**
   `AddDbContextWithWolverineIntegration` already registers the persistence it
   applies, but it is not a no-op — the full delta, and the one part of it E12

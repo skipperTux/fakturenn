@@ -84,6 +84,14 @@ log line, `Applied database migration for Wolverine Envelope Storage`. Both are
 required: omit `UseResourceSetupOnStartup()` **and** set
 `AutoBuildMessageStorageOnStartup = AutoCreate.None`.
 
+**And the explicit `AutoCreate.None` is not redundant with the environment**,
+however the profile documentation reads. `WolverineOptions.ReadJasperFxOptions`
+fills `AutoBuildMessageStorageOnStartup` from `ActiveProfile.ResourceAutoCreate`
+whenever it was not set explicitly, and both JasperFx 2.55.0 profiles —
+Development and Production alike — carry `ResourceAutoCreate = CreateOrUpdate`.
+Deleting the line does not fall back to a safe production default; it falls back
+to boot-time DDL, which is the one invariant this section exists to protect.
+
 **Wolverine 6.30.0 no longer bundles Roslyn**, so the default
 `TypeLoadMode.Dynamic` throws at startup.
 
@@ -115,20 +123,46 @@ earlier draft called this "a note rather than a blocker" on the grounds that no
 deployment document mandates a read-only root filesystem. It does not have to:
 the image gives the application no writable content root anyway. An image built
 from this branch has `/app` as `drwxr-xr-x` root-owned, with `Config.User`
-`1654` and `WorkingDir` `/app`. Nor does the profile default rescue it —
-`JasperFx.Profile` documents `SourceCodeWritingEnabled` as false in production
-mode, but nothing in this composition applies that profile and the setting reads
-`True` on a host whose `EnvironmentName` is `Production`.
+`1654` and `WorkingDir` `/app`. Nor does the profile default rescue it, and the
+reason is not the one an earlier draft gave. The profile **is** applied:
+`AddWolverine` calls `options.ReadJasperFxOptions(...)`, and
+`JasperFxOptions.ReadHostEnvironment`, wired via `PostConfigure`, sets
+`ActiveProfile = Production` for a Production host. The setting reads `True`
+because **JasperFx 2.55.0's Production profile itself initialises
+`SourceCodeWritingEnabled = true`** — `_development` and `_production` are
+byte-identical (`ResourceAutoCreate = CreateOrUpdate`,
+`GeneratedCodeMode = Dynamic`, `SourceCodeWritingEnabled = true`). The stale
+thing is `JasperFx.Profile`'s own XML doc, "false by default in production
+mode", not the composition.
+
+That correction matters beyond this paragraph. The same `ReadJasperFxOptions`
+block supplies `AutoBuildMessageStorageOnStartup` from
+`ActiveProfile.ResourceAutoCreate` when it was not set explicitly — so a reader
+who believes "the profile isn't applied here" can conclude the explicit
+`AutoCreate.None` above is redundant, drop it, and silently get
+`CreateOrUpdate`: boot-time DDL, the exact invariant this section defends.
 
 The failure would not be a crash: the writer catches everything and prints the
 stack trace, so the symptom is an unstructured `UnauthorizedAccessException`
 dump on stdout, outside Serilog, at first dispatch after every restart. Task 4
 therefore sets `CodeGeneration.SourceCodeWritingEnabled = false` rather than
-leaving it for E12 to meet. Nothing is lost by it: the files are never read back
-at runtime — `Auto` loads pre-generated types from the application *assembly* —
-and no entrypoint here offers `codegen write`. A host-composition guard holds the
-setting, because nothing generates in production today and the regression would
-otherwise be invisible until E12's first handler.
+leaving it for E12 to meet. Setting it explicitly is also what pins it:
+`ReadJasperFxOptions` copies the profile value only while
+`SourceCodeWritingEnabledHasChanged` is false, and the setter raises that flag.
+A host-composition guard holds the setting, because nothing generates in
+production today and the regression would otherwise be invisible until E12's
+first handler.
+
+**Nothing is lost at runtime, but the dev loop pays a real price.** The files
+are never read back — `Auto` loads pre-generated types from the application
+*assembly*, not from source on disk. The setting is applied unconditionally
+though, not scoped to the read-only content root that motivates it, so a
+developer who wants to read generated handler source from a running local host
+has to edit production code **and** break the guard test. If that ever matters,
+the fix is a `codegen write` entrypoint, not flipping the line:
+`DynamicCodeBuilder.WriteGeneratedCode` writes unconditionally and never
+consults `SourceCodeWritingEnabled`, so the command works with the setting
+exactly as it stands.
 
 **`--migrate` becomes a sequence of separately-invocable steps**, not one call:
 
@@ -226,6 +260,10 @@ But it does shape how this epic can be tested — see section 7.
   events are Serilog, synchronously, and that is correct. Enrolling it "for
   symmetry" is the speculative wiring `CLAUDE.md`'s YAGNI rule rejects.
 - `DataProtectionDbContext` — not a business context.
+
+Both non-enrolments are asserted, not just written down:
+`MessagingCompositionTests.The_unenrolled_contexts_carry_no_wolverine_model_annotation`
+fails if either is enrolled. That test earns its place twice over — see §7.
 
 **How a slice uses it.** A feature slice takes its module's `DbContext` and the
 outbox for that context, writes its rows and publishes in the same unit of work,
@@ -365,11 +403,40 @@ Four assertions, each about our configuration.
    collection internal to `HandlerDiscovery`, so `Discovery.Assemblies` — which
    this epic's plan prescribed — does not compile.
 
-Plus **the enrolment checklist guard**: every module context registered for
-migration must also be enrolled with the outbox. Adding a module and forgetting
-enrolment fails a test rather than shipping a silently non-transactional
-publisher. Enrolment is per-context, and an unenrolled context still *publishes*
-— non-transactionally, with no error and no warning.
+Plus **the enrolment checklist guard**: a module context whose slices publish
+must be enrolled with the outbox, and forgetting it should fail a test rather
+than ship silently. Two corrections to how this was originally written down,
+both measured rather than reasoned:
+
+**An unenrolled context does not publish non-transactionally.** That claim
+appears twice above in earlier drafts and is wrong.
+`EfCoreEnvelopeTransaction.PersistIncomingAsync` / `PersistOutgoingAsync` branch
+on `DbContext.IsWolverineEnabled()`, and the unenrolled branch writes the
+envelope with raw ADO on the context's own connection and `CurrentTransaction`,
+beginning one if there is none. Through `IDbContextOutbox<T>` — whose
+constructor always sets `Transaction` — the publish commits or rolls back with
+the caller's work either way. What enrolment changes is *how* the envelope is
+written: an EF-tracked row saved by the same `SaveChangesAsync` as the business
+rows, instead of an eager INSERT at publish time sitting in a transaction
+Wolverine opened behind the caller's back and only
+`SaveChangesAndFlushMessagesAsync` closes. The failure that leaves is real but
+narrower and differently shaped: on an unenrolled context, a slice that
+publishes and then commits with plain `SaveChangesAsync` loses the **business
+rows** as well, because nothing commits Wolverine's transaction.
+
+**The guard cannot assert the outbox resolving.**
+`addDbContextWithWolverineIntegration` registers
+`TryAddScoped(typeof(IDbContextOutbox<>), typeof(DbContextOutbox<>))` — an open
+generic — so once any context is enrolled, `IDbContextOutbox<T>` resolves for
+every `DbContext` in the container. Measured:
+`IDbContextOutbox<IdentityDbContext>` and
+`IDbContextOutbox<DataProtectionDbContext>` both resolve on the real host, and
+neither is enrolled. The property that is true only of an enrolled context is
+the model annotation `WolverineEnabled` that `WolverineModelCustomizer` sets and
+`EfCoreEnvelopeTransaction` itself reads, so that is what the guard asserts —
+present on `InvoicesDbContext`, absent on the two deliberately unenrolled
+contexts. The second half is not decoration: without it the assertion could
+be true of every context and guard nothing.
 
 **Each is proven by mutation.** Break the enrolment and 1 must redden; drop an
 assembly from discovery and 4 must redden. A mutation that leaves everything

@@ -44,9 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no way to leave except by discarding the browser session.
 - **Durable background processing.** Work that must survive a restart — sending
   an invoice, writing a document — is recorded in the database in the same
-  transaction as the change that caused it, so a crash can neither lose it nor
-  send it twice. Nothing uses this yet; it is the foundation the invoicing and
-  mail features will run on.
+  transaction as the change that caused it, so work that was never committed is
+  never started, and work that was committed is not lost when the process
+  stops. Nothing uses this yet; it is the foundation the invoicing and mail
+  features will run on.
 
 ### Changed
 
