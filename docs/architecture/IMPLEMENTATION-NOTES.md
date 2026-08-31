@@ -49,8 +49,19 @@ adding the underlying *why*.
 ## Build and analyzer behaviour
 
 `Directory.Build.props` sets `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`
-and `AnalysisLevel=latest-recommended` repo-wide. Three things about what that
+and `AnalysisLevel=latest-recommended` repo-wide. Four things about what that
 combination does and does not catch:
+
+- **An incremental `dotnet build` does not re-report IDE0005** (unnecessary using
+  directive) for a project it considers up to date, so a local build can print
+  `0 Warning(s) 0 Error(s)` on code CI then rejects. This is not theoretical: the
+  Wolverine branch shipped an unused `using Microsoft.EntityFrameworkCore;` past a
+  clean local build, a clean `dotnet format --verify-no-changes`, an implementer,
+  and two reviews — CI failed three jobs on it (`Format`, `Build and unit tests`
+  and CodeQL's `Analyze C#`, all on the same line). The editor's own language
+  server *did* flag it, which is worth trusting over a green incremental build.
+  **Before claiming a green build for style rules, build with `--no-incremental`.**
+  `dotnet format` inherits the same staleness, so it is not an independent check.
 
 - **CA1707** (underscores in identifiers) becomes a build error under this
   combination. The test naming convention deliberately uses underscores

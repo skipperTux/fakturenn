@@ -3,7 +3,6 @@ using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Wolverine;
 using Wolverine.EntityFrameworkCore;
