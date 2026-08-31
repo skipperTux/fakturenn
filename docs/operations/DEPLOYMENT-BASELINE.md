@@ -131,6 +131,27 @@ the runtime execution strategy's retry count — are deliberately not unified
 into a single setting: they have different lifetimes and a count-based budget
 makes the real wait depend on how the database is unavailable.
 
+`--migrate` is one operation with several steps: the EF Core migrations, then
+Wolverine's message storage, then role seeding and permission-catalogue
+validation. **Take a backup before running it.** Taking one is not this
+operation's job, and no transaction spans the steps, so a failure part-way
+leaves a partially-migrated database. What the operation guarantees is that it
+names the step that failed and why, exits non-zero, and never half-repairs or
+implies a rollback it cannot perform. Restore the backup and try again.
+
+Message storage is part of that, which makes running `--migrate` before traffic
+a hard requirement rather than good practice: **an instance pointed at a
+database whose message storage has not been provisioned refuses to start**, with
+Wolverine reporting that the message storage is missing or out of date. That is
+deliberate. Retrying cannot create a missing schema, so a crash loop here is a
+correct signal that a required deployment step was skipped — unlike a database
+that is merely slow to accept connections, which the retry budget above absorbs.
+
+An instance with **no** connection string configured still starts, still answers
+`/alive` with 200 and `/health` with 503, and now logs at critical level that
+message persistence is not durable: messages are held in memory and will not
+survive a restart. Treat that line as a misconfiguration alert, not as noise.
+
 ## Authentication event log
 
 Every authentication decision is written to the standard logging pipeline under
@@ -305,3 +326,26 @@ Back up consistently:
 Restore must verify artifact hashes and database/storage consistency, and must be
 verified by a real sign-in through the second factor rather than by `/health`
 alone.
+
+**A restore replays queued work.** The `messaging` schema holds Wolverine's
+envelopes, and an envelope is deleted only once its handler has succeeded. A dump
+therefore captures every message that was still in flight when it was taken, and
+restoring it hands those messages back to the running instance — which delivers
+them again. Once E12 and E14 land, that means an e-invoice send or an outbound
+mail that already happened can fire a second time.
+
+Nothing publishes today, so there is nothing to replay yet. Plan for it before the
+first publisher ships:
+
+- Treat the restored `messaging` schema as *pending work*, not as history. Decide
+  per restore whether the queued messages should run again, and record the
+  decision alongside the restore.
+- To restore without replaying, truncate `messaging.wolverine_incoming_envelopes`
+  and `messaging.wolverine_outgoing_envelopes` **before** starting an application
+  replica against the restored database — the migration entrypoint is the natural
+  window, since no host is running then. This discards in-flight work rather than
+  duplicating it; which of the two is worse is a per-restore judgement, and the
+  point is to make it deliberately.
+- Do **not** exclude the `messaging` schema from the dump. Restoring a database
+  without it leaves an instance that refuses to start (see the `--migrate`
+  section: the schema is provisioned there, never at boot).

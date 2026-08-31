@@ -1,4 +1,5 @@
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
@@ -73,6 +74,32 @@ if (args.Contains("--migrate"))
     ];
 
     int exitCode = await DatabaseMigrator.RunAsync(createMigrationContexts, databaseOptions, migrationLogger);
+
+    // Step two of the migrate operation. EF migrations first, then messaging storage:
+    // Wolverine needs none of the business schemas, but a run that created messaging
+    // tables against a database with no business schema is a confusing halfway state.
+    //
+    // These are steps of ONE operation, not a menu. A future migration service exposes a
+    // single "migrate" that succeeds or fails; a caller never chooses which steps run.
+    //
+    // There is no rollback across these steps. PostgreSQL makes DDL transactional per
+    // migration, but nothing wraps EF migrations plus provisioning plus seeding, so a
+    // failure here leaves a partially migrated database. The obligation is to name the
+    // step, exit non-zero, and leave the operator to restore the backup they took before
+    // starting -- never to half-repair.
+    if (exitCode == 0)
+    {
+        try
+        {
+            await MessagingStorage.ProvisionAsync(app.Services, CancellationToken.None);
+            MigrationSeedLog.ProvisionedMessagingStorage(migrationLogger);
+        }
+        catch (Exception failure)
+        {
+            MigrationSeedLog.MessagingProvisioningFailed(migrationLogger, failure);
+            exitCode = 1;
+        }
+    }
 
     // Seeding runs here, not at application startup. Startup seeding races on the
     // unique role-name index when more than one replica starts together, and
@@ -152,4 +179,20 @@ internal static partial class MigrationSeedLog
         Message = "Stored role permissions that this version does not define: {OffendingPermissions}. "
             + "They grant nothing. Refusing to complete the migration.")]
     public static partial void UnknownPermissionsStored(ILogger logger, string offendingPermissions);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Provisioned messaging storage.")]
+    public static partial void ProvisionedMessagingStorage(ILogger logger);
+
+    // Takes the exception rather than its Message, like every other Critical in
+    // DatabaseMigrator: Wolverine wraps a provisioning fault in an AggregateException, whose
+    // Message is "One or more errors occurred." An operator told to restore a backup needs
+    // the type, the inner exception and the stack, not that sentence.
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "Could not provision messaging storage. The database may be partially "
+            + "migrated. Restore the backup taken before this run rather than re-running "
+            + "against this state.")]
+    public static partial void MessagingProvisioningFailed(ILogger logger, Exception exception);
 }

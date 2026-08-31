@@ -86,6 +86,22 @@ Off by default, threshold in configuration.
 
 **Also needs:** a uniqueness constraint on the invoice number in the database, so the guarantee does not rest on the allocator alone.
 
+## Scheduled work with N replicas: nothing elects a leader
+
+**Lands in:** E10, the first epic with a timer — its payment reminders. E16's backup runs meet the same problem and inherit whatever E10 chooses, so E10 has to pick a mechanism, not a one-off.
+
+**The gap.** Wolverine runs in-process inside `Fakturenn.Web` (ADR-007, and section 2 of `docs/superpowers/specs/2026-08-19-wolverine-durable-processing-design.md`). `DEPLOYMENT-BASELINE.md` commits to stateless replicas, and nothing in the deployment says there is only one. A timer registered in the host therefore fires once per replica: three replicas send a customer three reminder mails. The outbox does not help here — each replica's timer produces a *different* message, so there is nothing to deduplicate.
+
+**Why it was deferred rather than solved in this epic.** It is a scheduling problem, not a messaging one, and solving it early means choosing a mechanism with no timer to test it against. This epic queues nothing on a schedule, so nothing was at risk.
+
+**The two candidate approaches, neither costed yet.**
+
+*Leader election in-process.* Wolverine's durability agent already keeps a node registry in `messaging.wolverine_nodes` and supports a `DurabilityMode` in which one node is the leader. Reusing it keeps the deployment shape unchanged — no new object, no new entrypoint. It has to be verified rather than assumed: this epic deliberately did not exercise that mode, and its own attribution of a startup crash to that node-table query turned out to be wrong.
+
+*An entrypoint plus a Kubernetes CronJob.* A `--send-reminders`-shaped flag beside `--migrate`, invoked by a CronJob (or a host `systemd` timer, or `cron`, for the Compose operator). Trivially single-instance, testable from a shell, and it does not depend on Wolverine's clustering at all — at the cost of one more entrypoint per scheduled job and an operator-side object the Compose deployment has no equivalent for.
+
+**Whichever is chosen, the answer must cover the Compose operator too.** The reference deployment is one operator running `compose.yaml`; a solution that exists only as a Kubernetes object leaves them with no schedule at all.
+
 ## xunit v3 4.0.0: the parallelism attribute has no drop-in replacement
 
 **Lands in:** its own change, whenever it is convenient. Nothing depends on it.

@@ -77,7 +77,7 @@ the build, not the review:
 
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
-"every assembly that is NOT Mail/Documents" — today that is all five loaded
+"every assembly that is NOT Mail/Documents" — today that is all eleven loaded
 assemblies. The testing-and-release harness epic proved this in its own Task 6,
 by making `Fakturenn.Modules.Invoices` depend on real MimeKit and watching the
 rule fail. (Not E02a's Task 6, which is the encrypted-token converter.) When `Fakturenn.Infrastructure.Mail*`
@@ -219,8 +219,10 @@ playwright -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install chromium
 # Run the app locally
 dotnet run --project src/Fakturenn.Web --urls http://127.0.0.1:5099
 
-# Apply migrations — never happens automatically. Also seeds the system roles and
-# refuses (exit 1) if the database stores a permission this version does not define.
+# Apply migrations — never happens automatically. Runs the EF migrations, provisions
+# Wolverine's message storage, seeds the system roles, and refuses (exit 1) if the
+# database stores a permission this version does not define. No transaction spans the
+# steps: a failure part-way names the step and leaves the operator to restore a backup.
 dotnet run --project src/Fakturenn.Web -- --migrate
 
 # Operator recovery entrypoints. They bypass authentication, the rate limiter, the
@@ -252,8 +254,12 @@ dotnet ef migrations add <Name> \
 # status section above, though: that workflow has never actually run.
 dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
   -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
-docker compose up --detach
+# Migrate FIRST, then start. Not interchangeable: an app container started against
+# an unmigrated database aborts during StartAsync (Wolverine's message storage check)
+# and compose.yaml sets no restart: policy, so it stays Exited. "compose run" starts
+# the postgres dependency itself, so it is a valid first step against a clean volume.
 docker compose --profile migrate run --rm migrate
+docker compose up --detach
 docker compose down --volumes
 
 # Version bump; releases trigger on the resulting tag
@@ -288,7 +294,9 @@ edit sites, not assumed:**
 2. If the module owns an EF Core `DbContext`:
    - `src/Fakturenn.Web/Fakturenn.Web.csproj` — add a `<ProjectReference>`.
    - `src/Fakturenn.Web/FakturennWebApplication.cs` — register the context in
-     DI with `AddDbContext<...>`, mirroring `InvoicesDbContext`.
+     DI, mirroring `InvoicesDbContext`. Use
+     `AddDbContextWithWolverineIntegration<...>` rather than `AddDbContext<...>`
+     if a slice will publish messages from it — see item 9.
    - `src/Fakturenn.Web/Program.cs` — add one more factory to the
      `createMigrationContexts` array passed to `DatabaseMigrator.RunAsync`.
      `DatabaseMigrator.RunAsync` takes `IReadOnlyList<Func<DbContext>>`
@@ -297,6 +305,13 @@ edit sites, not assumed:**
      migrating Identity before Data Protection against a clean database and
      everything still applied. The current order is for readability. Do not
      add a note claiming an ordering constraint that does not exist.
+   - `tests/Fakturenn.IntegrationTests/MessagingStartupTests.cs` —
+     `CreateEfMigratedDatabaseAsync` migrates each context by hand to build a
+     database that is fully EF-migrated and nothing more. Add the new context
+     there too. A precondition assert names the missing schema if you forget,
+     which is deliberate: without it, startup would fail on *that* schema
+     instead of on the absent messaging one, and the test would stay green with
+     `AutoBuildMessageStorageOnStartup` regressed back to creating DDL at boot.
 3. `tests/Fakturenn.ArchitectureTests/ModuleBoundaryTests.cs`'s
    `The_architecture_contains_the_assemblies_the_rules_govern` hardcodes an
    assembly-name list, but asserts it with `.Should().Contain(...)`, not an
@@ -332,6 +347,47 @@ edit sites, not assumed:**
 8. The containment and boundary rules (rules 1–6 above) apply automatically —
    they match on the `Fakturenn.Modules.*` name pattern. Do not add a rule per
    module.
+9. If a slice in the module will publish messages, the host has to be told
+   twice, and neither omission produces an error:
+   - **Enrol the module's `DbContext` with the outbox** in
+     `FakturennWebApplication.Build`, with
+     `AddDbContextWithWolverineIntegration<...>` instead of `AddDbContext<...>`.
+     Enrolment is per-context.
+
+     **What it buys is less than this epic first claimed, and the honest version
+     is here because the overstated one was load-bearing for a while.** An
+     unenrolled context does **not** publish non-transactionally.
+     `EfCoreEnvelopeTransaction` branches on the context's model annotation and,
+     without it, writes the envelope with raw ADO on the context's own
+     connection and `CurrentTransaction`, beginning one if absent — so a publish
+     through `IDbContextOutbox<T>`, whose constructor always sets `Transaction`,
+     commits or rolls back with the caller's work either way. Enrolment changes
+     *how* the envelope is written: an EF-tracked row saved by the same
+     `SaveChangesAsync` as the business rows, instead of an eager INSERT inside
+     a transaction Wolverine opened behind the caller's back. The real cost of
+     forgetting it: on an unenrolled context, a slice that publishes and then
+     commits with plain `SaveChangesAsync` instead of
+     `SaveChangesAndFlushMessagesAsync` silently loses the **business rows**
+     too, because nothing commits that transaction. Plus a round trip per
+     publish, and no per-context entry in Wolverine's own diagnostics.
+   - **Add the module assembly to `AddFakturennMessaging`'s handler
+     assemblies.** Wolverine's conventional discovery scans its *application*
+     assembly, which is `Fakturenn.Infrastructure.Messaging` and never a module,
+     so a module that is not named contributes no handlers at all — silently,
+     with the failure appearing only once a real handler exists.
+
+   `tests/Fakturenn.Web.UnitTests/MessagingCompositionTests.cs` guards what is
+   wired **today**; extend it when you add a module, because nothing else will
+   notice. **Extend it with the model annotation, not with an outbox
+   resolution.** `IDbContextOutbox<>` is registered as an *open generic*, so
+   once any context is enrolled it resolves for every `DbContext` in the
+   container — measured: `IDbContextOutbox<IdentityDbContext>` and
+   `IDbContextOutbox<DataProtectionDbContext>` both resolve and neither is
+   enrolled. A `GetService<IDbContextOutbox<YourDbContext>>().Should()
+   .NotBeNull()` would therefore pass with your enrolment forgotten. Copy the
+   shape the two existing tests use instead:
+   `dbContext.Model.FindAnnotation("WolverineEnabled")`, asserted present for an
+   enrolled context and absent for an unenrolled one.
 
 ## Definition of Done
 

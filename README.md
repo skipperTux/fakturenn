@@ -38,8 +38,13 @@ must be built locally first:
 
     dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer \
       -p:ContainerImageTag=dev -p:ContainerRuntimeIdentifiers=linux-x64 -p:RuntimeIdentifier=linux-x64
-    docker compose up --detach
     docker compose --profile migrate run --rm migrate
+    docker compose up --detach
+
+The migration step comes first, and the order matters: an app container started
+against a database that has not been migrated aborts at startup rather than
+waiting, and `compose.yaml` sets no `restart:` policy. `compose run` starts the
+database itself, so it works as the first command against a clean volume.
 
 The application listens on http://localhost:8080. See [CLAUDE.md](.claude/CLAUDE.md)
 for the full command reference, including `docker compose down --volumes`.

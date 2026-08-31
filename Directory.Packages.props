@@ -33,6 +33,9 @@
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="TngTech.ArchUnitNET.xUnitV3" Version="0.13.3" />
+    <PackageVersion Include="WolverineFx.EntityFrameworkCore" Version="6.30.0" />
+    <PackageVersion Include="WolverineFx.Postgresql" Version="6.30.0" />
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.30.0" />
     <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
 </Project>

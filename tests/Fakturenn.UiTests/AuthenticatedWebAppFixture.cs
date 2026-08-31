@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
@@ -148,6 +149,12 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             "Fakturenn.Web",
             $"--ConnectionStrings:Fakturenn={_postgres.GetConnectionString()}",
         ]);
+
+        // Wolverine asserts its message storage exists during StartAsync -- there is no
+        // configuration that lets it start cleanly against a real connection string whose
+        // schema does not exist yet, the same way MigrateAsync above provisions
+        // DataProtection, Identity and Invoices before the host boots.
+        await MessagingStorage.ProvisionAsync(_app.Services, CancellationToken.None);
 
         await _app.StartAsync();
 

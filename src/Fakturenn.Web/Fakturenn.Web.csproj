@@ -37,6 +37,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
     <PackageReference Include="MudBlazor" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <!-- Named directly by FakturennWebApplication: the host is where module contexts are
+         enrolled with the outbox, so the EF Core integration is a compile-time dependency
+         of this project rather than something inherited from Fakturenn.Infrastructure.Messaging. -->
+    <PackageReference Include="WolverineFx.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup>
@@ -49,6 +53,7 @@
          MessageFieldJsonFormatterTests resolves it through the same configuration string
          (and through this project's reference chain) so the removal fails a test instead. -->
     <ProjectReference Include="..\Fakturenn.Infrastructure.Logging\Fakturenn.Infrastructure.Logging.csproj" />
+    <ProjectReference Include="..\Fakturenn.Infrastructure.Messaging\Fakturenn.Infrastructure.Messaging.csproj" />
     <ProjectReference Include="..\Fakturenn.Infrastructure.Persistence\Fakturenn.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />

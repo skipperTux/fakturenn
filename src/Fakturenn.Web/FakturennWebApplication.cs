@@ -1,3 +1,4 @@
+using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
 using Fakturenn.Web.Components.Account;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Extensions.Logging;
+using Wolverine.EntityFrameworkCore;
 
 namespace Fakturenn.Web;
 
@@ -87,18 +89,43 @@ public static class FakturennWebApplication
             builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()
                 ?? new DatabaseOptions();
 
+        // Enrolled with the outbox so a slice's rows and its queued messages commit in one
+        // transaction. The enrolment lives here, in the host: Fakturenn.Modules.Invoices
+        // references neither Wolverine nor Fakturenn.Infrastructure.Messaging, and its
+        // DbContext is untouched -- the same arrangement as the audit interceptor.
+        //
+        // InvoicesDbContext is schema-only today (no DbSet, one migration that creates the
+        // schema). Enrolling an empty context is fine: the outbox binds to its connection
+        // and transaction, not to its entities. Wolverine's model customizer does map its
+        // envelope entities into this context's model, but as ExcludeFromMigrations(true),
+        // so the module's own migrations cannot drift.
+        //
+        // The schema argument is inert in Wolverine 6.30.0 -- IL disassembly of
+        // addDbContextWithWolverineIntegration shows the parameter is never read. The schema
+        // the outbox actually writes to comes from PersistMessagesWithPostgresql in
+        // MessagingConfiguration, by way of WolverineModelCustomizer resolving
+        // DatabaseSettings. It is passed anyway so a version that starts honouring the
+        // parameter agrees with the one place that decides today.
+        //
         // EnableRetryOnFailure covers transient failures during normal operation, once the
         // application is already serving traffic (e.g. a brief network blip, a PostgreSQL
         // failover). It is deliberately NOT used by the "--migrate" entrypoint's own
         // DbContext -- see DatabaseMigrator's remarks for why nesting the two would multiply
-        // the total wait.
-        builder.Services.AddDbContext<InvoicesDbContext>(options =>
-            options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+        // the total wait. A caller that opens its own transaction on this context must hand
+        // the whole unit of work to Database.CreateExecutionStrategy(), which is what EF
+        // requires of any user-initiated transaction under a retrying strategy.
+        builder.Services.AddDbContextWithWolverineIntegration<InvoicesDbContext>(
+            options => options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
                 databaseOptions.MaxRetries,
                 TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
-                errorCodesToAdd: null)));
+                errorCodesToAdd: null)),
+            MessagingConfiguration.SchemaName);
 
         builder.AddFakturennIdentity(connectionString, databaseOptions);
+        // The module assemblies whose handlers this host runs. Named here rather than left to
+        // Wolverine's default, which scans the application assembly -- measured to be
+        // Fakturenn.Infrastructure.Messaging, not this one -- and would find no module.
+        builder.AddFakturennMessaging(connectionString, [typeof(InvoicesDbContext).Assembly]);
 
         WebApplication app = builder.Build();
 

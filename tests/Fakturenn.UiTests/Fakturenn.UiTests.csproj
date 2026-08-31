@@ -37,6 +37,7 @@
     <ProjectReference Include="..\..\src\Fakturenn.Web\Fakturenn.Web.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Identity\Fakturenn.Modules.Identity.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.DataProtection\Fakturenn.Infrastructure.DataProtection.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Infrastructure.Messaging\Fakturenn.Infrastructure.Messaging.csproj" />
   </ItemGroup>
 
 </Project>
