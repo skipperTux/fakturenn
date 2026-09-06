@@ -35,7 +35,7 @@ Delivery notes are deferred because v0.1 focuses on services.
 
 ### Core capabilities
 
-- multiple organizations;
+- one organization per instance (several legal entities means several stacks);
 - customers, contacts, and multiple addresses;
 - customer-specific e-invoice profile;
 - customer-specific PDF template;
