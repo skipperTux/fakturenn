@@ -135,3 +135,39 @@ than an assumption.
 
 **Dependabot PR #13 was closed rather than left open**, because a stale red PR
 on the board teaches everyone to ignore reds. Dependabot will re-raise it.
+
+## Hosted multi-tenancy, if Fakturenn is ever offered as a service
+
+**Lands in:** a hosted offering, which is not a v0.1 milestone and not any epic
+in `PLAN-v0.1.md`. Recorded so the isolation strategy is not decided by default.
+
+**The decision, made in advance.** Isolation would be **schema-per-tenant or
+database-per-tenant**, not row-level. A self-hosted instance serves exactly one
+organization; someone needing several runs several stacks. A hosted offering is
+the only scenario where one deployment holds more than one organization's data,
+and there the isolation has to be strong enough that a missing `WHERE` clause
+cannot leak an invoice between paying customers.
+
+**Why this is worth writing down.** Row-level tenancy is the obvious default:
+add `TenantId` to every table, add a global query filter, done. Every .NET
+multi-tenancy tutorial teaches it, and
+[Finbuckle.MultiTenant](https://github.com/Finbuckle/Finbuckle.MultiTenant)
+implements it well (Apache 2.0, versions tracking .NET majors, shadow `TenantId`
+plus automatic query filters and a write-side mismatch check). **Do not reach
+for it here.** Under the chosen strategy the tenant key lives in the connection,
+not in the row, so tenant columns would be machinery for a mechanism this
+project decided against — and once added they are hard to remove, because
+finalized snapshots are immutable.
+
+**Consequence for v0.1, already applied.** No `OrganizationId` filtering, no
+tenant resolution, no query filters. `Organization` is ordinary seller master
+data: one row holding legal identity, bank details and number sequences. The
+Definition of Done's "organization isolation is tested" is satisfied by
+asserting that exactly one organization exists and that creating a second is
+refused.
+
+**If it is ever built.** Finbuckle supports per-tenant connection strings, which
+is the relevant feature under this strategy — its row filters are not.
+Kubernetes helps with the deployment side; the database provisioning, migration
+fan-out across tenant schemas, and per-tenant backup and restore are the real
+work, and none of it is in `DEPLOYMENT-BASELINE.md` today.
