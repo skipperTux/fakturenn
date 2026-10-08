@@ -171,3 +171,24 @@ is the relevant feature under this strategy — its row filters are not.
 Kubernetes helps with the deployment side; the database provisioning, migration
 fan-out across tenant schemas, and per-tenant backup and restore are the real
 work, and none of it is in `DEPLOYMENT-BASELINE.md` today.
+
+## VAT-ID validation against VIES
+
+**Lands in:** after cross-border VAT, which M2 delivers. Not committed for v0.1.
+
+**What it is.** Checking a customer's VAT ID against the EU's VIES service before
+applying reverse charge (`AE`), so a typo or an invalid ID is caught rather than
+invoiced.
+
+**Why deferred, and why optional for good.** Verifying that a business partner is
+a legitimate entity is the user's responsibility when trading with EU companies;
+the software records the VAT ID the user entered and applies the tax rule to it.
+Validation is a convenience on top of that, not a legal precondition, so it must
+never become something finalization waits on — VIES has outages, and an invoice
+that cannot be finalized because a third-party service is down is worse than one
+finalized on the user's own word.
+
+**If built.** An outbound HTTP call to VIES, so read the Happy Eyeballs entry above
+first. Record the validation result and timestamp with the customer rather than
+re-checking at every finalization, and treat "VIES unreachable" as "not
+validated", never as "invalid".
