@@ -201,6 +201,24 @@ additions not covered there:
   file name, the loader-omission architecture test fails (see the
   Architecture-test pitfalls note above). Simplest fix: do not set
   `<AssemblyName>` on `src/` projects.
+- **Serial execution in xunit 4 is `[assembly: Parallelization(Mode =
+  ParallelMode.None)]`**, needing `using Xunit.v3;` (the attribute) and
+  `using Xunit.Sdk;` (the enum). 4.0 made `CollectionBehavior.
+  DisableTestParallelization` an obsolete-as-error (CS0619), and
+  `Fakturenn.UiTests` and `Fakturenn.Web.UnitTests` both rely on serial
+  execution. Three sources disagreed on the replacement and two were wrong: the
+  4.0.0 release notes say `ParallelMode.Off`, and the Developer Intelligence
+  MCP suggested `ParallelMode.Self`. The shipped 4.0.1 enum is `None`,
+  `Collections`, `All` — decompiled, not read about. The default is still
+  `Collections`, so suites that set nothing are unaffected.
+  **Do not trust a green run to prove the attribute works**: the race it
+  prevents failed 2 runs in 13. Ask the runner instead —
+  `bin/Release/net10.0/<Project> --xunit-info --xunit-diagnostics on` prints
+  `parallel mode = none`, and `parallel mode = collections [N threads]` once
+  the attribute is removed. Remove the two `using` lines with it when mutating,
+  or IDE0005 fails the build and the run silently reuses the old binary.
+  4.0.0's packaging kept `xunit.v3.core` at 3.0.1 so neither type resolved;
+  4.0.1 fixed that.
 
 ## Logging
 
