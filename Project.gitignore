@@ -35,3 +35,8 @@ nexus-secrets.json
 # User appsettings
 **/appsettings.User*.json
 **/appsettings.user*.json
+
+# Personal Claude Code rules, deliberately not shared. Claude Code has no local
+# variant of .claude/rules/ (only CLAUDE.local.md, which loses path scoping), so
+# a rule meant for one machine is ignored here by name.
+.claude/rules/developer-intelligence-mcp.md
