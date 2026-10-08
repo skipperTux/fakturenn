@@ -39,6 +39,32 @@ jobs:
           global-json-file: global.json
       - name: Verify formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
+      - name: Verify byte-order marks
+        # dotnet format checks charset on C# files only, so nothing else would notice
+        # a .razor file losing its BOM or a .csproj gaining one. Rule and reasons:
+        # CLAUDE.md, "Encoding and line endings". Proven in both directions before it
+        # was added: a stripped .razor and a BOM'd Directory.Build.props each fail.
+        shell: bash
+        run: |
+          set -o errexit -o nounset -o pipefail
+          mismatches=0
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.razor | *.cshtml | *.resx | *.sln) expected=present ;;
+              *) expected=absent ;;
+            esac
+            if [ "$(head --bytes=3 -- "$file" | od --address-radix=n --format=x1 | tr --delete ' \n')" = efbbbf ]; then
+              actual=present
+            else
+              actual=absent
+            fi
+            if [ "$actual" != "$expected" ]; then
+              echo "::error file=$file::byte-order mark $actual, expected $expected"
+              mismatches=$((mismatches + 1))
+            fi
+          done < <(git grep -I --files-with-matches -z -e '')
+          echo "$mismatches byte-order mark mismatch(es)"
+          [ "$mismatches" -eq 0 ]
 
   build-test:
     name: Build and unit tests
