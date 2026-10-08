@@ -25,7 +25,7 @@ Minimal organization and customer → one-line invoice → PDF → e-invoice →
 
 ### M2 — Invoice alpha
 
-Master data, invoice core, document storage, e-invoice, signed mail.
+Master data, invoice core, cross-border VAT (reverse charge, intra-EU B2C, export), document storage, e-invoice, signed mail.
 
 ### M3 — Time billing alpha
 

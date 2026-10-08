@@ -98,14 +98,20 @@ and resolves for every context whether enrolled or not.
 
 ## 4. The snapshot, and why nothing re-renders
 
-**Reprinting a finalized invoice hands back the archived PDF. It is never
-re-rendered.**
+**Reprinting a finalized invoice hands back the archived PDF and XML. Neither
+is ever regenerated.**
 
 This is the ruling that shapes the rest. Identical data does not produce an
 identical document: layout changes, font versions differ, PDF producer metadata
 moves. A re-render is therefore a *new* document claiming to be an old one, and
 GoBD's Unveränderbarkeit is exactly what that breaks. An invoice once written
 and sent **is** the document to archive.
+
+The same holds for the XML, and stating it separately matters because the XML
+is the part most tempting to regenerate: it is "just data", and a fixed mapping
+bug or a newer Factur-X profile looks like a reason to emit it again. It is not.
+The PDF and the XML sent together are **one** archived record, both immutable,
+and a correction to either is an `InvoiceCorrection`, never a replacement file.
 
 ADR-005 stands unchanged and is not in conflict with this. It says *"PDF, XML,
 timesheet, and email artifacts derive from one immutable finalized snapshot"* —
@@ -252,8 +258,13 @@ is not implemented.
 
 The refusal is the point. Silently charging 19% to an Austrian business with a
 valid VAT ID is a legal problem, not a bug. `AE` additionally needs the
-mandatory invoice note and VAT-ID validation against VIES, which is real work
-belonging to its own epic.
+mandatory invoice note, which is real work belonging to M2.
+
+**VAT-ID validation against VIES is optional, not a precondition.** Verifying
+that a business partner is a legitimate entity is the user's responsibility when
+trading with EU companies. Validation is a useful add-on, recorded in
+`BACKLOG.md`, and nothing in finalization waits on it — reverse charge will be
+applied on the strength of the VAT ID the user entered.
 
 **The tax category code is stored explicitly** on the line and in the snapshot
 from the first migration — never derived at render time. Stage 3's Factur-X
@@ -367,8 +378,11 @@ Five minutes, against a clean database:
 - **Custom fields.** `DOMAIN-MODEL` §15 lists their storage representation as
   open; the walking skeleton uses none; and with no compatibility obligation on
   the snapshot, adding them later is cheap. → E09 or later.
-- **Cross-border VAT**, `AE` reverse charge, VIES validation, OSS. → its own
-  epic, before any non-domestic customer is supported.
+- **Cross-border VAT** — `AE` reverse charge with its mandatory note,
+  intra-EU B2C, `G` export. → **M2**, on the plan, before any non-domestic
+  customer is supported.
+- **VAT-ID validation against VIES.** Optional add-on; the user's
+  responsibility, not a finalization precondition. → `BACKLOG.md`.
 - **Multiple lines per invoice.** The skeleton is one line. The aggregate
   supports a collection; the UI and the tests exercise one. → E09.
 - **Master-data CRUD depth** — contacts, multiple addresses, catalog
