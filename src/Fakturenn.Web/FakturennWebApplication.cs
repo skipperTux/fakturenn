@@ -100,7 +100,7 @@ public static class FakturennWebApplication
         // envelope entities into this context's model, but as ExcludeFromMigrations(true),
         // so the module's own migrations cannot drift.
         //
-        // The schema argument is inert in Wolverine 6.30.0 -- IL disassembly of
+        // The schema argument is inert in Wolverine 6.30.0 and 6.48.1 -- disassembly of
         // addDbContextWithWolverineIntegration shows the parameter is never read. The schema
         // the outbox actually writes to comes from PersistMessagesWithPostgresql in
         // MessagingConfiguration, by way of WolverineModelCustomizer resolving

@@ -25,7 +25,7 @@ services:
   # That order is required, not merely recommended, since Wolverine arrived: an app
   # container started against a database with no 'messaging' schema does not wait,
   # it aborts during StartAsync ("The Wolverine message storage for database
-  # 'default' is missing or out of date"), which is the ruled behaviour -- see
+  # 'default' is missing"), which is the ruled behaviour -- see
   # MessagingConfiguration.cs. There is no restart: policy here, so such a container
   # stays Exited and nothing ever answers /health.
   #

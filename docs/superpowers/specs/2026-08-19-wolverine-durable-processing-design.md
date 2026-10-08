@@ -228,6 +228,14 @@ both were tried, both still crashed, from that second touchpoint — but it is
 on the failure text must match on Wolverine's own noun, *message storage*. The
 ruling is unchanged; only the mechanism was misdescribed.
 
+**Superseded in Wolverine 6.48.1** (GH-4166), recorded on the upgrade rather than
+rewritten above. With `AutoCreate.None` startup now calls
+`AssertStorageProvisionedAsync` instead, which asks only whether the tables exist
+and is deliberately tolerant of drift. The message changed to *"… is missing
+(could not read '<table>')"*. An **absent** schema still crashes the host, so the
+ruling holds; storage that exists but is **out of date** no longer does, which
+makes `--migrate` on every upgrade the only thing keeping message storage current.
+
 Rather than fight the library into a "starts fine, storage silently absent" shape
 it does not support, this design accepts the crash.
 
@@ -522,8 +530,9 @@ docker compose ps                        # fakturenn-app is Exited, not Up
 docker compose logs fakturenn-app | tail -20
 ```
 
-Expect `The Wolverine message storage for database 'default' is missing or out of
-date (schema difference: Create)` and an exited container. There is no `restart:`
+Expect `The Wolverine message storage for database 'default' is missing (could
+not read …)` and an exited container. (Wolverine 6.30.0 worded it *missing or out
+of date (schema difference: Create)*; 6.48.1 changed it.) There is no `restart:`
 policy, so it never recovers on its own; running the migration afterwards does not
 bring it back, only another `up` does. This is the ruled behaviour, not a bug —
 see section 4.

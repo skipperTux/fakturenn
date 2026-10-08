@@ -393,6 +393,36 @@ reasoning are in
 `docs/superpowers/specs/2026-08-19-wolverine-durable-processing-design.md`; this
 is what the running code turned out to do.
 
+**Last verified against Wolverine 6.48.1 and JasperFx 2.81.0** (2026-10-08), by
+decompiling the shipped assemblies rather than reading release notes — the
+epic's earlier mistakes all came from trusting documentation. Entries below that
+name 6.30.0 were re-checked and still hold unless they say otherwise. On the next
+upgrade, re-check every entry here, not only the ones a test covers: most are
+claims about library internals that no test exercises.
+
+- **Since 6.48.1, every enrolled context's `IModelCacheKeyFactory` is replaced.**
+  `AddDbContextWithWolverineIntegration` now calls
+  `ReplaceService<IModelCacheKeyFactory, WolverineModelCacheKeyFactory>()` *after*
+  the caller's own options callback, keying the model on context type plus
+  Wolverine schema (GH-3497). In 6.30.0 only the tenanted builders did this. Any
+  cache-key factory the context registers itself is silently overwritten. That
+  matters for exactly one context here: `IdentityDbContext` depends on
+  `UserTokenProtectorModelCacheKeyFactory` for the Data Protection key ring, so
+  **enrolling Identity would silently undo the E02a fix.**
+  `The_unenrolled_contexts_carry_no_wolverine_model_annotation` asserts Identity
+  stays unenrolled, which now guards this as well.
+- **Since 6.48.1, startup checks only that message storage exists, not that it
+  is current.** With `AutoCreate.None`, startup calls
+  `MessageDatabase.AssertStorageProvisionedAsync`, which reads each envelope
+  table with `select 1 … where 1 = 0` and throws *"The Wolverine message storage
+  for database 'default' is missing (could not read '<table>')"*. 6.30.0 called
+  `AssertStorageExistsAsync` — a full Weasel schema diff — and also refused storage
+  that was merely out of date. The change is deliberate (GH-4166): `None` claims
+  something else owns the schema, so drift is tolerated. Absent storage still
+  crashes the host, which `MessagingStartupTests` asserts; drifted storage now
+  starts, and nothing tests that. `--migrate` on every upgrade is the only thing
+  keeping message storage current.
+
 - **The envelope lands in `messaging.wolverine_incoming_envelopes`, not the
   outgoing table.** `EnvelopeTransactionExtensions.PersistAsync` routes any
   envelope whose destination scheme is `local` to the inbox, and every message
