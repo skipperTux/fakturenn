@@ -1,11 +1,21 @@
 root = true
 
+# Encoding and line endings follow dotnet/aspnetcore; see CLAUDE.md, "Encoding
+# and line endings". No global end_of_line: line endings are Git's job
+# (* text=auto in .gitattributes).
 [*]
 charset = utf-8
-end_of_line = lf
 indent_style = space
 insert_final_newline = true
 trim_trailing_whitespace = true
+
+# Visual Studio writes these with a byte-order mark; aspnetcore keeps it on
+# Razor. CI's Format job fails on a mismatch either way.
+[*.{razor,cshtml,resx,sln}]
+charset = utf-8-bom
+
+[*.sh]
+end_of_line = lf
 
 [*.{cs,csproj,props,targets,slnx}]
 indent_size = 4

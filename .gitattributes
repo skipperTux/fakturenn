@@ -208,3 +208,11 @@
 # Bumpversion
 .bumpversion.cfg text eol=lf
 
+# Line endings are Git's job (* text=auto). The templates above pin these to
+# CRLF; no tool demands it, so the pins are lifted. *.sln, *.cmd and *.bat keep
+# theirs. See CLAUDE.md, "Encoding and line endings".
+*.csproj !eol
+*.props !eol
+*.slnx !eol
+*.ps1 !eol
+
