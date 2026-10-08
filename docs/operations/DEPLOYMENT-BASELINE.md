@@ -142,10 +142,17 @@ implies a rollback it cannot perform. Restore the backup and try again.
 Message storage is part of that, which makes running `--migrate` before traffic
 a hard requirement rather than good practice: **an instance pointed at a
 database whose message storage has not been provisioned refuses to start**, with
-Wolverine reporting that the message storage is missing or out of date. That is
-deliberate. Retrying cannot create a missing schema, so a crash loop here is a
-correct signal that a required deployment step was skipped — unlike a database
-that is merely slow to accept connections, which the retry budget above absorbs.
+Wolverine reporting that the message storage is missing. That is deliberate.
+Retrying cannot create a missing schema, so a crash loop here is a correct signal
+that a required deployment step was skipped — unlike a database that is merely
+slow to accept connections, which the retry budget above absorbs.
+
+It refuses only when the storage is **absent**, not when it is out of date. Since
+Wolverine 6.48.1 the startup check asks whether the storage exists at all and
+deliberately tolerates drift, so an instance upgraded without running
+`--migrate` starts against the previous version's message tables. Running
+`--migrate` on every upgrade is therefore what keeps message storage current;
+nothing at startup will catch the omission.
 
 An instance with **no** connection string configured still starts, still answers
 `/alive` with 200 and `/health` with 503, and now logs at critical level that

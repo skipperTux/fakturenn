@@ -1,3 +1,6 @@
+using Xunit.Sdk;
+using Xunit.v3;
+
 // This assembly runs one test at a time, deliberately.
 //
 // It hosts THREE real applications in one process -- WebAppFixture for the anonymous
@@ -27,4 +30,4 @@
 //
 // The cost is small. The shared collection is dominated by the sixty-second security-stamp
 // wait in Locking_a_user_stops_their_existing_session, and the other collections are short.
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: Parallelization(Mode = ParallelMode.None)]

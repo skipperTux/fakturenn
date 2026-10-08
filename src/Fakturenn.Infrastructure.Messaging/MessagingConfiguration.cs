@@ -178,13 +178,13 @@ public static class MessagingConfiguration
             //
             // It does not make startup tolerant of a missing schema, though. With this set,
             // Wolverine logs "Skipping automatic message storage migration on startup" and
-            // then throws from its own explicit check, MessageDatabase.AssertStorageExistsAsync:
-            // "The Wolverine message storage for database 'default' is missing or out of date".
-            // Note where that is NOT -- an earlier comment here blamed the durability agent's
-            // wolverine_nodes query, which is where ContinueOnFailures and Solo crash, not the
-            // shipped configuration; neither "wolverine_nodes" nor "messaging" appears anywhere
-            // in the resulting exception chain, so anything matching on the failure text must
-            // match on Wolverine's own noun, "message storage".
+            // then throws from MessageDatabase.AssertStorageProvisionedAsync: "The Wolverine
+            // message storage for database 'default' is missing (could not read '<table>')".
+            // Since 6.48.1 (GH-4166) that check asks only whether the tables exist; storage
+            // that exists but is out of date no longer fails startup, so --migrate on every
+            // upgrade is what keeps it current. Match on Wolverine's own noun, "message
+            // storage", never on a table name or the whole sentence: the wording changed
+            // between 6.30.0 and 6.48.1 and will change again.
             //
             // A host with a real, unmigrated connection string fails to start -- which is the
             // correct failure shape here: DEPLOYMENT-BASELINE.md's

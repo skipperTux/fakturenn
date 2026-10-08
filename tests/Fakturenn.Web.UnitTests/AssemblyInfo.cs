@@ -1,3 +1,6 @@
+using Xunit.Sdk;
+using Xunit.v3;
+
 // This assembly runs one test at a time, deliberately -- the same reason
 // Fakturenn.UiTests does, arrived at the same way.
 //
@@ -28,4 +31,4 @@
 // has to overlap in the first place.
 //
 // The cost is a few seconds. Every test in this assembly is in-process with no database.
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: Parallelization(Mode = ParallelMode.None)]

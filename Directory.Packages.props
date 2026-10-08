@@ -23,8 +23,8 @@
       range (10.0.10 and 10.0.4 respectively), producing an MSB3277 assembly version conflict warning.
     -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Playwright" Version="1.62.0" />
-    <PackageVersion Include="MudBlazor" Version="9.10.0" />
+    <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
+    <PackageVersion Include="MudBlazor" Version="9.11.0" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
@@ -33,9 +33,9 @@
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.15.0" />
     <PackageVersion Include="TngTech.ArchUnitNET.xUnitV3" Version="0.13.4" />
-    <PackageVersion Include="WolverineFx.EntityFrameworkCore" Version="6.30.0" />
-    <PackageVersion Include="WolverineFx.Postgresql" Version="6.30.0" />
-    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.30.0" />
-    <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
+    <PackageVersion Include="WolverineFx.EntityFrameworkCore" Version="6.48.1" />
+    <PackageVersion Include="WolverineFx.Postgresql" Version="6.48.1" />
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.48.1" />
+    <PackageVersion Include="xunit.v3.mtp-v2" Version="4.0.1" />
   </ItemGroup>
 </Project>

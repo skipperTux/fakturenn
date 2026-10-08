@@ -143,15 +143,13 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
                 "a host whose message storage does not exist must refuse to start rather "
                 + "than serve traffic with delivery guarantees that turned out imaginary");
 
-            // Which storage it crashed over. 6.30.0 raises this from
-            // MessageDatabase.AssertStorageExistsAsync, whose message names no table. The
-            // durability agent's messaging.wolverine_nodes query is the attribution the
-            // design explicitly *retracts*: it is where ContinueOnFailures and Solo crash,
-            // not where this configuration does, and neither noun appears anywhere in the
-            // exception chain raised here. So the match is on Wolverine's own noun for the
-            // missing thing rather than on a relation name or a whole sentence: short enough
-            // to survive the library rewording its diagnostics, specific enough that no
-            // unrelated startup fault produces it.
+            // Which storage it crashed over. 6.48.1 raises this from
+            // MessageDatabase.AssertStorageProvisionedAsync and names the first table it
+            // could not read; 6.30.0 raised it from AssertStorageExistsAsync and named no
+            // table. Both say "message storage". So the match is on Wolverine's own noun for
+            // the missing thing rather than on a relation name or a whole sentence: the
+            // wording has already changed once across versions, and no unrelated startup
+            // fault produces this phrase.
             Describe(startFailure).Should().Contain(
                 "message storage",
                 "a startup failure only proves the invariant if it is *this* failure -- any "
