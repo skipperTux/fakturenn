@@ -17,7 +17,7 @@ namespace Fakturenn.IntegrationTests;
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17-alpine")
+    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:18-trixie")
         .WithDatabase("fakturenn")
         .WithUsername("fakturenn")
         .WithPassword("fakturenn")

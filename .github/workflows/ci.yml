@@ -116,7 +116,7 @@ jobs:
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
-    # Testcontainers starts TWELVE postgres:17-alpine containers across the suite, not
+    # Testcontainers starts TWELVE postgres:18-trixie containers across the suite, not
     # three: one per each of the ten classes taking IClassFixture<PostgresFixture>, one
     # for the RealHost collection fixture that every host-driving class shares, and one
     # more that DatabaseMigratorTests starts itself to migrate a second clean database.
@@ -150,7 +150,7 @@ jobs:
     runs-on: ubuntu-latest
     # The suite takes about 93 seconds, not "a few" -- it drives a real browser through
     # first-run setup, TOTP enrolment and several sign-ins. It also needs DOCKER now:
-    # AuthenticatedWebAppFixture starts its own postgres:17-alpine container and hosts the
+    # AuthenticatedWebAppFixture starts its own postgres:18-trixie container and hosts the
     # real application against it, so this job is no longer browser-only. The rest of the
     # budget covers playwright.ps1 downloading Chromium on a bare runner.
     timeout-minutes: 15

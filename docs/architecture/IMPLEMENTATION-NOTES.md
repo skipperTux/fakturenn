@@ -1183,6 +1183,32 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
 
 ## Containerisation
 
+- **PostgreSQL runs on `postgres:18-trixie`, the official image's Debian 13
+  variant, not Alpine.** It is the variant docker-library builds first and the
+  one PGDG extension packages and Kubernetes PostgreSQL tooling assume; on Debian
+  an extension is an `apt-get install`, on Alpine a compile. musl's locale
+  support is thin, so on Alpine correct German ordering would depend on ICU
+  alone. Alpine's smaller image buys little for a database whose data dwarfs it.
+  Red Hat's sclorg images were ruled out as a default: the RHEL builds need a
+  subscription, which an open-source project cannot require of contributors.
+  One consequence to remember: when the base moves (bookworm to trixie, a glibc
+  upgrade), libc collations can change order, and indexes on text columns then
+  need `REINDEX`.
+- **PostgreSQL 18, and its volume is mounted at `/var/lib/postgresql`, not
+  `/var/lib/postgresql/data`.** From 18 the official image keeps `PGDATA` in
+  `/var/lib/postgresql/18/docker` and declares its `VOLUME` one level up, so
+  later majors can `pg_upgrade --link` side by side. A mount at the old path
+  makes the container **refuse to start**, exit 1, with *"The suggested
+  container configuration for 18+ is to place a single mount at
+  /var/lib/postgresql"* — measured, not read: an earlier draft of this note
+  claimed the data would silently land in an anonymous volume instead, and
+  running it disproved that. With the mount at the new path a row written
+  before `docker compose down` is still there after `up`. Do not "fix" the
+  mount back. A data directory written by 17 does not
+  start under 18; with nothing deployed yet, `docker compose down --volumes` is
+  the whole migration. The project ran 17 until 2026-10, for no recorded reason —
+  it arrived as a default with the first Compose file and the first
+  Testcontainers fixtures, and 18 had been released in September 2025.
 - There is no Dockerfile, deliberately — the image is built with
   `dotnet publish src/Fakturenn.Web --configuration Release /t:PublishContainer
   -p:ContainerImageTag=<tag>`. `.dockerignore` exists but is inert for this

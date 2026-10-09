@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PostgreSQL 18.** The reference Compose deployment and every test container
+  move from PostgreSQL 17 to 18. A database volume created by an earlier build
+  does not start under 18: run `docker compose down --volumes` once. Its data is
+  test data — Fakturenn has not been released.
 - **`/setup` sends you to the sign-in page** once the instance has an
   administrator, instead of failing. Opening a bookmarked setup address after
   installation now lands somewhere useful; it still cannot create a second

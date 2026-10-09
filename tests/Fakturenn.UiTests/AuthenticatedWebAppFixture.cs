@@ -73,7 +73,7 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
 
     // private readonly Fields
 
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:18-trixie")
         .WithDatabase("fakturenn")
         .WithUsername("fakturenn")
         .WithPassword("fakturenn")
