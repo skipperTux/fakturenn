@@ -82,7 +82,7 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
         // hits the exact server-side rejection DatabaseMigrator's PostgresException
         // branch exists for -- the connection succeeds, the server refuses the
         // statement -- without ever committing a broken migration file.
-        await using PostgreSqlContainer container = new PostgreSqlBuilder("postgres:17-alpine")
+        await using PostgreSqlContainer container = new PostgreSqlBuilder("postgres:18-trixie")
             .WithDatabase("fakturenn")
             .WithUsername("fakturenn")
             .WithPassword("fakturenn")

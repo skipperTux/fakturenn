@@ -2,7 +2,7 @@ name: fakturenn
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-trixie
     environment:
       # Local-development credentials only. Never reuse these values outside a
       # throwaway reference deployment; production secrets come from files or
@@ -11,7 +11,10 @@ services:
       POSTGRES_USER: fakturenn
       POSTGRES_PASSWORD: fakturenn
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # /var/lib/postgresql, not .../data: from 18 the official image keeps PGDATA in
+      # /var/lib/postgresql/18/docker and declares its VOLUME one level up. Mounted at
+      # the old path, the container refuses to start (exit 1) and names this location.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready --username=fakturenn --dbname=fakturenn"]
       interval: 5s
