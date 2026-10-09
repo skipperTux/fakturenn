@@ -32,7 +32,7 @@ public sealed class HttpContextCurrentUserAccessorTests
     public void Outside_a_request_there_is_no_user()
     {
         // Migrations, seeding and the operator entrypoints all run with no HttpContext.
-        ICurrentUserAccessor accessor = new HttpContextCurrentUserAccessor(new HttpContextAccessor());
+        ICurrentUserAccessor accessor = new HttpContextCurrentUserAccessor(new HttpContextAccessor(), new CurrentPrincipal());
 
         accessor.UserName.Should().BeNull();
     }
@@ -52,7 +52,27 @@ public sealed class HttpContextCurrentUserAccessorTests
         accessor.UserName.Should().BeNull();
     }
 
+    [Fact]
+    public void A_principal_set_for_the_operation_wins_over_the_connection_time_request()
+    {
+        // Inside a circuit, IHttpContextAccessor holds at best the request that opened the
+        // circuit. The operation's own principal is the one that changed the IBAN.
+        DefaultHttpContext stale = new()
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "connected@example.test")], "test")),
+        };
+        CurrentPrincipal current = new()
+        {
+            Principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "acting@example.test")], "test")),
+        };
+
+        ICurrentUserAccessor accessor =
+            new HttpContextCurrentUserAccessor(new HttpContextAccessor { HttpContext = stale }, current);
+
+        accessor.UserName.Should().Be("acting@example.test");
+    }
+
     private static ICurrentUserAccessor CreateAccessor(ClaimsPrincipal user) =>
         new HttpContextCurrentUserAccessor(
-            new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = user } });
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = user } }, new CurrentPrincipal());
 }

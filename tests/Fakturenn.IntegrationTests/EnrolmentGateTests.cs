@@ -33,6 +33,20 @@ public sealed class EnrolmentGateTests(SetupHostFixture host)
         response.Headers.Location?.OriginalString.Should().Be("/account/enrol-totp");
     }
 
+    [Fact]
+    public async Task A_user_who_has_not_enrolled_cannot_open_a_circuit()
+    {
+        // Spec section 9: /_blazor is not on the gate's allowlist, and must not be. A gated
+        // user with a circuit could render interactive business pages around the gate.
+        using HttpClient client = await NotEnrolledClientAsync("gate-circuit@example.test");
+
+        using HttpResponseMessage response = await client.PostAsync(
+            "/_blazor/negotiate?negotiateVersion=1", content: null, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Found);
+        response.Headers.Location?.OriginalString.Should().Be("/account/enrol-totp");
+    }
+
     [Theory]
     [InlineData("/account/enrol-totp")]
     [InlineData("/account/recovery-codes")]

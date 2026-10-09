@@ -1,0 +1,8 @@
+﻿@* MudBlazor's popover and snackbar providers must live in the same interactive render
+   scope as the components that use them. The layout is static under per-page
+   interactivity, so a provider there is invisible to a business page's MudSelect and
+   MudDatePicker, and a second provider on the page throws "Duplicate
+   MudPopoverProvider detected" and ends the circuit (review C9). Every interactive page
+   renders this component once; the layout renders none. *@
+<MudPopoverProvider />
+<MudSnackbarProvider />

@@ -4,8 +4,10 @@ using Fakturenn.SharedKernel;
 namespace Fakturenn.Web;
 
 /// <summary>
-/// Resolves the acting user from the current request's principal, for
-/// <c>AuditSaveChangesInterceptor</c>.
+/// Resolves the acting user, for
+/// <c>AuditSaveChangesInterceptor</c>. Inside a circuit <c>IHttpContextAccessor</c> holds at
+/// best the request that opened the circuit, so the principal an operation was started with
+/// wins whenever there is one (spec section 8, review C5).
 /// <para>
 /// It lives in the host rather than in the shared kernel because it needs
 /// <see cref="IHttpContextAccessor"/>, and the shared kernel is referenced by the
@@ -19,19 +21,15 @@ namespace Fakturenn.Web;
 /// one decision two homes that can drift apart.
 /// </para>
 /// </summary>
-public sealed class HttpContextCurrentUserAccessor(IHttpContextAccessor httpContextAccessor)
+public sealed class HttpContextCurrentUserAccessor(IHttpContextAccessor httpContextAccessor, CurrentPrincipal current)
     : ICurrentUserAccessor
 {
-    public string? UserName
-    {
-        get
-        {
-            ClaimsPrincipal? user = httpContextAccessor.HttpContext?.User;
+    public string? UserName => NameOf(current.Principal ?? httpContextAccessor.HttpContext?.User);
 
-            // IsAuthenticated is the load-bearing half. An anonymous ClaimsIdentity
-            // still exposes a readable Name, so reading the name alone would attribute
-            // an unauthenticated request to whatever name it happened to carry.
-            return user?.Identity?.IsAuthenticated == true ? user.Identity.Name : null;
-        }
-    }
+    // private static Methods
+    private static string? NameOf(ClaimsPrincipal? user) =>
+        // IsAuthenticated is the load-bearing half. An anonymous ClaimsIdentity still
+        // exposes a readable Name, so reading the name alone would attribute an
+        // unauthenticated request to whatever name it happened to carry.
+        user?.Identity?.IsAuthenticated == true ? user.Identity.Name : null;
 }

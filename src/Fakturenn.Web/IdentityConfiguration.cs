@@ -6,6 +6,7 @@ using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.SharedKernel;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +40,10 @@ public static class IdentityConfiguration
             .PersistKeysToDbContext<DataProtectionDbContext>();
 
         builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped<CurrentPrincipal>();
+        builder.Services.AddScoped<CircuitOperations>();
+        builder.Services.AddCascadingAuthenticationState();
+        builder.Services.AddScoped<AuthenticationStateProvider, SecurityStampRevalidatingAuthenticationStateProvider>();
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddScoped<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();
         builder.Services.AddScoped<AuditSaveChangesInterceptor>();
