@@ -1,10 +1,12 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -548,6 +550,18 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
         {
             await organizations.Database.MigrateAsync();
+        }
+
+        await using (CustomersDbContext customers = new(
+            new DbContextOptionsBuilder<CustomersDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await customers.Database.MigrateAsync();
+        }
+
+        await using (ProjectsDbContext projects = new(
+            new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await projects.Database.MigrateAsync();
         }
 
         await using InvoicesDbContext invoices = new(

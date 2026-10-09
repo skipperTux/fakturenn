@@ -1,7 +1,13 @@
 using Fakturenn.Infrastructure.Persistence;
+using Fakturenn.Modules.Customers.Contracts;
+using Fakturenn.Modules.Customers.Features;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Organizations.Contracts;
 using Fakturenn.Modules.Organizations.Features;
 using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Contracts;
+using Fakturenn.Modules.Projects.Features;
+using Fakturenn.Modules.Projects.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace Fakturenn.Web;
@@ -26,6 +32,17 @@ public static class ModuleConfiguration
         builder.Services.AddScoped<GetOrganization>();
         builder.Services.AddScoped<SaveOrganization>();
         builder.Services.AddScoped<ISellerProvider, SellerProvider>();
+
+        AddModuleContext<CustomersDbContext>(builder.Services, connectionString, databaseOptions);
+        builder.Services.AddScoped<ListCustomers>();
+        builder.Services.AddScoped<SaveCustomer>();
+        builder.Services.AddScoped<SaveCatalogItemReference>();
+        builder.Services.AddScoped<ICustomerProvider, CustomerProvider>();
+
+        AddModuleContext<ProjectsDbContext>(builder.Services, connectionString, databaseOptions);
+        builder.Services.AddScoped<ListProjects>();
+        builder.Services.AddScoped<SaveProject>();
+        builder.Services.AddScoped<IProjectProvider, ProjectProvider>();
     }
 
     // private static Methods

@@ -59,6 +59,10 @@
     <ProjectReference Include="..\Fakturenn.Modules.Invoices\Fakturenn.Modules.Invoices.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Organizations\Fakturenn.Modules.Organizations.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Organizations.Contracts\Fakturenn.Modules.Organizations.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Customers\Fakturenn.Modules.Customers.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Customers.Contracts\Fakturenn.Modules.Customers.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Projects\Fakturenn.Modules.Projects.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Projects.Contracts\Fakturenn.Modules.Projects.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

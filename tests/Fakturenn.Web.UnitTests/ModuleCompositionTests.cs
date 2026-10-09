@@ -1,6 +1,8 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.Persistence;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -19,6 +21,18 @@ public sealed class ModuleCompositionTests
     public void The_organizations_context_records_provenance()
     {
         AssertAudited<OrganizationsDbContext>();
+    }
+
+    [Fact]
+    public void The_customers_context_records_provenance()
+    {
+        AssertAudited<CustomersDbContext>();
+    }
+
+    [Fact]
+    public void The_projects_context_records_provenance()
+    {
+        AssertAudited<ProjectsDbContext>();
     }
 
     // internal static Methods

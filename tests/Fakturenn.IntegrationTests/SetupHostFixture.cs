@@ -4,9 +4,11 @@ using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.IntegrationTests.Messaging;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -85,6 +87,18 @@ public sealed class SetupHostFixture : IAsyncLifetime
             new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(ConnectionString).Options))
         {
             await organizations.Database.MigrateAsync();
+        }
+
+        await using (CustomersDbContext customers = new(
+            new DbContextOptionsBuilder<CustomersDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await customers.Database.MigrateAsync();
+        }
+
+        await using (ProjectsDbContext projects = new(
+            new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await projects.Database.MigrateAsync();
         }
 
         // Configuration through the command line rather than an environment variable:
