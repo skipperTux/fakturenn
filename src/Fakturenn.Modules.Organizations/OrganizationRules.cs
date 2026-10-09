@@ -36,6 +36,7 @@ public enum OrganizationError
     PaddingInvalid,
     NextNumberInvalid,
     SchemeLocked,
+    LegalNameTooLong,
 }
 
 /// <summary>
@@ -46,12 +47,21 @@ public enum OrganizationError
 /// </summary>
 public static partial class OrganizationRules
 {
+    // public const Fields
+    /// <summary>Matches the legal name column's length.</summary>
+    public const int MaxLegalNameLength = 200;
+
     // public static Methods
     public static IReadOnlyList<OrganizationError> Validate(OrganizationForm form)
     {
         ArgumentNullException.ThrowIfNull(form);
 
         List<OrganizationError> errors = [];
+
+        if (form.LegalName.Trim().Length > MaxLegalNameLength)
+        {
+            errors.Add(OrganizationError.LegalNameTooLong);
+        }
 
         if (form.CountryCode.Length > 0 && !IsCountry(form.CountryCode))
         {
@@ -175,18 +185,18 @@ public static partial class OrganizationRules
         }
     }
 
-    [GeneratedRegex("^[A-Z]{2}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Z]{2}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex CountryPattern();
 
-    [GeneratedRegex("^(?<country>[A-Z]{2})[A-Z0-9+*]{2,12}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^(?<country>[A-Z]{2})[A-Z0-9+*]{2,12}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex VatIdPattern();
 
-    [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex IbanPattern();
 
-    [GeneratedRegex("^[A-Z]{3}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Z]{3}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex CurrencyPattern();
 
-    [GeneratedRegex("^[A-Za-z0-9]{0,9}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Za-z0-9]{0,9}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex PrefixPattern();
 }

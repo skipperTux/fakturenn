@@ -74,6 +74,28 @@ public sealed class OrganizationRulesTests
     }
 
     [Fact]
+    public void A_trailing_newline_is_not_part_of_a_valid_value()
+    {
+        // .NET's $ matches before a final \n; the patterns anchor with \z instead.
+        OrganizationRules.Validate(Valid() with { NumberPrefix = "R\n" }).Should().Contain(OrganizationError.PrefixInvalid);
+        OrganizationRules.Validate(Valid() with { VatId = "DE123456789\n" }).Should().Contain(OrganizationError.VatIdInvalid);
+        OrganizationRules.Validate(Valid() with { Iban = "DE89370400440532013000\n" }).Should().Contain(OrganizationError.IbanInvalid);
+        OrganizationRules.Validate(Valid() with { Currency = "EUR\n" }).Should().Contain(OrganizationError.CurrencyInvalid);
+        OrganizationRules.Validate(Valid() with { CountryCode = "DE\n", VatId = "" }).Should().Contain(OrganizationError.CountryInvalid);
+    }
+
+    [Theory]
+    [InlineData(200, true)]
+    [InlineData(201, false)]
+    public void Legal_name_fits_its_column(int length, bool valid)
+    {
+        IReadOnlyList<OrganizationError> errors =
+            OrganizationRules.Validate(Valid() with { LegalName = new string('x', length) });
+
+        (!errors.Contains(OrganizationError.LegalNameTooLong)).Should().Be(valid);
+    }
+
+    [Fact]
     public void An_unknown_time_zone_is_refused()
     {
         OrganizationRules.Validate(Valid() with { TimeZoneId = "Mars/Olympus_Mons" })
