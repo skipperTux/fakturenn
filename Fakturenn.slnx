@@ -9,6 +9,8 @@
     <Project Path="src/Fakturenn.Modules.Identity/Fakturenn.Modules.Identity.csproj" />
     <Project Path="src/Fakturenn.Modules.Invoices.Contracts/Fakturenn.Modules.Invoices.Contracts.csproj" />
     <Project Path="src/Fakturenn.Modules.Invoices/Fakturenn.Modules.Invoices.csproj" />
+    <Project Path="src/Fakturenn.Modules.Organizations.Contracts/Fakturenn.Modules.Organizations.Contracts.csproj" />
+    <Project Path="src/Fakturenn.Modules.Organizations/Fakturenn.Modules.Organizations.csproj" />
     <Project Path="src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
     <Project Path="src/Fakturenn.Web/Fakturenn.Web.csproj" />
   </Folder>

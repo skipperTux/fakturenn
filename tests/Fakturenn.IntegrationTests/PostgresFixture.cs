@@ -34,6 +34,10 @@ public sealed class PostgresFixture : IAsyncLifetime
             .UseNpgsql(ConnectionString)
             .Options);
 
+    public TContext Create<TContext>(Func<DbContextOptions<TContext>, TContext> create)
+        where TContext : DbContext =>
+        create(new DbContextOptionsBuilder<TContext>().UseNpgsql(ConnectionString).Options);
+
     public IdentityDbContext CreateIdentityContext() =>
         new(
             new DbContextOptionsBuilder<IdentityDbContext>()

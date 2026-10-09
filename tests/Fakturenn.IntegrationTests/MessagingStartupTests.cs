@@ -5,6 +5,7 @@ using AwesomeAssertions.Execution;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -116,6 +117,7 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
                 DataProtectionDbContext.SchemaName,
                 IdentityDbContext.SchemaName,
                 InvoicesDbContext.SchemaName,
+                OrganizationsDbContext.SchemaName,
             ],
             "this test's premise is a database that is fully EF-migrated and nothing more");
 
@@ -356,6 +358,12 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
             DataProtectionProvider.Create("Fakturenn.Tests")))
         {
             await identity.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await organizations.Database.MigrateAsync(TestContext.Current.CancellationToken);
         }
 
         await using (InvoicesDbContext invoices = new(

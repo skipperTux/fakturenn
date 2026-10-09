@@ -122,6 +122,7 @@ public static class FakturennWebApplication
             MessagingConfiguration.SchemaName);
 
         builder.AddFakturennIdentity(connectionString, databaseOptions);
+        builder.AddFakturennModules(connectionString, databaseOptions);
         // The module assemblies whose handlers this host runs. Named here rather than left to
         // Wolverine's default, which scans the application assembly -- measured to be
         // Fakturenn.Infrastructure.Messaging, not this one -- and would find no module.

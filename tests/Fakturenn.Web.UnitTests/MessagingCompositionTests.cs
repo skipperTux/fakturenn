@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Wolverine;
@@ -108,6 +109,9 @@ public sealed class MessagingCompositionTests
             "Identity is deliberately not enrolled");
         dataProtection.Model.FindAnnotation(WolverineEnabledAnnotation).Should().BeNull(
             "data protection is deliberately not enrolled");
+        scope.ServiceProvider.GetRequiredService<OrganizationsDbContext>()
+            .Model.FindAnnotation(WolverineEnabledAnnotation).Should().BeNull(
+                "organization data publishes nothing in Stage 1");
     }
 
     [Fact]

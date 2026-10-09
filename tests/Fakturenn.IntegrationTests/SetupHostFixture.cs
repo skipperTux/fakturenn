@@ -6,6 +6,7 @@ using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.IntegrationTests.Messaging;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -78,6 +79,12 @@ public sealed class SetupHostFixture : IAsyncLifetime
             // That accident makes a race test pass with no setup guard at all, which is
             // exactly the false green this endpoint has already produced once.
             await RoleSeeder.SeedAsync(identity, CancellationToken.None);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await organizations.Database.MigrateAsync();
         }
 
         // Configuration through the command line rather than an environment variable:

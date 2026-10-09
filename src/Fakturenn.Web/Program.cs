@@ -3,6 +3,7 @@ using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
 using Fakturenn.Web;
 using Fakturenn.Web.Operations;
 using Microsoft.AspNetCore.DataProtection;
@@ -56,6 +57,11 @@ if (args.Contains("--migrate"))
             .UseNpgsql(migrationConnectionString)
             .Options);
 
+    OrganizationsDbContext CreateOrganizationsMigrationContext() =>
+        new(new DbContextOptionsBuilder<OrganizationsDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
     // One factory per context that owns migrations. A future module with its own
     // DbContext adds one more entry here rather than a discovery mechanism -- see
     // DatabaseMigrator's remarks for why the signature takes a list instead of a single
@@ -70,6 +76,7 @@ if (args.Contains("--migrate"))
     [
         CreateDataProtectionMigrationContext,
         CreateIdentityMigrationContext,
+        CreateOrganizationsMigrationContext,
         CreateMigrationContext,
     ];
 

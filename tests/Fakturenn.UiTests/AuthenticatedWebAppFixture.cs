@@ -4,6 +4,7 @@ using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -541,6 +542,12 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             // before the instance serves traffic, so a real /setup post always meets an
             // existing Administrator role.
             await RoleSeeder.SeedAsync(identity, CancellationToken.None);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await organizations.Database.MigrateAsync();
         }
 
         await using InvoicesDbContext invoices = new(

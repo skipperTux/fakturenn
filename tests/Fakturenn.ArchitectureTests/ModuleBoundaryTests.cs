@@ -28,6 +28,8 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.Infrastructure.Messaging",
             "Fakturenn.Modules.Invoices",
             "Fakturenn.Modules.Invoices.Contracts",
+            "Fakturenn.Modules.Organizations",
+            "Fakturenn.Modules.Organizations.Contracts",
             "Fakturenn.Modules.Identity",
             "Fakturenn.Modules.Identity.Contracts",
         ]);
