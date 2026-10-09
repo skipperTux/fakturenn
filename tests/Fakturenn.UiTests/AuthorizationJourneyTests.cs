@@ -47,6 +47,27 @@ public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app) : 
     }
 
     [Fact]
+    public async Task A_signed_out_page_receives_the_blazor_script_as_javascript()
+    {
+        // The fallback policy challenges any path with no file and no endpoint, answering
+        // 302 to the sign-in page. The framework script is served by UseStaticFiles, which
+        // runs before UseAuthorization, so a signed-out visitor still gets the runtime. It
+        // is tested here and not in AnonymousAccessTests because only this host runs in
+        // Development, where the file exists; the integration host answers 404 for it.
+        IBrowserContext context = await AuthenticatedWebAppFixture.NewContextAsync(_browser!);
+        IPage page = await context.NewPageAsync();
+
+        Task<IResponse> script = page.WaitForResponseAsync(
+            response => response.Url.EndsWith("/_framework/blazor.web.js", StringComparison.Ordinal));
+
+        await page.GotoAsync(app.Url("/account/login"));
+        IResponse response = await script;
+
+        response.Status.Should().Be(200);
+        response.Headers["content-type"].Should().Match("*javascript*");
+    }
+
+    [Fact]
     public async Task An_administrator_reaches_an_authorized_page()
     {
         // The defect this catches: PermissionAuthorizationHandler reads

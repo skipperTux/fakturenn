@@ -135,8 +135,9 @@ public static class IdentityConfiguration
         // Authenticated by default (spec section 8, review S4). A page or endpoint that
         // forgets its attribute is refused rather than anonymous. Everything a signed-out
         // visitor must reach carries an explicit AllowAnonymous instead, so the exceptions
-        // are greppable. Static files are unaffected: UseStaticFiles runs before
-        // UseAuthorization.
+        // are greppable. Files served by UseStaticFiles -- wwwroot, _content and the
+        // framework script -- bypass authorization because it runs first. A path with no
+        // file and no endpoint is challenged by the fallback: 302 to sign-in, not 404.
         builder.Services.AddAuthorization(options =>
             options.FallbackPolicy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()

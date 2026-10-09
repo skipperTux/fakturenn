@@ -21,8 +21,9 @@ public sealed class AnonymousAccessTests(SetupHostFixture host)
     [InlineData("/account/lockout")]
     [InlineData("/account/denied")]
     [InlineData("/alive")]
-    // /_framework/blazor.web.js is deliberately absent: it is an endpoint, not a static
-    // file, so the fallback policy challenges it. See the Task 1 report.
+    // /_framework/blazor.web.js is absent on purpose: this host is not Development, so the
+    // file does not exist here and the fallback policy answers 302. It is tested where the
+    // file exists: AuthorizationJourneyTests in Fakturenn.UiTests.
     public async Task A_signed_out_visitor_reaches(string path)
     {
         using HttpClient client = host.CreateClient();
