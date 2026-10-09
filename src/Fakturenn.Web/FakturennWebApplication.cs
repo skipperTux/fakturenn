@@ -204,12 +204,12 @@ public static class FakturennWebApplication
         app.MapHealthChecks("/alive", new HealthCheckOptions
         {
             Predicate = registration => registration.Tags.Contains("live"),
-        });
+        }).AllowAnonymous();
 
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
             Predicate = registration => registration.Tags.Contains("ready"),
-        });
+        }).AllowAnonymous();
 
         app.MapAccountEndpoints();
 

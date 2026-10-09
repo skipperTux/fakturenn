@@ -1,4 +1,5 @@
 ﻿@page "/account/lockout"
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
 @inject IStringLocalizer<SharedResource> Localizer
 
 <PageTitle>@Localizer["Account_Lockout_PageTitle"]</PageTitle>

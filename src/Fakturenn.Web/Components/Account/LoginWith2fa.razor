@@ -1,4 +1,5 @@
 ﻿@page "/account/login-2fa"
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
 @* AntiforgeryToken lives in Components.Forms, which _Imports.razor does not carry. *@
 @using Microsoft.AspNetCore.Components.Forms
 @inject IStringLocalizer<SharedResource> Localizer

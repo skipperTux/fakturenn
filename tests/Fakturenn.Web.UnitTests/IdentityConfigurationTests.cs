@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,22 @@ namespace Fakturenn.Web.UnitTests;
 /// </summary>
 public sealed class IdentityConfigurationTests
 {
+    [Fact]
+    public void An_endpoint_without_an_authorize_attribute_requires_a_signed_in_user()
+    {
+        // Spec section 8 [S4]: a page that forgets its attribute must be refused, not
+        // anonymous. Without a fallback policy it is reachable without signing in --
+        // the organization page with its IBAN included.
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+
+        AuthorizationOptions options =
+            app.Services.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+
+        options.FallbackPolicy.Should().NotBeNull();
+        options.FallbackPolicy!.Requirements.Should().ContainSingle()
+            .Which.Should().BeOfType<Microsoft.AspNetCore.Authorization.Infrastructure.DenyAnonymousAuthorizationRequirement>();
+    }
+
     [Fact]
     public void The_claims_principal_factory_is_the_permission_factory()
     {

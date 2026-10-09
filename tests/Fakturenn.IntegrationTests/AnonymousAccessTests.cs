@@ -1,0 +1,76 @@
+using System.Net;
+using AwesomeAssertions;
+
+namespace Fakturenn.IntegrationTests;
+
+/// <summary>
+/// What a signed-out visitor may reach under the authenticated-by-default fallback policy,
+/// and nothing more. Each row is a path that worked before the fallback policy and must
+/// keep working; each refusal is a path the policy exists to close.
+/// </summary>
+[Collection(RealHost.Name)]
+public sealed class AnonymousAccessTests(SetupHostFixture host)
+{
+    // public Methods
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/setup")]
+    [InlineData("/account/login")]
+    [InlineData("/account/login-2fa")]
+    [InlineData("/account/login-recovery")]
+    [InlineData("/account/lockout")]
+    [InlineData("/account/denied")]
+    [InlineData("/alive")]
+    // /_framework/blazor.web.js is deliberately absent: it is an endpoint, not a static
+    // file, so the fallback policy challenges it. See the Task 1 report.
+    public async Task A_signed_out_visitor_reaches(string path)
+    {
+        using HttpClient client = host.CreateClient();
+
+        using HttpResponseMessage response = await client.GetAsync(path, TestContext.Current.CancellationToken);
+
+        // A page may redirect on its own (the sign-in page sends an instance with no user
+        // to /setup); only the fallback policy's challenge carries a ReturnUrl.
+        response.Headers.Location?.OriginalString.Should().NotContain("ReturnUrl",
+            $"{path} must not challenge a signed-out visitor");
+        ((int)response.StatusCode).Should().BeLessThan(400, $"{path} must answer a signed-out visitor");
+    }
+
+    [Fact]
+    public async Task A_signed_out_probe_reaches_the_readiness_check()
+    {
+        using HttpClient client = host.CreateClient();
+
+        using HttpResponseMessage response = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+
+        // 200 or 503 depending on the database; never a redirect to a sign-in page a probe
+        // cannot follow.
+        response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Theory]
+    [InlineData("/admin/users")]
+    [InlineData("/account/change-password")]
+    public async Task A_signed_out_visitor_is_sent_to_sign_in(string path)
+    {
+        using HttpClient client = host.CreateClient();
+
+        using HttpResponseMessage response = await client.GetAsync(path, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Found);
+        response.Headers.Location!.AbsolutePath.Should().Be("/account/login");
+    }
+
+    [Fact]
+    public async Task A_signed_out_visitor_cannot_open_a_circuit()
+    {
+        using HttpClient client = host.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsync(
+            "/_blazor/negotiate?negotiateVersion=1", content: null, TestContext.Current.CancellationToken);
+
+        // The cookie handler answers 401 rather than 302 for a SignalR negotiate request.
+        response.StatusCode.Should().BeOneOf([HttpStatusCode.Found, HttpStatusCode.Unauthorized],
+            "the circuit endpoint carries no AllowAnonymous, so the fallback policy challenges it");
+    }
+}

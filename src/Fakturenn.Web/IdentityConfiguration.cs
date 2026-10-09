@@ -132,7 +132,15 @@ public static class IdentityConfiguration
 
         builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
-        builder.Services.AddAuthorization();
+        // Authenticated by default (spec section 8, review S4). A page or endpoint that
+        // forgets its attribute is refused rather than anonymous. Everything a signed-out
+        // visitor must reach carries an explicit AllowAnonymous instead, so the exceptions
+        // are greppable. Static files are unaffected: UseStaticFiles runs before
+        // UseAuthorization.
+        builder.Services.AddAuthorization(options =>
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build());
 
         // Lockout alone would make the login endpoint a user-enumeration oracle:
         // a locked account answers differently from an unknown one under load.
