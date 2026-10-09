@@ -30,3 +30,4 @@ discovered mid-plan costs rework across tasks.
 ## Reviews
 
 - [2026-08-11 — E02a Identity foundation](2026-08-11-e02a-identity-foundation-spec-review.md)
+- [2026-10-08 — M1 Stage 1, invoice finalization](2026-10-08-m1-stage1-invoice-finalization-spec-review.md)
