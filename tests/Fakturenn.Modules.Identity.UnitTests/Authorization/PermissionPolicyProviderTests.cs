@@ -49,14 +49,24 @@ public sealed class PermissionPolicyProviderTests
     [Fact]
     public void Every_declared_constant_is_present_in_the_catalogue()
     {
-        // Two permissions, both with a named enforcement site. roles.read and
-        // roles.manage were removed by the spec review: a permission constant with
-        // nothing enforcing it is speculative surface, and E02b adds them together
-        // with the role-management UI that will enforce them.
+        // Five permissions, each with a named enforcement site. A permission constant with
+        // nothing enforcing it is speculative surface, which is why roles.read and
+        // roles.manage were removed by the spec review; E02b adds them together with the
+        // role-management UI that will enforce them.
+        //   users.read          GET /admin/users
+        //   users.manage        the /account/admin/* endpoints
+        //   organization.manage the /organization page
+        //   masterdata.manage   the /customers and /catalog pages
+        //   invoices.manage     the /invoices pages
+        // The last three guard the interactive business pages and every operation those
+        // pages run through CircuitOperations.
         Permissions.All.Should().BeEquivalentTo(
         [
             Permissions.UsersRead,
             Permissions.UsersManage,
+            Permissions.OrganizationManage,
+            Permissions.MasterDataManage,
+            Permissions.InvoicesManage,
         ]);
     }
 }
