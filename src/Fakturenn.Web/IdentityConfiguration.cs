@@ -42,7 +42,6 @@ public static class IdentityConfiguration
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<CurrentPrincipal>();
         builder.Services.AddScoped<CircuitOperations>();
-        builder.Services.AddCascadingAuthenticationState();
         builder.Services.AddScoped<AuthenticationStateProvider, SecurityStampRevalidatingAuthenticationStateProvider>();
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddScoped<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();

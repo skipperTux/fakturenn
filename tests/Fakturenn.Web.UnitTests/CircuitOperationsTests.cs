@@ -13,7 +13,7 @@ public sealed class CircuitOperationsTests
     [Fact]
     public async Task An_operation_runs_when_the_current_user_holds_the_permission()
     {
-        await using ServiceProvider services = Services(User(Permissions.MasterDataManage));
+        await using ServiceProvider services = Services(new FixedAuthenticationStateProvider(User(Permissions.MasterDataManage)));
         await using AsyncServiceScope circuit = services.CreateAsyncScope();
         CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
 
@@ -26,7 +26,7 @@ public sealed class CircuitOperationsTests
     [Fact]
     public async Task An_operation_is_refused_without_the_permission()
     {
-        await using ServiceProvider services = Services(User(Permissions.UsersRead));
+        await using ServiceProvider services = Services(new FixedAuthenticationStateProvider(User(Permissions.UsersRead)));
         await using AsyncServiceScope circuit = services.CreateAsyncScope();
         CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
 
@@ -40,11 +40,16 @@ public sealed class CircuitOperationsTests
     public async Task An_operation_is_refused_once_the_state_turns_anonymous()
     {
         // What revalidation does to a locked user's circuit: the provider's state becomes
-        // anonymous, and the very next operation must see it.
-        await using ServiceProvider services = Services(new ClaimsPrincipal(new ClaimsIdentity()));
+        // anonymous mid-circuit, and the very next operation must see it -- a CircuitOperations
+        // that cached the first state would keep running.
+        FixedAuthenticationStateProvider provider = new(User(Permissions.MasterDataManage));
+        await using ServiceProvider services = Services(provider);
         await using AsyncServiceScope circuit = services.CreateAsyncScope();
         CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
+        await operations.RunAsync<Probe, string>(
+            Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe.Seen), TestContext.Current.CancellationToken);
 
+        provider.SetUser(new ClaimsPrincipal(new ClaimsIdentity()));
         Func<Task> act = () => operations.RunAsync<Probe, string>(
             Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe.Seen), TestContext.Current.CancellationToken);
 
@@ -57,14 +62,14 @@ public sealed class CircuitOperationsTests
             [new Claim(ClaimTypes.Name, "user@example.test"), new Claim(PermissionClaims.Type, permission)],
             authenticationType: "test"));
 
-    private static ServiceProvider Services(ClaimsPrincipal user)
+    private static ServiceProvider Services(FixedAuthenticationStateProvider provider)
     {
         ServiceCollection services = new();
         services.AddLogging();
         services.AddAuthorization();
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
-        services.AddScoped<AuthenticationStateProvider>(_ => new FixedAuthenticationStateProvider(user));
+        services.AddScoped<AuthenticationStateProvider>(_ => provider);
         services.AddScoped<CurrentPrincipal>();
         services.AddScoped<CircuitOperations>();
         services.AddScoped<Probe>();
@@ -79,7 +84,15 @@ public sealed class CircuitOperationsTests
 
     private sealed class FixedAuthenticationStateProvider(ClaimsPrincipal user) : AuthenticationStateProvider
     {
+        private ClaimsPrincipal _user = user;
+
         public override Task<AuthenticationState> GetAuthenticationStateAsync() =>
-            Task.FromResult(new AuthenticationState(user));
+            Task.FromResult(new AuthenticationState(_user));
+
+        public void SetUser(ClaimsPrincipal user)
+        {
+            _user = user;
+            NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
+        }
     }
 }

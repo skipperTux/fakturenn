@@ -3,6 +3,7 @@ using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -52,6 +53,19 @@ public sealed class IdentityConfigurationTests
             scope.ServiceProvider.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
 
         factory.Should().BeOfType<PermissionClaimsPrincipalFactory>();
+    }
+
+    [Fact]
+    public void The_authentication_state_provider_is_the_revalidating_one()
+    {
+        // Static SSR works with the framework's stock provider, so nothing else fails if
+        // this registration goes: a locked user's open circuit would keep its access
+        // (spec section 8, review S3).
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+        using IServiceScope scope = app.Services.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<AuthenticationStateProvider>()
+            .Should().BeOfType<SecurityStampRevalidatingAuthenticationStateProvider>();
     }
 
     [Fact]
