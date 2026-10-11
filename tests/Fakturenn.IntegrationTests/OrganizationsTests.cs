@@ -17,13 +17,19 @@ public sealed class OrganizationsTests(PostgresFixture postgres) : IClassFixture
     [Fact]
     public async Task Migrating_creates_exactly_one_empty_organization()
     {
-        await using OrganizationsDbContext db = await MigratedAsync();
+        // Its own database: the class fixture's row is shared with the save test, so its
+        // field values there depend on order.
+        string connectionString = await postgres.CreateDatabaseAsync("organization_seed");
+        await using OrganizationsDbContext db = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options);
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await OrganizationSeeder.SeedAsync(db, TestContext.Current.CancellationToken);
 
         List<Organization> rows = await db.Organizations.AsNoTracking().ToListAsync(TestContext.Current.CancellationToken);
 
-        // Only the count and the key: the class fixture shares this row with the save test,
-        // so its field values depend on order.
         rows.Should().ContainSingle().Which.Id.Should().Be(Organization.SingletonId);
+        (await new GetOrganization(db).HandleAsync(TestContext.Current.CancellationToken))
+            .Should().Be(OrganizationForm.Empty, "every field starts empty or at its default");
     }
 
     [Fact]
@@ -100,6 +106,7 @@ public sealed class OrganizationsTests(PostgresFixture postgres) : IClassFixture
     {
         OrganizationsDbContext db = postgres.Create<OrganizationsDbContext>(options => new(options));
         await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await OrganizationSeeder.SeedAsync(db, TestContext.Current.CancellationToken);
         return db;
     }
 

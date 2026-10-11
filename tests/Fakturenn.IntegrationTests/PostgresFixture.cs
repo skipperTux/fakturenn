@@ -41,6 +41,25 @@ public sealed class PostgresFixture : IAsyncLifetime
         create(new DbContextOptionsBuilder<TContext>().UseNpgsql(ConnectionString).Options);
 
     /// <summary>
+    /// A fresh, empty database in this container, for a test whose assertion must not depend
+    /// on what the class's other tests left in the shared one. Dropped first, so a re-run
+    /// starts from the same state.
+    /// </summary>
+    public async Task<string> CreateDatabaseAsync(string name)
+    {
+        await using NpgsqlConnection administration = new(ConnectionString);
+        await administration.OpenAsync(TestContext.Current.CancellationToken);
+        await using NpgsqlCommand drop = administration.CreateCommand();
+        drop.CommandText = $"DROP DATABASE IF EXISTS {name} WITH (FORCE)";
+        await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        await using NpgsqlCommand create = administration.CreateCommand();
+        create.CommandText = $"CREATE DATABASE {name}";
+        await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+        return new NpgsqlConnectionStringBuilder(ConnectionString) { Database = name }.ConnectionString;
+    }
+
+    /// <summary>
     /// Returns once another session waits on a lock in a statement containing
     /// <paramref name="queryFragment"/>, which is how a test proves an interleave was forced
     /// rather than won by timing.

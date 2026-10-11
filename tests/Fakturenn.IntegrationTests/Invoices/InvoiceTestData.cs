@@ -41,6 +41,7 @@ internal sealed class InvoiceTestData(PostgresFixture postgres, IClock clock)
             await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
         }
 
+        await OrganizationSeeder.SeedAsync(orgs, TestContext.Current.CancellationToken);
         (await new SaveOrganization(orgs, new NumberingStatus(invoices)).HandleAsync(organization, TestContext.Current.CancellationToken))
             .Should().BeEmpty();
         // Not CreateVersion7: its leading hex digits are the timestamp, the same for a minute.

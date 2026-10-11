@@ -129,6 +129,23 @@ if (args.Contains("--migrate"))
         }
     }
 
+    // Step three: the one organization row (spec section 2). Insert-if-absent, so a re-run on
+    // upgrade never touches what the operator has entered, number scheme included.
+    if (exitCode == 0)
+    {
+        try
+        {
+            await using OrganizationsDbContext organizations = CreateOrganizationsMigrationContext();
+            await OrganizationSeeder.SeedAsync(organizations, CancellationToken.None);
+            MigrationSeedLog.SeededOrganization(migrationLogger);
+        }
+        catch (Exception failure)
+        {
+            MigrationSeedLog.OrganizationSeedingFailed(migrationLogger, failure);
+            exitCode = 1;
+        }
+    }
+
     // Seeding runs here, not at application startup. Startup seeding races on the
     // unique role-name index when more than one replica starts together, and
     // --migrate already runs exactly once by design.
@@ -223,4 +240,14 @@ internal static partial class MigrationSeedLog
             + "migrated. Restore the backup taken before this run rather than re-running "
             + "against this state.")]
     public static partial void MessagingProvisioningFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Ensured the organization row exists.")]
+    public static partial void SeededOrganization(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "Could not seed the organization row. The database may be partially "
+            + "migrated. Restore the backup taken before this run rather than re-running "
+            + "against this state.")]
+    public static partial void OrganizationSeedingFailed(ILogger logger, Exception exception);
 }

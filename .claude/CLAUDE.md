@@ -357,8 +357,8 @@ edit sites, not assumed:**
    Identity copy rather than the Invoices one: it also silences IDE0005, which
    the generated code needs to stay at zero warnings. Add
    `dotnet_diagnostic.CA1861.severity = none` only when the generator emits an
-   inline array (seed data through `HasData`, or a composite index) —
-   Organizations and Projects needed it, Customers and Catalog did not.
+   inline array (a composite index, for example) — Projects needs it for its
+   composite unique index; no other module does.
 8. The containment and boundary rules (rules 1–6 above) apply automatically —
    they match on the `Fakturenn.Modules.*` name pattern. Do not add a rule per
    module.

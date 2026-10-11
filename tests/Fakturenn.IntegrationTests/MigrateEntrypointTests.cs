@@ -5,6 +5,8 @@ using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations;
+using Fakturenn.Modules.Organizations.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -95,6 +97,30 @@ public sealed class MigrateEntrypointTests(PostgresFixture postgres) : IClassFix
         Convert.ToInt64(found, CultureInfo.InvariantCulture).Should().Be(
             1,
             "--migrate is the only thing that may create Wolverine's schema");
+    }
+
+    [Fact]
+    public async Task A_second_migrate_leaves_an_edited_organization_untouched()
+    {
+        // Spec section 2: --migrate inserts the row once. Every later upgrade runs it again,
+        // and the operator's edits -- the number scheme included -- must survive it.
+        (int exitCode, string output) = await RunMigrateAsync();
+        exitCode.Should().Be(0, output);
+        await using (OrganizationsDbContext organizations = postgres.Create<OrganizationsDbContext>(options => new(options)))
+        {
+            Organization row = await organizations.Organizations.SingleAsync(TestContext.Current.CancellationToken);
+            row.LegalName = "Edited Consulting";
+            row.NumberPrefix = "EDIT";
+            await organizations.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        (int secondExitCode, string secondOutput) = await RunMigrateAsync();
+
+        secondExitCode.Should().Be(0, secondOutput);
+        await using OrganizationsDbContext reread = postgres.Create<OrganizationsDbContext>(options => new(options));
+        Organization survived = await reread.Organizations.AsNoTracking().SingleAsync(TestContext.Current.CancellationToken);
+        survived.LegalName.Should().Be("Edited Consulting");
+        survived.NumberPrefix.Should().Be("EDIT");
     }
 
     [Fact]

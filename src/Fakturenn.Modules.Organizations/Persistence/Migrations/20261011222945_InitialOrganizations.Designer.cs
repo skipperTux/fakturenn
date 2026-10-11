@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Fakturenn.Modules.Organizations.Persistence.Migrations
 {
     [DbContext(typeof(OrganizationsDbContext))]
-    [Migration("20261009150746_InitialOrganizations")]
+    [Migration("20261011222945_InitialOrganizations")]
     partial class InitialOrganizations
     {
         /// <inheritdoc />
@@ -107,28 +107,6 @@ namespace Fakturenn.Modules.Organizations.Persistence.Migrations
                     b.ToTable("Organizations", "organizations", t =>
                         {
                             t.HasCheckConstraint("CK_Organizations_Singleton", "\"Id\" = '00000000-0000-0000-0000-000000000001'");
-                        });
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("00000000-0000-0000-0000-000000000001"),
-                            CountryCode = "",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 10, 9, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            CreatedBy = "system",
-                            Currency = "",
-                            Iban = "",
-                            IssueDateDefault = "Today",
-                            LegalName = "",
-                            ModifiedAt = new DateTimeOffset(new DateTime(2026, 10, 9, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ModifiedBy = "system",
-                            NumberNextValue = 1L,
-                            NumberPadding = 4,
-                            NumberPrefix = "",
-                            NumberScope = "PerYear",
-                            PaymentTermsDays = 14,
-                            TimeZoneId = "Europe/Berlin",
-                            VatId = ""
                         });
                 });
 #pragma warning restore 612, 618

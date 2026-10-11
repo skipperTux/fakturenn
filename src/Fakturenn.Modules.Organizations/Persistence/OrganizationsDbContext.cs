@@ -33,16 +33,8 @@ public sealed class OrganizationsDbContext(DbContextOptions<OrganizationsDbConte
             organization.Property(o => o.IssueDateDefault).HasConversion<string>().HasMaxLength(32);
             organization.Property(o => o.NumberScope).HasConversion<string>().HasMaxLength(16);
 
-            // Seeded by the migration, so --migrate creates it and no request path ever
-            // does. Provenance is a constant because migrations bypass the interceptor.
-            organization.HasData(new Organization
-            {
-                Id = Organization.SingletonId,
-                CreatedAt = new DateTimeOffset(2026, 10, 9, 0, 0, 0, TimeSpan.Zero),
-                CreatedBy = AuditStamp.SystemUser,
-                ModifiedAt = new DateTimeOffset(2026, 10, 9, 0, 0, 0, TimeSpan.Zero),
-                ModifiedBy = AuditStamp.SystemUser,
-            });
+            // No HasData: OrganizationSeeder inserts the row from --migrate. EF owns seed data,
+            // so a changed default would come back as an UpdateData over the live row.
         });
 
         ConfigureAuditColumns(modelBuilder);

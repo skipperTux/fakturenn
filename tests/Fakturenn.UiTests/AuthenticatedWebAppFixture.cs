@@ -607,7 +607,10 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
         await using (OrganizationsDbContext organizations = new(
             new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
         {
+            // Seeded here for the same reason --migrate seeds it: the row exists before the
+            // instance serves traffic, and no request path ever creates it.
             await organizations.Database.MigrateAsync();
+            await OrganizationSeeder.SeedAsync(organizations, CancellationToken.None);
         }
 
         await using (CustomersDbContext customers = new(

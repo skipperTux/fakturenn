@@ -12,8 +12,3 @@ csharp_style_namespace_declarations = file_scoped:none
 # generated-only folder rather than strip a using the next `migrations add`
 # would put straight back.
 dotnet_diagnostic.IDE0005.severity = none
-
-# HasData makes the generator emit `new[] { ... }` column and value arrays inline in
-# InsertData, which CA1861 rejects. The migration runs once, so the allocation is
-# irrelevant, and the generator would re-emit it on the next 'migrations add'.
-dotnet_diagnostic.CA1861.severity = none

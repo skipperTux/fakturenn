@@ -4,8 +4,9 @@ using Fakturenn.SharedKernel;
 namespace Fakturenn.Modules.Organizations;
 
 /// <summary>
-/// The seller. Exactly one row per instance, inserted by the module's first migration under
-/// <see cref="SingletonId"/> and pinned there by a check constraint (spec section 2, review C2).
+/// The seller. Exactly one row per instance, inserted by <c>--migrate</c> through
+/// <see cref="Persistence.OrganizationSeeder"/> under <see cref="SingletonId"/> and pinned there
+/// by a check constraint (spec section 2, review C2).
 /// </summary>
 public sealed class Organization : IAuditable
 {

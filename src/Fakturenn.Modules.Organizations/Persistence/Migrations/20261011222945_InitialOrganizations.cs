@@ -42,12 +42,6 @@ namespace Fakturenn.Modules.Organizations.Persistence.Migrations
                     table.PrimaryKey("PK_Organizations", x => x.Id);
                     table.CheckConstraint("CK_Organizations_Singleton", "\"Id\" = '00000000-0000-0000-0000-000000000001'");
                 });
-
-            migrationBuilder.InsertData(
-                schema: "organizations",
-                table: "Organizations",
-                columns: new[] { "Id", "CountryCode", "CreatedAt", "CreatedBy", "Currency", "Iban", "IssueDateDefault", "LegalName", "ModifiedAt", "ModifiedBy", "NumberNextValue", "NumberPadding", "NumberPrefix", "NumberScope", "PaymentTermsDays", "TimeZoneId", "VatId" },
-                values: new object[] { new Guid("00000000-0000-0000-0000-000000000001"), "", new DateTimeOffset(new DateTime(2026, 10, 9, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "system", "", "", "Today", "", new DateTimeOffset(new DateTime(2026, 10, 9, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "system", 1L, 4, "", "PerYear", 14, "Europe/Berlin", "" });
         }
 
         /// <inheritdoc />
