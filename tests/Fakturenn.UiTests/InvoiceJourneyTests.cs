@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AwesomeAssertions;
 using Microsoft.Playwright;
 using static Microsoft.Playwright.Assertions;
 
@@ -67,6 +68,49 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
         await DraftAsync(page, app, "DEV-BACKEND", "8,5");
 
         await Expect(page.GetByTestId("invoice-net")).ToContainTextAsync("850,00");
+    }
+
+    [Fact]
+    public async Task A_german_user_enters_a_decimal_price_with_a_comma()
+    {
+        // Review M14 for the price: the catalog page parses it with the circuit's culture.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!, AuthenticatedWebAppFixture.GermanLocale);
+        await page.GotoAsync(app.Url("/catalog"));
+        await page.GetByTestId("catalog-number").FillAsync("PRICE-DE");
+        await page.GetByTestId("catalog-name").FillAsync("Preisprobe");
+        await page.GetByTestId("catalog-price").FillAsync("100,50");
+        await page.GetByTestId("catalog-save").ClickAsync();
+
+        await Expect(page.Locator("tr", new() { Has = page.GetByTestId("catalog-row").Filter(new() { HasText = "PRICE-DE" }) }))
+            .ToContainTextAsync("100,50 EUR");
+        (await app.ReadCatalogItemUnitPriceAsync("PRICE-DE")).Should().Be(100.50m);
+    }
+
+    [Fact]
+    public async Task An_edited_numbered_invoice_is_confirmed_again_under_its_number()
+    {
+        // Spec section 4: a numbered invoice's data stays editable. The edit clears its
+        // figures, the page asks for a new confirmation, and finalization keeps the number.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!);
+        await EnsureMasterDataAsync(page, app);
+        await DraftAsync(page, app, "DEV-BACKEND", "8");
+        await page.GetByTestId("invoice-review").ClickAsync();
+        await page.GetByTestId("invoice-confirm").ClickAsync();
+        await Expect(page.GetByTestId("invoice-number")).ToHaveTextAsync(InvoiceNumber());
+        string number = await page.GetByTestId("invoice-number").InnerTextAsync();
+
+        await page.GetByTestId("invoice-quantity").FillAsync("9");
+        await page.GetByTestId("invoice-quantity").PressAsync("Tab");
+
+        await Expect(page.GetByTestId("invoice-needs-confirmation")).ToBeVisibleAsync();
+        await Expect(page.GetByTestId("invoice-gross")).ToHaveTextAsync("1,071.00");
+        await page.GetByTestId("invoice-review").ClickAsync();
+        await page.GetByTestId("invoice-confirm").ClickAsync();
+
+        await Expect(page.GetByTestId("invoice-needs-confirmation")).ToBeHiddenAsync();
+        await Expect(page.GetByTestId("invoice-review")).ToBeHiddenAsync();
+        await Expect(page.GetByTestId("invoice-number")).ToHaveTextAsync(number);
+        await Expect(page.GetByTestId("invoice-gross")).ToHaveTextAsync("1,071.00");
     }
 
     [Fact]

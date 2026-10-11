@@ -1,8 +1,11 @@
+using System.Reflection;
 using System.Security.Claims;
 using AwesomeAssertions;
+using AwesomeAssertions.Execution;
 using Fakturenn.Infrastructure.Persistence;
 using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
+using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Domain;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Modules.Organizations.Persistence;
@@ -72,6 +75,35 @@ public sealed class ModuleCompositionTests
 
         await save.Should().ThrowAsync<InvalidOperationException>();
         invoice.CreatedBy.Should().Be("acting@example.test");
+    }
+
+    [Fact]
+    public void Every_registered_context_resolves_under_scope_validation()
+    {
+        // Development validates scopes; Production does not, and there a scoped service
+        // resolved from the root provider silently becomes a captive one. That is how
+        // InvoicesDbContext's interceptor, resolved by Wolverine's singleton options, hid
+        // until the first browser test opened an invoice page.
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0", "--environment", "Development"]);
+        using IServiceScope scope = app.Services.CreateScope();
+        IServiceProviderIsService registered = scope.ServiceProvider.GetRequiredService<IServiceProviderIsService>();
+
+        List<Type> contexts = [.. typeof(FakturennWebApplication).Assembly.GetReferencedAssemblies()
+            .Where(name => name.Name!.StartsWith("Fakturenn.", StringComparison.Ordinal))
+            .Select(Assembly.Load)
+            .SelectMany(assembly => assembly.GetExportedTypes())
+            .Where(type => type.IsSubclassOf(typeof(DbContext)) && !type.IsAbstract && registered.IsService(type))];
+
+        using AssertionScope assertions = new();
+        contexts.Should().Contain(
+            [typeof(IdentityDbContext), typeof(OrganizationsDbContext), typeof(CustomersDbContext),
+                typeof(ProjectsDbContext), typeof(CatalogDbContext), typeof(InvoicesDbContext)],
+            "the scan must find the contexts it claims to check");
+        foreach (Type context in contexts)
+        {
+            Action resolve = () => scope.ServiceProvider.GetRequiredService(context);
+            resolve.Should().NotThrow($"{context.Name} must resolve with scope validation on");
+        }
     }
 
     // internal static Methods

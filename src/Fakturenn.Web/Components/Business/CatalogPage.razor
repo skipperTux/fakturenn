@@ -28,7 +28,8 @@
         <RowTemplate>
             <MudTd data-testid="catalog-row">@context.CatalogItemNumber</MudTd>
             <MudTd>@context.Name</MudTd>
-            <MudTd>@context.UnitPrice.ToString("N2") @context.Currency / @context.Unit</MudTd>
+            @* Up to four decimals, as stored and as an invoice multiplies it; N2 would hide them. *@
+            <MudTd>@context.UnitPrice.ToString("#,0.00##") @context.Currency / @context.Unit</MudTd>
             <MudTd>@context.VatRate.ToString("0.##")&nbsp;%</MudTd>
         </RowTemplate>
     </MudTable>

@@ -122,6 +122,9 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
+        // Expect(...) keeps a timeout of its own, five seconds unless set, and process-wide.
+        Assertions.SetDefaultExpectTimeout(ColdStartTimeoutMilliseconds);
+
         await _postgres.StartAsync();
 
         await MigrateAsync();
@@ -226,9 +229,6 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
 
         context.SetDefaultTimeout(ColdStartTimeoutMilliseconds);
         context.SetDefaultNavigationTimeout(ColdStartTimeoutMilliseconds);
-
-        // Expect(...) keeps a timeout of its own, five seconds unless set, and process-wide.
-        Assertions.SetDefaultExpectTimeout(ColdStartTimeoutMilliseconds);
 
         return context;
     }
@@ -549,6 +549,19 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
         return await catalog.CatalogItems.AsNoTracking()
             .Where(item => item.CatalogItemNumber == catalogItemNumber)
             .Select(item => item.CreatedBy)
+            .SingleOrDefaultAsync();
+    }
+
+    /// <summary>The unit price stored for a catalog item, or <see langword="null"/> when no item carries that number.</summary>
+    public async Task<decimal?> ReadCatalogItemUnitPriceAsync(string catalogItemNumber)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        return await catalog.CatalogItems.AsNoTracking()
+            .Where(item => item.CatalogItemNumber == catalogItemNumber)
+            .Select(item => (decimal?)item.UnitPrice)
             .SingleOrDefaultAsync();
     }
 
