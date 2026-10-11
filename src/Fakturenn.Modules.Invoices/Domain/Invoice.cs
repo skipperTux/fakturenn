@@ -79,7 +79,7 @@ public sealed class Invoice : IAuditable
         ServicePeriodEnd = servicePeriodEnd;
     }
 
-    public void SetSingleLine(Guid catalogItemId, decimal quantity)
+    public void SetSingleLine(Guid catalogItemId, Quantity quantity)
     {
         RefuseWhenLocked();
         InvoiceLine? line = _lines.SingleOrDefault();

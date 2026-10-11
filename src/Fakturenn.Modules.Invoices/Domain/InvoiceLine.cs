@@ -11,7 +11,7 @@ public sealed class InvoiceLine : IAuditable
     public Guid Id { get; internal set; }
     public Guid InvoiceId { get; internal set; }
     public Guid CatalogItemId { get; internal set; }
-    public decimal Quantity { get; internal set; }
+    public Quantity Quantity { get; internal set; }
     public decimal? NetAmount { get; internal set; }
     public TaxCategory? TaxCategory { get; internal set; }
     public decimal? VatRate { get; internal set; }

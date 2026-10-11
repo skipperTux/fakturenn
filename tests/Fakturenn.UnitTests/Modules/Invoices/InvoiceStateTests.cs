@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Fakturenn.Modules.Invoices.Domain;
+using Fakturenn.SharedKernel;
 
 namespace Fakturenn.UnitTests.Modules.Invoices;
 
@@ -8,7 +9,7 @@ public sealed class InvoiceStateTests
 {
     // private static readonly Fields
     private static readonly DateOnly _issue = new(2026, 8, 31);
-    private static readonly InvoiceTotals _totals = InvoiceCalculator.Calculate([new PricedLine(8m, 100m, 19m, TaxCategory.S)], "EUR");
+    private static readonly InvoiceTotals _totals = InvoiceCalculator.Calculate([new PricedLine(new Quantity(8m), 100m, new Percentage(19m), TaxCategory.S)], "EUR");
 
     // public Methods
     [Fact]
@@ -17,10 +18,10 @@ public sealed class InvoiceStateTests
         Invoice invoice = Draft();
 
         invoice.Edit(Guid.CreateVersion7(), null, _issue.AddDays(1), _issue, _issue);
-        invoice.SetSingleLine(Guid.CreateVersion7(), 4m);
+        invoice.SetSingleLine(Guid.CreateVersion7(), new Quantity(4m));
 
         invoice.IssueDate.Should().Be(_issue.AddDays(1));
-        invoice.Lines.Should().ContainSingle().Which.Quantity.Should().Be(4m);
+        invoice.Lines.Should().ContainSingle().Which.Quantity.Should().Be(new Quantity(4m));
     }
 
     [Fact]
@@ -40,7 +41,7 @@ public sealed class InvoiceStateTests
         Guid otherCustomer = Guid.CreateVersion7();
 
         invoice.Edit(otherCustomer, null, _issue, _issue, _issue);
-        invoice.SetSingleLine(Guid.CreateVersion7(), 9m);
+        invoice.SetSingleLine(Guid.CreateVersion7(), new Quantity(9m));
 
         invoice.CustomerId.Should().Be(otherCustomer);
         invoice.Number.Should().Be("R2608311");
@@ -63,7 +64,7 @@ public sealed class InvoiceStateTests
         invoice.Lock();
 
         Action edit = () => invoice.Edit(invoice.CustomerId, null, _issue, _issue, _issue);
-        Action line = () => invoice.SetSingleLine(Guid.CreateVersion7(), 1m);
+        Action line = () => invoice.SetSingleLine(Guid.CreateVersion7(), new Quantity(1m));
         Action renumber = () => invoice.ApplyFinalization("R2608311", _issue, _totals, TaxCategory.S, 19m);
 
         edit.Should().Throw<InvalidOperationException>();
@@ -76,7 +77,7 @@ public sealed class InvoiceStateTests
     {
         Invoice invoice = Numbered();
 
-        invoice.SetSingleLine(invoice.Lines[0].CatalogItemId, 9m);
+        invoice.SetSingleLine(invoice.Lines[0].CatalogItemId, new Quantity(9m));
 
         invoice.NetAmount.Should().BeNull();
         invoice.VatAmount.Should().BeNull();
@@ -114,8 +115,8 @@ public sealed class InvoiceStateTests
     public void Refinalizing_under_the_same_number_repopulates_the_figures()
     {
         Invoice invoice = Numbered();
-        invoice.SetSingleLine(invoice.Lines[0].CatalogItemId, 9m);
-        InvoiceTotals nine = InvoiceCalculator.Calculate([new PricedLine(9m, 100m, 19m, TaxCategory.S)], "EUR");
+        invoice.SetSingleLine(invoice.Lines[0].CatalogItemId, new Quantity(9m));
+        InvoiceTotals nine = InvoiceCalculator.Calculate([new PricedLine(new Quantity(9m), 100m, new Percentage(19m), TaxCategory.S)], "EUR");
 
         invoice.ApplyFinalization("R2608311", _issue.AddDays(14), nine, TaxCategory.S, 19m);
 
@@ -130,7 +131,7 @@ public sealed class InvoiceStateTests
     {
         Invoice invoice = Draft();
         InvoiceTotals twoLines = InvoiceCalculator.Calculate(
-            [new PricedLine(1m, 1m, 19m, TaxCategory.S), new PricedLine(1m, 1m, 19m, TaxCategory.S)], "EUR");
+            [new PricedLine(new Quantity(1m), 1m, new Percentage(19m), TaxCategory.S), new PricedLine(new Quantity(1m), 1m, new Percentage(19m), TaxCategory.S)], "EUR");
 
         Action act = () => invoice.ApplyFinalization("R2608311", _issue, twoLines, TaxCategory.S, 19m);
 
@@ -151,7 +152,7 @@ public sealed class InvoiceStateTests
     private static Invoice Draft()
     {
         Invoice invoice = Invoice.CreateDraft(Guid.CreateVersion7(), Guid.CreateVersion7(), null, _issue, new DateOnly(2026, 8, 1), _issue);
-        invoice.SetSingleLine(Guid.CreateVersion7(), 8m);
+        invoice.SetSingleLine(Guid.CreateVersion7(), new Quantity(8m));
         return invoice;
     }
 

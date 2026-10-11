@@ -2,7 +2,7 @@ using Fakturenn.SharedKernel;
 
 namespace Fakturenn.Modules.Invoices.Domain;
 
-public sealed record PricedLine(decimal Quantity, decimal UnitPrice, decimal VatRate, TaxCategory Category);
+public sealed record PricedLine(Quantity Quantity, decimal UnitPrice, Percentage VatRate, TaxCategory Category);
 
 public sealed record TaxSubtotal(TaxCategory Category, decimal Rate, decimal TaxableAmount, decimal TaxAmount);
 
@@ -25,17 +25,17 @@ public static class InvoiceCalculator
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        List<decimal> lineNets = [.. lines.Select(line => new Money(line.Quantity * line.UnitPrice, currency).Round().Amount)];
+        List<decimal> lineNets = [.. lines.Select(line => new Money(line.Quantity.Value * line.UnitPrice, currency).Round().Amount)];
 
         List<TaxSubtotal> subtotals = [.. lines
             .Select((line, index) => (line, net: lineNets[index]))
             .GroupBy(pair => (pair.line.Category, pair.line.VatRate))
-            .OrderBy(group => group.Key.Category).ThenByDescending(group => group.Key.VatRate)
+            .OrderBy(group => group.Key.Category).ThenByDescending(group => group.Key.VatRate.Value)
             .Select(group =>
             {
                 decimal taxable = group.Sum(pair => pair.net);
-                decimal tax = new Percentage(group.Key.VatRate).Of(new Money(taxable, currency)).Amount;
-                return new TaxSubtotal(group.Key.Category, group.Key.VatRate, taxable, tax);
+                decimal tax = group.Key.VatRate.Of(new Money(taxable, currency)).Amount;
+                return new TaxSubtotal(group.Key.Category, group.Key.VatRate.Value, taxable, tax);
             })];
 
         decimal net = lineNets.Sum();
