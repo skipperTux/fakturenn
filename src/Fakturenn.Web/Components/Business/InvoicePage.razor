@@ -1,0 +1,255 @@
+﻿@page "/invoices/{Id:guid}"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.InvoicesManage)]
+@using System.Globalization
+@using Fakturenn.Modules.Catalog.Contracts
+@using Fakturenn.Modules.Catalog.Features
+@using Fakturenn.Modules.Customers.Contracts
+@using Fakturenn.Modules.Customers.Features
+@using Fakturenn.Modules.Invoices.Domain
+@using Fakturenn.Modules.Invoices.Features
+@using Fakturenn.Modules.Projects.Contracts
+@using Fakturenn.Modules.Projects.Features
+@inject CircuitOperations Operations
+@inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
+
+<InteractiveProviders />
+<PageTitle>@Localizer["Invoice_PageTitle"]</PageTitle>
+
+@if (_invoice is not null)
+{
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        @Localizer["Invoice_Title"] <span data-testid="invoice-number">@_invoice.Number</span>
+    </MudText>
+    <MudText Typo="Typo.subtitle1" data-testid="invoice-state">@RefusalMessages.For(Localizer, _invoice.State)</MudText>
+
+    @if (_changedElsewhere)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-4" data-testid="invoice-changed-elsewhere">@Localizer["Invoice_ChangedElsewhere"]</MudAlert>
+    }
+
+    <MudStack Spacing="2">
+        <MudSelect T="Guid" @bind-Value="_customerId" @bind-Value:after="CustomerChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_Customer"]" data-testid="invoice-customer">
+            @foreach (CustomerSnapshot customer in _customers)
+            {
+                <MudSelectItem Value="customer.Id">@customer.LegalName</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="Guid?" @bind-Value="_projectId" @bind-Value:after="ChangedAsync" Disabled="Locked" Clearable="true" Label="@Localizer["Invoice_Project"]" data-testid="invoice-project">
+            @foreach (ProjectSnapshot project in _projects)
+            {
+                <MudSelectItem T="Guid?" Value="project.Id">@project.Reference</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="Guid?" @bind-Value="_catalogItemId" @bind-Value:after="ChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_CatalogItem"]" data-testid="invoice-catalog-item">
+            @foreach (CatalogItemSnapshot item in _items)
+            {
+                <MudSelectItem T="Guid?" Value="item.Id">@item.CatalogItemNumber</MudSelectItem>
+            }
+        </MudSelect>
+        @* Culture given explicitly: without it MudNumericField 9.11 switches to the invariant
+           culture after its first render, and "8,5" in German reads as 85 (review M14). *@
+        <MudNumericField T="decimal" @bind-Value="_quantity" @bind-Value:after="ChangedAsync" Disabled="Locked" Culture="CultureInfo.CurrentCulture" Label="@Localizer["Invoice_Quantity"]" data-testid="invoice-quantity" />
+        <MudDatePicker @bind-Date="_issueDate" @bind-Date:after="ChangedAsync" Disabled="@(_invoice.State != InvoiceState.Draft)" Label="@Localizer["Invoice_IssueDate"]" data-testid="invoice-issue-date" />
+        <MudDatePicker @bind-Date="_periodStart" @bind-Date:after="ChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_ServicePeriodStart"]" data-testid="invoice-period-start" />
+        <MudDatePicker @bind-Date="_periodEnd" @bind-Date:after="ChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_ServicePeriodEnd"]" data-testid="invoice-period-end" />
+    </MudStack>
+
+    <MudPaper Class="pa-4 mt-6" Outlined="true">
+        @* A confirmed invoice shows the figures it was numbered with, from its own columns;
+           anything else shows what finalization would compute now. *@
+        @if (_invoice.Gross is decimal gross)
+        {
+            <MudText>@Localizer["Invoice_Net"]: <span data-testid="invoice-net">@_invoice.Net?.ToString("N2")</span> @_invoice.Currency</MudText>
+            <MudText>@Localizer["Invoice_Vat"] (@_invoice.TaxCategory, @_invoice.VatRate?.ToString("0.##")&nbsp;%): <span data-testid="invoice-vat">@_invoice.Vat?.ToString("N2")</span> @_invoice.Currency</MudText>
+            <MudText Typo="Typo.h6">@Localizer["Invoice_Gross"]: <span data-testid="invoice-gross">@gross.ToString("N2")</span> @_invoice.Currency</MudText>
+        }
+        else if (_preview?.Totals is InvoiceTotals totals)
+        {
+            <MudText>@Localizer["Invoice_Net"]: <span data-testid="invoice-net">@totals.Net.ToString("N2")</span> @totals.Currency</MudText>
+            <MudText>@Localizer["Invoice_Vat"]: <span data-testid="invoice-vat">@totals.Vat.ToString("N2")</span> @totals.Currency</MudText>
+            <MudText Typo="Typo.h6">@Localizer["Invoice_Gross"]: <span data-testid="invoice-gross">@totals.Gross.ToString("N2")</span> @totals.Currency</MudText>
+        }
+        @if (_preview?.Refusal is FinalizationRefusal refusal)
+        {
+            <MudAlert Severity="Severity.Warning" data-testid="invoice-refusal">@RefusalMessages.For(Localizer, refusal)</MudAlert>
+        }
+        @if (_invoice.DueDate is DateOnly due)
+        {
+            <MudText>@Localizer["Invoice_DueDate"]: @due.ToString("d")</MudText>
+        }
+    </MudPaper>
+
+    @if (_invoice.State == InvoiceState.Numbered && _invoice.Gross is null)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4" data-testid="invoice-needs-confirmation">@Localizer["Invoice_NeedsConfirmation"]</MudAlert>
+    }
+
+    @* Only an invoice not confirmed since its last change has anything to confirm.
+       TotalsChanged keeps the panel open over the new totals for a second confirmation. *@
+    @if (!Locked && _invoice.Gross is null && _preview is { Totals: InvoiceTotals pending, Refusal: null or FinalizationRefusal.TotalsChanged })
+    {
+        @if (!_confirming)
+        {
+            <MudButton OnClick="() => _confirming = true" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" data-testid="invoice-review">@Localizer["Invoice_Review"]</MudButton>
+        }
+        else
+        {
+            <MudPaper Class="pa-4 mt-4" Elevation="2" data-testid="invoice-confirm-panel">
+                <MudText>@Localizer["Invoice_ConfirmText"] <span data-testid="invoice-confirm-gross">@pending.Gross.ToString("N2")</span> @pending.Currency</MudText>
+                <MudButton OnClick="FinalizeAsync" Variant="Variant.Filled" Color="Color.Primary" data-testid="invoice-confirm">@Localizer["Invoice_Confirm"]</MudButton>
+                <MudButton OnClick="() => _confirming = false" Variant="Variant.Text">@Localizer["Common_Cancel"]</MudButton>
+            </MudPaper>
+        }
+    }
+}
+
+@code {
+    private InvoiceView? _invoice;
+    private FinalizationResult? _preview;
+    private IReadOnlyList<CustomerSnapshot> _customers = [];
+    private IReadOnlyList<ProjectSnapshot> _projects = [];
+    private IReadOnlyList<CatalogItemSnapshot> _items = [];
+    private Guid _customerId;
+    private Guid? _projectId;
+    private Guid? _catalogItemId;
+    private decimal _quantity;
+    private DateTime? _issueDate;
+    private DateTime? _periodStart;
+    private DateTime? _periodEnd;
+    private bool _confirming;
+    private bool _changedElsewhere;
+
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private bool Locked => _invoice?.State == InvoiceState.Locked;
+
+    protected override Task OnInitializedAsync() => RunAsync(async () =>
+    {
+        _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        _items = await Operations.RunAsync<ListCatalogItems, IReadOnlyList<CatalogItemSnapshot>>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        await ReloadAsync();
+    });
+
+    private async Task ReloadAsync()
+    {
+        InvoiceView? invoice = await Operations.RunAsync<GetInvoice, InvoiceView?>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, token), CancellationToken.None);
+        if (invoice is null)
+        {
+            Navigation.NavigateTo("/invoices");
+            return;
+        }
+
+        (_customerId, _projectId, _catalogItemId, _quantity) =
+            (invoice.CustomerId, invoice.ProjectId, invoice.CatalogItemId, invoice.Quantity);
+        (_issueDate, _periodStart, _periodEnd) = (
+            invoice.IssueDate.ToDateTime(TimeOnly.MinValue),
+            invoice.ServicePeriodStart.ToDateTime(TimeOnly.MinValue),
+            invoice.ServicePeriodEnd.ToDateTime(TimeOnly.MinValue));
+        _invoice = invoice;
+        await LoadProjectsAsync();
+        await PreviewAsync();
+    }
+
+    private async Task LoadProjectsAsync()
+    {
+        Guid customerId = _customerId;
+        _projects = await Operations.RunAsync<ListProjects, IReadOnlyList<ProjectSnapshot>>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(customerId, token), CancellationToken.None);
+    }
+
+    private Task CustomerChangedAsync() => RunAsync(async () =>
+    {
+        _projectId = null;
+        await LoadProjectsAsync();
+        await SaveAndPreviewAsync();
+    });
+
+    private Task ChangedAsync() => RunAsync(SaveAndPreviewAsync);
+
+    private async Task SaveAndPreviewAsync()
+    {
+        if (_catalogItemId is not Guid catalogItemId || _issueDate is null || _periodStart is null || _periodEnd is null)
+        {
+            return;
+        }
+
+        DraftForm form = new(
+            Id, _customerId, _projectId, catalogItemId, _quantity,
+            DateOnly.FromDateTime(_issueDate.Value), DateOnly.FromDateTime(_periodStart.Value), DateOnly.FromDateTime(_periodEnd.Value));
+        if (form == SavedForm())
+        {
+            // Nothing changed, so no row lock, and nothing to clear: MudDatePicker raises a
+            // second change after a refused one, carrying the date the reload put back.
+            return;
+        }
+
+        _confirming = false;
+        _changedElsewhere = false;
+        try
+        {
+            await Operations.RunAsync<SaveDraft>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+        }
+        catch (InvalidOperationException)
+        {
+            // The aggregate refused an edit its state forbids: another tab numbered or locked
+            // the invoice since this one loaded it. Show the invoice as it now is, and say why.
+            await ReloadAsync();
+            _changedElsewhere = true;
+            return;
+        }
+
+        // A reload rather than a preview alone: an edit to a numbered invoice clears its
+        // figures, and the page has to show that it needs confirming again.
+        await ReloadAsync();
+    }
+
+    private DraftForm? SavedForm() => _invoice is { CatalogItemId: Guid catalogItemId } saved
+        ? new(saved.Id, saved.CustomerId, saved.ProjectId, catalogItemId, saved.Quantity,
+            saved.IssueDate, saved.ServicePeriodStart, saved.ServicePeriodEnd)
+        : null;
+
+    private async Task PreviewAsync() =>
+        _preview = await Operations.RunAsync<PreviewInvoice, FinalizationResult>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, token), CancellationToken.None);
+
+    private Task FinalizeAsync() => RunAsync(async () =>
+    {
+        decimal confirmed = _preview!.Totals!.Gross;
+        FinalizationResult result = await Operations.RunAsync<FinalizeInvoice, FinalizationResult>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, confirmed, token), CancellationToken.None);
+
+        if (result.Refusal is FinalizationRefusal.TotalsChanged)
+        {
+            // The panel stays open over the new totals, for a second confirmation.
+            _preview = result;
+            return;
+        }
+
+        _confirming = false;
+        await ReloadAsync();
+        if (!result.Succeeded)
+        {
+            _preview = result;
+        }
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (OperationRefusedException)
+        {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+    }
+}

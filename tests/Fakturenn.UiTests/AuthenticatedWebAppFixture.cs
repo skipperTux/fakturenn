@@ -227,6 +227,9 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
         context.SetDefaultTimeout(ColdStartTimeoutMilliseconds);
         context.SetDefaultNavigationTimeout(ColdStartTimeoutMilliseconds);
 
+        // Expect(...) keeps a timeout of its own, five seconds unless set, and process-wide.
+        Assertions.SetDefaultExpectTimeout(ColdStartTimeoutMilliseconds);
+
         return context;
     }
 
@@ -506,6 +509,47 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
         }
 
         await users.UpdateSecurityStampAsync(user);
+    }
+
+    /// <summary>
+    /// Grants the Administrator role to an account, the way
+    /// <c>SetupHostFixture.AssignAdministratorRoleAsync</c> does. Permissions are claims
+    /// minted into the cookie, so this must happen before the account signs in.
+    /// </summary>
+    public async Task AssignAdministratorRoleAsync(string email)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        IdentityDbContext context = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await users.FindByEmailAsync(email)
+            ?? throw new InvalidOperationException($"No user with the e-mail address {email}.");
+        Guid roleId = await context.Roles
+            .Where(role => role.Name == RoleSeeder.AdministratorRoleName)
+            .Select(role => role.Id)
+            .SingleAsync();
+
+        context.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId });
+        await context.SaveChangesAsync();
+        await users.UpdateSecurityStampAsync(user);
+    }
+
+    /// <summary>
+    /// Who the audit interceptor recorded as having created a catalog item, or
+    /// <see langword="null"/> when no item carries that number.
+    /// </summary>
+    public async Task<string?> ReadCatalogItemCreatedByAsync(string catalogItemNumber)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        return await catalog.CatalogItems.AsNoTracking()
+            .Where(item => item.CatalogItemNumber == catalogItemNumber)
+            .Select(item => item.CreatedBy)
+            .SingleOrDefaultAsync();
     }
 
     // private Properties

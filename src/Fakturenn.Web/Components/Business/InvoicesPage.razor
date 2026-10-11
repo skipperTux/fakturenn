@@ -1,0 +1,86 @@
+﻿@page "/invoices"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.InvoicesManage)]
+@using Fakturenn.Modules.Customers.Contracts
+@using Fakturenn.Modules.Customers.Features
+@using Fakturenn.Modules.Invoices.Features
+@inject CircuitOperations Operations
+@inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
+
+<InteractiveProviders />
+<PageTitle>@Localizer["Invoices_PageTitle"]</PageTitle>
+<MudText Typo="Typo.h4" GutterBottom="true">@Localizer["Invoices_Title"]</MudText>
+
+@* Nothing renders until the lists are loaded, so an empty select never stands in for one
+   that is still loading. *@
+@if (_invoices is not null)
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-6">
+        <MudSelect T="Guid?" @bind-Value="_newCustomerId" Label="@Localizer["Invoices_Customer"]" data-testid="invoice-new-customer">
+            @foreach (CustomerSnapshot customer in _customers)
+            {
+                <MudSelectItem T="Guid?" Value="customer.Id">@customer.LegalName</MudSelectItem>
+            }
+        </MudSelect>
+        <MudButton OnClick="CreateAsync" Disabled="_newCustomerId is null" Variant="Variant.Filled" Color="Color.Primary" data-testid="invoice-new">@Localizer["Invoices_New"]</MudButton>
+    </MudStack>
+
+    <MudTable Items="_invoices" Hover="true" OnRowClick="@((TableRowClickEventArgs<InvoiceView> args) => Navigation.NavigateTo($"/invoices/{args.Item!.Id}"))">
+        <HeaderContent>
+            <MudTh>@Localizer["Invoices_Number"]</MudTh>
+            <MudTh>@Localizer["Invoices_State"]</MudTh>
+            <MudTh>@Localizer["Invoices_IssueDate"]</MudTh>
+            <MudTh>@Localizer["Invoices_Gross"]</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd data-testid="invoice-row">@(context.Number ?? "—")</MudTd>
+            <MudTd>@RefusalMessages.For(Localizer, context.State)</MudTd>
+            <MudTd>@context.IssueDate.ToString("d")</MudTd>
+            @* Blank while nothing is confirmed: a draft has no figures yet, and a numbered invoice
+               edited since its confirmation has lost them. *@
+            <MudTd>@(context.Gross is decimal gross ? $"{gross:N2} {context.Currency}" : string.Empty)</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private IReadOnlyList<CustomerSnapshot> _customers = [];
+    private IReadOnlyList<InvoiceView>? _invoices;
+    private Guid? _newCustomerId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+            _invoices = await Operations.RunAsync<ListInvoices, IReadOnlyList<InvoiceView>>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        }
+        catch (OperationRefusedException)
+        {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_newCustomerId is not Guid customerId)
+        {
+            return;
+        }
+
+        try
+        {
+            Guid id = await Operations.RunAsync<CreateDraft, Guid>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(customerId, token), CancellationToken.None);
+            Navigation.NavigateTo($"/invoices/{id}");
+        }
+        catch (OperationRefusedException)
+        {
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+    }
+}

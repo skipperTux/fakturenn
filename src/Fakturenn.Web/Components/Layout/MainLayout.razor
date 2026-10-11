@@ -24,6 +24,10 @@
            and the button looks broken. *@
         @if (IsSignedIn)
         {
+            <MudButton Href="/invoices" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-invoices">@Localizer["Nav_Invoices"]</MudButton>
+            <MudButton Href="/customers" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-customers">@Localizer["Nav_Customers"]</MudButton>
+            <MudButton Href="/catalog" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-catalog">@Localizer["Nav_Catalog"]</MudButton>
+            <MudButton Href="/organization" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-organization">@Localizer["Nav_Organization"]</MudButton>
             <form method="post" action="/account/logout" data-testid="sign-out-form">
                 <AntiforgeryToken />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit" data-testid="sign-out-submit">

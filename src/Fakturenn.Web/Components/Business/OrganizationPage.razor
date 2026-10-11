@@ -1,0 +1,118 @@
+﻿@page "/organization"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.OrganizationManage)]
+@using Fakturenn.Modules.Invoices.Contracts
+@using Fakturenn.Modules.Organizations
+@using Fakturenn.Modules.Organizations.Contracts
+@using Fakturenn.Modules.Organizations.Features
+@inject CircuitOperations Operations
+@inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
+
+<InteractiveProviders />
+<PageTitle>@Localizer["Organization_PageTitle"]</PageTitle>
+<MudText Typo="Typo.h4" GutterBottom="true" data-testid="organization-title">@Localizer["Organization_Title"]</MudText>
+
+@if (_form is not null)
+{
+    <MudStack Spacing="2">
+        <MudTextField @bind-Value="_legalName" Label="@Localizer["Organization_LegalName"]" MaxLength="@OrganizationRules.MaxLegalNameLength" data-testid="organization-legal-name" />
+        <MudTextField @bind-Value="_country" Label="@Localizer["Organization_Country"]" MaxLength="2" data-testid="organization-country" />
+        <MudTextField @bind-Value="_vatId" Label="@Localizer["Organization_VatId"]" data-testid="organization-vat-id" />
+        <MudTextField @bind-Value="_iban" Label="@Localizer["Organization_Iban"]" data-testid="organization-iban" />
+        <MudTextField @bind-Value="_currency" Label="@Localizer["Organization_Currency"]" MaxLength="3" data-testid="organization-currency" />
+        <MudTextField @bind-Value="_timeZone" Label="@Localizer["Organization_TimeZone"]" data-testid="organization-time-zone" />
+        <MudNumericField @bind-Value="_paymentTerms" Label="@Localizer["Organization_PaymentTerms"]" Min="0" Max="365" data-testid="organization-payment-terms" />
+        <MudSelect T="IssueDateDefault" @bind-Value="_issueDateDefault" Label="@Localizer["Organization_IssueDateDefault"]" data-testid="organization-issue-date-default">
+            <MudSelectItem Value="IssueDateDefault.Today">@Localizer["Organization_IssueDateDefault_Today"]</MudSelectItem>
+            <MudSelectItem Value="IssueDateDefault.LastDayOfPreviousMonth">@Localizer["Organization_IssueDateDefault_LastDayOfPreviousMonth"]</MudSelectItem>
+        </MudSelect>
+
+        <MudText Typo="Typo.h6">@Localizer["Organization_NumberScheme"]</MudText>
+        @if (_schemeLocked)
+        {
+            <MudAlert Severity="Severity.Info" data-testid="organization-scheme-locked">@Localizer["Organization_SchemeLockedNotice"]</MudAlert>
+        }
+        <MudTextField @bind-Value="_prefix" Label="@Localizer["Organization_Prefix"]" MaxLength="9" Disabled="_schemeLocked" data-testid="organization-prefix" />
+        <MudSelect T="ResetScope" @bind-Value="_scope" Label="@Localizer["Organization_ResetScope"]" Disabled="_schemeLocked" data-testid="organization-reset-scope">
+            <MudSelectItem Value="ResetScope.PerDay">@Localizer["Organization_ResetScope_PerDay"]</MudSelectItem>
+            <MudSelectItem Value="ResetScope.PerMonth">@Localizer["Organization_ResetScope_PerMonth"]</MudSelectItem>
+            <MudSelectItem Value="ResetScope.PerYear">@Localizer["Organization_ResetScope_PerYear"]</MudSelectItem>
+            <MudSelectItem Value="ResetScope.Continuous">@Localizer["Organization_ResetScope_Continuous"]</MudSelectItem>
+        </MudSelect>
+        <MudNumericField @bind-Value="_padding" Label="@Localizer["Organization_Padding"]" Min="1" Max="9" Disabled="_schemeLocked" data-testid="organization-padding" />
+        <MudNumericField @bind-Value="_nextNumber" Label="@Localizer["Organization_NextNumber"]" Min="1" Disabled="_schemeLocked" data-testid="organization-next-number" />
+
+        @foreach (OrganizationError error in _errors)
+        {
+            <MudAlert Severity="Severity.Error" data-testid="organization-error">@RefusalMessages.For(Localizer, error)</MudAlert>
+        }
+        @if (_saved)
+        {
+            <MudAlert Severity="Severity.Success" data-testid="organization-saved">@Localizer["Organization_Saved"]</MudAlert>
+        }
+        <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary" data-testid="organization-save">@Localizer["Common_Save"]</MudButton>
+    </MudStack>
+}
+
+@code {
+    private OrganizationForm? _form;
+    private string _legalName = string.Empty;
+    private string _country = string.Empty;
+    private string _vatId = string.Empty;
+    private string _iban = string.Empty;
+    private string _currency = string.Empty;
+    private string _timeZone = string.Empty;
+    private int _paymentTerms;
+    private IssueDateDefault _issueDateDefault;
+    private string _prefix = string.Empty;
+    private ResetScope _scope;
+    private int _padding;
+    private long _nextNumber;
+    private bool _schemeLocked;
+    private bool _saved;
+    private IReadOnlyList<OrganizationError> _errors = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        OrganizationForm form;
+        try
+        {
+            form = await Operations.RunAsync<GetOrganization, OrganizationForm>(
+                Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+            _schemeLocked = await Operations.RunAsync<INumberingStatus, bool>(
+                Permissions.OrganizationManage, (status, token) => status.AnyNumberAllocatedAsync(token), CancellationToken.None);
+        }
+        catch (OperationRefusedException)
+        {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+            return;
+        }
+
+        (_legalName, _country, _vatId, _iban, _currency, _timeZone) =
+            (form.LegalName, form.CountryCode, form.VatId, form.Iban, form.Currency, form.TimeZoneId);
+        (_paymentTerms, _issueDateDefault, _prefix, _scope, _padding, _nextNumber) =
+            (form.PaymentTermsDays, form.IssueDateDefault, form.NumberPrefix, form.NumberScope, form.NumberPadding, form.NumberNextValue);
+        _form = form;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saved = false;
+        OrganizationForm form = new(_legalName, _country, _vatId, _iban, _currency, _timeZone, _paymentTerms,
+            _issueDateDefault, _prefix, _scope, _padding, _nextNumber);
+        try
+        {
+            _errors = await Operations.RunAsync<SaveOrganization, IReadOnlyList<OrganizationError>>(
+                Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+        }
+        catch (OperationRefusedException)
+        {
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+            return;
+        }
+
+        _saved = _errors.Count == 0;
+    }
+}
