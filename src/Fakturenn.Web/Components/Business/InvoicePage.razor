@@ -196,7 +196,7 @@
             await Operations.RunAsync<SaveDraft>(
                 Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
         }
-        catch (InvalidOperationException)
+        catch (InvoiceChangeRefusedException)
         {
             // The aggregate refused an edit its state forbids: another tab numbered or locked
             // the invoice since this one loaded it. Show the invoice as it now is, and say why.

@@ -31,7 +31,7 @@ public sealed class InvoiceStateTests
 
         Action act = () => invoice.Edit(invoice.CustomerId, null, _issue.AddDays(1), _issue, _issue);
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*issue date*");
+        act.Should().Throw<InvoiceChangeRefusedException>().WithMessage("*issue date*");
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class InvoiceStateTests
 
         Action act = () => invoice.ApplyFinalization("R2608312", _issue, _totals, TaxCategory.S, 19m);
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*number*");
+        act.Should().Throw<InvoiceChangeRefusedException>().WithMessage("*number*");
     }
 
     [Fact]
@@ -67,9 +67,9 @@ public sealed class InvoiceStateTests
         Action line = () => invoice.SetSingleLine(Guid.CreateVersion7(), new Quantity(1m));
         Action renumber = () => invoice.ApplyFinalization("R2608311", _issue, _totals, TaxCategory.S, 19m);
 
-        edit.Should().Throw<InvalidOperationException>();
-        line.Should().Throw<InvalidOperationException>();
-        renumber.Should().Throw<InvalidOperationException>();
+        edit.Should().Throw<InvoiceChangeRefusedException>();
+        line.Should().Throw<InvoiceChangeRefusedException>();
+        renumber.Should().Throw<InvoiceChangeRefusedException>();
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public sealed class InvoiceStateTests
     {
         Action act = () => Draft().Lock();
 
-        act.Should().Throw<InvalidOperationException>();
+        act.Should().Throw<InvoiceChangeRefusedException>();
     }
 
     // private static Methods

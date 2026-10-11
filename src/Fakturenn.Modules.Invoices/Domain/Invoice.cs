@@ -59,7 +59,7 @@ public sealed class Invoice : IAuditable
         RefuseWhenLocked();
         if (State == InvoiceState.Numbered && issueDate != IssueDate)
         {
-            throw new InvalidOperationException("A numbered invoice keeps the issue date its number was derived from.");
+            throw new InvoiceChangeRefusedException("A numbered invoice keeps the issue date its number was derived from.");
         }
 
         bool changed = customerId != CustomerId
@@ -109,7 +109,7 @@ public sealed class Invoice : IAuditable
         RefuseWhenLocked();
         if (State == InvoiceState.Numbered && !string.Equals(Number, number, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("A numbered invoice keeps its number.");
+            throw new InvoiceChangeRefusedException("A numbered invoice keeps its number.");
         }
 
         if (totals.LineNets.Count != _lines.Count)
@@ -139,7 +139,7 @@ public sealed class Invoice : IAuditable
     {
         if (State != InvoiceState.Numbered)
         {
-            throw new InvalidOperationException("Only a numbered invoice can be locked.");
+            throw new InvoiceChangeRefusedException("Only a numbered invoice can be locked.");
         }
 
         State = InvoiceState.Locked;
@@ -165,7 +165,7 @@ public sealed class Invoice : IAuditable
     {
         if (State == InvoiceState.Locked)
         {
-            throw new InvalidOperationException("A locked invoice never changes; correct it with an invoice correction.");
+            throw new InvoiceChangeRefusedException("A locked invoice never changes; correct it with an invoice correction.");
         }
     }
 }
