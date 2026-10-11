@@ -34,6 +34,8 @@ public sealed class ModuleBoundaryTests
             "Fakturenn.Modules.Customers.Contracts",
             "Fakturenn.Modules.Projects",
             "Fakturenn.Modules.Projects.Contracts",
+            "Fakturenn.Modules.Catalog",
+            "Fakturenn.Modules.Catalog.Contracts",
             "Fakturenn.Modules.Identity",
             "Fakturenn.Modules.Identity.Contracts",
         ]);

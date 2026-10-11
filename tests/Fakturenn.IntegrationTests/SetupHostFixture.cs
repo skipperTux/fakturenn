@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.IntegrationTests.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
@@ -99,6 +100,12 @@ public sealed class SetupHostFixture : IAsyncLifetime
             new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(ConnectionString).Options))
         {
             await projects.Database.MigrateAsync();
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await catalog.Database.MigrateAsync();
         }
 
         // Configuration through the command line rather than an environment variable:

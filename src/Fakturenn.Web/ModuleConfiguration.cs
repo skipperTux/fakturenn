@@ -1,4 +1,7 @@
 using Fakturenn.Infrastructure.Persistence;
+using Fakturenn.Modules.Catalog.Contracts;
+using Fakturenn.Modules.Catalog.Features;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Contracts;
 using Fakturenn.Modules.Customers.Features;
 using Fakturenn.Modules.Customers.Persistence;
@@ -43,6 +46,11 @@ public static class ModuleConfiguration
         builder.Services.AddScoped<ListProjects>();
         builder.Services.AddScoped<SaveProject>();
         builder.Services.AddScoped<IProjectProvider, ProjectProvider>();
+
+        AddModuleContext<CatalogDbContext>(builder.Services, connectionString, databaseOptions);
+        builder.Services.AddScoped<ListCatalogItems>();
+        builder.Services.AddScoped<SaveCatalogItem>();
+        builder.Services.AddScoped<ICatalogItemProvider, CatalogItemProvider>();
     }
 
     // private static Methods

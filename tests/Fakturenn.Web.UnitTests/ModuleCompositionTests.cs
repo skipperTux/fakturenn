@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.Persistence;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Organizations.Persistence;
 using Fakturenn.Modules.Projects.Persistence;
@@ -33,6 +34,12 @@ public sealed class ModuleCompositionTests
     public void The_projects_context_records_provenance()
     {
         AssertAudited<ProjectsDbContext>();
+    }
+
+    [Fact]
+    public void The_catalog_context_records_provenance()
+    {
+        AssertAudited<CatalogDbContext>();
     }
 
     // internal static Methods

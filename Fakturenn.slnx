@@ -5,6 +5,8 @@
     <Project Path="src/Fakturenn.Infrastructure.Messaging/Fakturenn.Infrastructure.Messaging.csproj" />
     <Project Path="src/Fakturenn.Infrastructure.Persistence/Fakturenn.Infrastructure.Persistence.csproj" />
     <Project Path="src/Fakturenn.Infrastructure.Storage/Fakturenn.Infrastructure.Storage.csproj" />
+    <Project Path="src/Fakturenn.Modules.Catalog.Contracts/Fakturenn.Modules.Catalog.Contracts.csproj" />
+    <Project Path="src/Fakturenn.Modules.Catalog/Fakturenn.Modules.Catalog.csproj" />
     <Project Path="src/Fakturenn.Modules.Customers.Contracts/Fakturenn.Modules.Customers.Contracts.csproj" />
     <Project Path="src/Fakturenn.Modules.Customers/Fakturenn.Modules.Customers.csproj" />
     <Project Path="src/Fakturenn.Modules.Identity.Contracts/Fakturenn.Modules.Identity.Contracts.csproj" />

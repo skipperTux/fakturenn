@@ -1,5 +1,6 @@
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
@@ -74,6 +75,11 @@ if (args.Contains("--migrate"))
             .UseNpgsql(migrationConnectionString)
             .Options);
 
+    CatalogDbContext CreateCatalogMigrationContext() =>
+        new(new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
     // One factory per context that owns migrations. A future module with its own
     // DbContext adds one more entry here rather than a discovery mechanism -- see
     // DatabaseMigrator's remarks for why the signature takes a list instead of a single
@@ -91,6 +97,7 @@ if (args.Contains("--migrate"))
         CreateOrganizationsMigrationContext,
         CreateCustomersMigrationContext,
         CreateProjectsMigrationContext,
+        CreateCatalogMigrationContext,
         CreateMigrationContext,
     ];
 

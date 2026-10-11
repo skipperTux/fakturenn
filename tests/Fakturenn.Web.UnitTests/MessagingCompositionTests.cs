@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
@@ -120,6 +121,9 @@ public sealed class MessagingCompositionTests
         scope.ServiceProvider.GetRequiredService<ProjectsDbContext>()
             .Model.FindAnnotation(WolverineEnabledAnnotation).Should().BeNull(
                 "project data publishes nothing in Stage 1");
+        scope.ServiceProvider.GetRequiredService<CatalogDbContext>()
+            .Model.FindAnnotation(WolverineEnabledAnnotation).Should().BeNull(
+                "catalog data publishes nothing in Stage 1");
     }
 
     [Fact]

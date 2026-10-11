@@ -29,6 +29,8 @@ public static class FakturennArchitecture
             typeof(Modules.Customers.CustomersModule).Assembly,
             typeof(Modules.Projects.Contracts.ProjectSnapshot).Assembly,
             typeof(Modules.Projects.ProjectsModule).Assembly,
+            typeof(Modules.Catalog.Contracts.CatalogItemSnapshot).Assembly,
+            typeof(Modules.Catalog.CatalogModule).Assembly,
             typeof(Modules.Identity.Contracts.UserId).Assembly,
             typeof(Modules.Identity.IdentityModule).Assembly,
             typeof(Infrastructure.Persistence.AuditSaveChangesInterceptor).Assembly,

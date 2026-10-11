@@ -33,6 +33,8 @@
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Customers.Contracts\Fakturenn.Modules.Customers.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Projects\Fakturenn.Modules.Projects.csproj" />
     <ProjectReference Include="..\..\src\Fakturenn.Modules.Projects.Contracts\Fakturenn.Modules.Projects.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Catalog\Fakturenn.Modules.Catalog.csproj" />
+    <ProjectReference Include="..\..\src\Fakturenn.Modules.Catalog.Contracts\Fakturenn.Modules.Catalog.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

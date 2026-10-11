@@ -3,6 +3,7 @@ using System.Text;
 using AwesomeAssertions;
 using AwesomeAssertions.Execution;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
@@ -116,6 +117,7 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
 
         migrated.Should().BeEquivalentTo(
             [
+                CatalogDbContext.SchemaName,
                 CustomersDbContext.SchemaName,
                 DataProtectionDbContext.SchemaName,
                 IdentityDbContext.SchemaName,
@@ -380,6 +382,12 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
             new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(connectionString).Options))
         {
             await projects.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await catalog.Database.MigrateAsync(TestContext.Current.CancellationToken);
         }
 
         await using (InvoicesDbContext invoices = new(

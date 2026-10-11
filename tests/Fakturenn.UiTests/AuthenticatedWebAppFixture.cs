@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
@@ -562,6 +563,12 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(connectionString).Options))
         {
             await projects.Database.MigrateAsync();
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await catalog.Database.MigrateAsync();
         }
 
         await using InvoicesDbContext invoices = new(
