@@ -2,6 +2,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Fakturenn.Modules.Invoices.Contracts\Fakturenn.Modules.Invoices.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Catalog.Contracts\Fakturenn.Modules.Catalog.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Customers.Contracts\Fakturenn.Modules.Customers.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Organizations.Contracts\Fakturenn.Modules.Organizations.Contracts.csproj" />
+    <ProjectReference Include="..\Fakturenn.Modules.Projects.Contracts\Fakturenn.Modules.Projects.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.SharedKernel\Fakturenn.SharedKernel.csproj" />
   </ItemGroup>
 
