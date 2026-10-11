@@ -40,12 +40,18 @@ public static class IdentityConfiguration
             .PersistKeysToDbContext<DataProtectionDbContext>();
 
         builder.Services.AddHttpContextAccessor();
-        builder.Services.AddScoped<CurrentPrincipal>();
         builder.Services.AddScoped<CircuitOperations>();
         builder.Services.AddScoped<AuthenticationStateProvider, SecurityStampRevalidatingAuthenticationStateProvider>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        builder.Services.AddScoped<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();
-        builder.Services.AddScoped<AuditSaveChangesInterceptor>();
+
+        // Singletons, all three, because Wolverine registers InvoicesDbContext's options as a
+        // singleton: its interceptor is resolved once, from the root provider. A scoped one
+        // there throws under scope validation -- Development, and so every browser test --
+        // and without it never sees the principal CircuitOperations sets on its scope.
+        // CurrentPrincipal is ambient so that a singleton can read it.
+        builder.Services.AddSingleton<CurrentPrincipal>();
+        builder.Services.AddSingleton<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();
+        builder.Services.AddSingleton<AuditSaveChangesInterceptor>();
 
         builder.Services.AddDbContext<IdentityDbContext>((serviceProvider, options) =>
             options
