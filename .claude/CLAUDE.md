@@ -52,8 +52,9 @@ Use these exact terms. Do not introduce synonyms.
 - Dependency direction: UI → feature slices → module domain/contracts →
   infrastructure implementations. Infrastructure implements module-owned
   interfaces; modules never reference infrastructure.
-- No document binary data in PostgreSQL. PostgreSQL stores metadata, hashes,
-  relations, retention data, and storage keys.
+- No document binary data in PostgreSQL — the invoice snapshot is structured data,
+  not a rendered document, and is stored as bytes. PostgreSQL stores metadata,
+  hashes, relations, retention data, and storage keys.
 - Migrations never run automatically at startup. Use the explicit
   `--migrate` entrypoint.
 
@@ -77,8 +78,8 @@ the build, not the review:
 
 Rules 2 and 3 are **live and binding now**, not vacuous: their subject
 selector is `DoNotResideInAssemblyMatching(<Mail|Documents pattern>)`, i.e.
-"every assembly that is NOT Mail/Documents" — today that is all eleven loaded
-assemblies. The testing-and-release harness epic proved this in its own Task 6,
+"every assembly that is NOT Mail/Documents" — today that is every loaded
+assembly. The testing-and-release harness epic proved this in its own Task 6,
 by making `Fakturenn.Modules.Invoices` depend on real MimeKit and watching the
 rule fail. (Not E02a's Task 6, which is the encrypted-token converter.) When `Fakturenn.Infrastructure.Mail*`
 or `.Documents*` eventually appears, the rule does not newly switch on — it
@@ -150,9 +151,11 @@ workflows under `.github/` have run there; one has not.
 **E02a has now been through CI, and every check passed on the first run.** That
 run is the evidence for the numbers below; they were measured on
 `ubuntu-latest`, not estimated. Build and the five in-process suites: 50s.
-Integration: 1m39s, and it starts **eleven concurrent PostgreSQL containers** at
-peak — a figure worth knowing before adding another fixture, because a runner
-has two cores. UI: 2m31s including the browser install. CodeQL: 2m45s.
+Integration: 1m39s, and it started **eleven concurrent PostgreSQL containers** at
+peak — measured at E02a. Stage 1 added fixture classes since (15 test files use
+`IClassFixture<PostgresFixture>` now), so that figure is stale and must be
+re-measured on the next CI run. Worth knowing before adding another fixture,
+because a runner has two cores. UI: 2m31s including the browser install. CodeQL: 2m45s.
 
 `DOTNET_USE_POLLING_FILE_WATCHER=1` is set on **all three** test jobs
 (`build-test`, `integration`, `ui`). It is insurance, not a known requirement:
@@ -192,7 +195,7 @@ dotnet test
 # almost every task of E02a and a stale number is worse than none, because it
 # invites "something broke" against a baseline nobody updated. Take the current
 # numbers from the run you just did.
-dotnet test --project tests/Fakturenn.UnitTests                  # shared kernel and Invoices domain objects, fakes, the NSubstitute boundary
+dotnet test --project tests/Fakturenn.UnitTests                  # shared kernel and business-module domain objects, fakes, the NSubstitute boundary
 dotnet test --project tests/Fakturenn.Modules.Identity.UnitTests # pure Identity logic: permission handler, policy provider, enrolment-gate predicate, permission-catalogue validation
 dotnet test --project tests/Fakturenn.Web.UnitTests              # host composition: forwarded-header parsing, DI registrations, the localization resource guards
 dotnet test --project tests/Fakturenn.ArchitectureTests          # the six architecture rules, plus pattern guards, anti-vacuity and loader-omission checks
@@ -293,10 +296,16 @@ edit sites, not assumed:**
    compiler, not a dedicated test.)
 2. If the module owns an EF Core `DbContext`:
    - `src/Fakturenn.Web/Fakturenn.Web.csproj` — add a `<ProjectReference>`.
-   - `src/Fakturenn.Web/FakturennWebApplication.cs` — register the context in
-     DI, mirroring `InvoicesDbContext`. Use
-     `AddDbContextWithWolverineIntegration<...>` rather than `AddDbContext<...>`
-     if a slice will publish messages from it — see item 9.
+   - Register the context in DI **with `AuditSaveChangesInterceptor`**. For a
+     module context that publishes nothing, that is a call to
+     `ModuleConfiguration.AddModuleContext` in
+     `src/Fakturenn.Web/ModuleConfiguration.cs`. A context a slice publishes
+     from stays in `src/Fakturenn.Web/FakturennWebApplication.cs`, mirroring
+     `InvoicesDbContext`, with `AddDbContextWithWolverineIntegration<...>`
+     instead of `AddDbContext<...>` — see item 9.
+   - `tests/Fakturenn.Web.UnitTests/ModuleCompositionTests.cs` — add an
+     `AssertAudited<TContext>()` fact. A missing interceptor saves empty
+     provenance with no error, and nothing else notices.
    - `src/Fakturenn.Web/Program.cs` — add one more factory to the
      `createMigrationContexts` array passed to `DatabaseMigrator.RunAsync`.
      `DatabaseMigrator.RunAsync` takes `IReadOnlyList<Func<DbContext>>`
@@ -321,10 +330,13 @@ edit sites, not assumed:**
 4. Any test project that needs to compile against the new module's types
    directly needs its own `<ProjectReference>` — nothing adds this
    automatically. Today, for reference: `Fakturenn.UnitTests` references
-   `Fakturenn.Modules.Invoices` and `.Contracts` for domain-object tests;
-   `Fakturenn.Modules.Identity.UnitTests` covers that module's pure logic;
-   `Fakturenn.IntegrationTests` references `Fakturenn.Modules.Invoices`,
-   `Fakturenn.Modules.Identity` and `Fakturenn.Web`.
+   `Invoices`, `Organizations`, `Customers`, `Projects` and `Catalog`, each with
+   its `.Contracts`, for domain-object tests;
+   `Fakturenn.Modules.Identity.UnitTests` covers Identity's pure logic;
+   `Fakturenn.Web.UnitTests` references `Fakturenn.Web`;
+   `Fakturenn.IntegrationTests` references the five business modules (not their
+   `.Contracts`), `Fakturenn.Modules.Identity` and `Fakturenn.Web`;
+   `Fakturenn.ArchitectureTests` references every `src/` assembly.
 5. If the module registers anything in DI that the host must resolve to a
    *specific* concrete type, put the guard in `tests/Fakturenn.Web.UnitTests`.
    That is the host-composition test site, and it exists because a unit test
@@ -343,7 +355,10 @@ edit sites, not assumed:**
    `src/Fakturenn.Modules.Identity/Persistence/Migrations/` (see the migration
    command above) into its own `Persistence/Migrations/` folder. Use the
    Identity copy rather than the Invoices one: it also silences IDE0005, which
-   the generated code needs to stay at zero warnings.
+   the generated code needs to stay at zero warnings. Add
+   `dotnet_diagnostic.CA1861.severity = none` only when the generator emits an
+   inline array (seed data through `HasData`, or a composite index) —
+   Organizations and Projects needed it, Customers and Catalog did not.
 8. The containment and boundary rules (rules 1–6 above) apply automatically —
    they match on the `Fakturenn.Modules.*` name pattern. Do not add a rule per
    module.

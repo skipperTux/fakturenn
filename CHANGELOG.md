@@ -48,9 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never started, and work that was committed is not lost when the process
   stops. Nothing uses this yet; it is the foundation the invoicing and mail
   features will run on.
+- **Organization, customers, projects and catalog.** Enter your company once, then
+  your customers with their projects and their own numbers for your services, and
+  your catalog with prices and VAT rates. Each has its own page after you sign in.
+- **Invoice numbering.** Draft an invoice and give it a number from your own scheme —
+  a prefix, a per-day, per-month or per-year counter, or a running one continued
+  from another tool. Numbers never repeat and never skip, and they carry the invoice's
+  own date, so an invoice written today for last month gets last month's number.
+  Nothing is sent yet; PDF and e-invoice follow.
 
 ### Changed
 
+- **Signed-out visitors reach only the sign-in pages.** Every other page now
+  requires signing in, including any added later without an explicit exception.
 - **PostgreSQL 18.** The reference Compose deployment and every test container
   move from PostgreSQL 17 to 18. A database volume created by an earlier build
   does not start under 18: run `docker compose down --volumes` once. Its data is

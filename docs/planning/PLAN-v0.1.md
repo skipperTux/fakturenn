@@ -46,7 +46,7 @@ Import/export, backup/restore, packaging, Kubernetes manifests, acceptance check
 ## Epic list
 
 - E01 Repository and foundation
-- E02 Identity and organizations
+- E02 Identity and organizations (organization-scoped roles are moot: one organization per instance)
 - E03 Localization
 - E04 Company and customer data
 - E05 Projects and catalog

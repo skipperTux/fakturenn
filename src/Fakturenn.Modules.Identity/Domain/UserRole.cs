@@ -3,8 +3,8 @@ using Fakturenn.SharedKernel;
 namespace Fakturenn.Modules.Identity.Domain;
 
 /// <summary>
-/// Assigns a role to a user. Epic E02b adds an OrganizationId here, which is why
-/// this is a table of our own rather than Identity's AspNetUserRoles.
+/// Assigns a role to a user. With one organization per instance no OrganizationId
+/// column is planned (spec section 2); the table is our own because the roles are.
 /// </summary>
 public sealed class UserRole : IAuditable
 {
