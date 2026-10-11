@@ -21,7 +21,6 @@ public sealed record InvoiceTotals(
 /// </summary>
 public static class InvoiceCalculator
 {
-    // public static Methods
     public static InvoiceTotals Calculate(IReadOnlyList<PricedLine> lines, string currency)
     {
         ArgumentNullException.ThrowIfNull(lines);

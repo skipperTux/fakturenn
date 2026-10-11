@@ -11,7 +11,6 @@ namespace Fakturenn.Modules.Invoices.Domain;
 /// </summary>
 public static class FinalizationChecks
 {
-    // public static Methods
     public static FinalizationRefusal? Check(
         SellerSnapshot seller,
         CustomerSnapshot? customer,

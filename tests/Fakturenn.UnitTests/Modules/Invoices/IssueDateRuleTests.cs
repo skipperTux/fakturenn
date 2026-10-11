@@ -26,6 +26,15 @@ public sealed class IssueDateRuleTests
     }
 
     [Fact]
+    public void Billing_the_previous_month_in_january_rolls_the_year_back()
+    {
+        DateTimeOffset utcNow = new(2027, 1, 15, 12, 0, 0, TimeSpan.Zero);
+
+        IssueDateRule.DefaultFor(IssueDateDefault.LastDayOfPreviousMonth, utcNow, "Europe/Berlin")
+            .Should().Be(new DateOnly(2026, 12, 31));
+    }
+
+    [Fact]
     public void Billing_the_previous_month_in_march_of_a_leap_year()
     {
         DateTimeOffset utcNow = new(2028, 3, 1, 12, 0, 0, TimeSpan.Zero);

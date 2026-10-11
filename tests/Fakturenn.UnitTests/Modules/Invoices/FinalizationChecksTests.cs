@@ -30,6 +30,7 @@ public sealed class FinalizationChecksTests
     [InlineData("VatId")]
     [InlineData("Iban")]
     [InlineData("Currency")]
+    [InlineData("TimeZoneId")]
     public void Each_missing_seller_field_refuses(string field)
     {
         SellerSnapshot seller = field switch
@@ -39,6 +40,7 @@ public sealed class FinalizationChecksTests
             "VatId" => _seller with { VatId = "" },
             "Iban" => _seller with { Iban = "" },
             "Currency" => _seller with { Currency = "" },
+            "TimeZoneId" => _seller with { TimeZoneId = "" },
             _ => throw new ArgumentOutOfRangeException(nameof(field)),
         };
 
@@ -49,6 +51,14 @@ public sealed class FinalizationChecksTests
     public void A_missing_customer_refuses()
     {
         FinalizationChecks.Check(_seller, null, null, _customerId, [_item]).Should().Be(FinalizationRefusal.CustomerMissing);
+    }
+
+    [Fact]
+    public void An_incomplete_customer_refuses()
+    {
+        CustomerSnapshot customer = _customer with { CustomerNumber = "" };
+
+        FinalizationChecks.Check(_seller, customer, null, _customerId, [_item]).Should().Be(FinalizationRefusal.CustomerIncomplete);
     }
 
     [Fact]

@@ -6,7 +6,7 @@ public enum FinalizationRefusal
     InvoiceLocked,
     NoLine,
     QuantityNotPositive,
-    ServicePeriodMissing,
+    ServicePeriodInvalid,
     SellerIncomplete,
     CustomerMissing,
     CustomerIncomplete,

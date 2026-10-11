@@ -28,7 +28,7 @@ public sealed class Invoice : IAuditable
     public decimal? GrossAmount { get; private set; }
     public TaxCategory? TaxCategory { get; private set; }
     public decimal? VatRate { get; private set; }
-    public IReadOnlyList<InvoiceLine> Lines => _lines;
+    public IReadOnlyList<InvoiceLine> Lines => _lines.AsReadOnly();
     public DateTimeOffset CreatedAt { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTimeOffset ModifiedAt { get; set; }
@@ -62,6 +62,16 @@ public sealed class Invoice : IAuditable
             throw new InvalidOperationException("A numbered invoice keeps the issue date its number was derived from.");
         }
 
+        bool changed = customerId != CustomerId
+            || projectId != ProjectId
+            || issueDate != IssueDate
+            || servicePeriodStart != ServicePeriodStart
+            || servicePeriodEnd != ServicePeriodEnd;
+        if (changed)
+        {
+            ClearFigures();
+        }
+
         CustomerId = customerId;
         ProjectId = projectId;
         IssueDate = issueDate;
@@ -73,6 +83,11 @@ public sealed class Invoice : IAuditable
     {
         RefuseWhenLocked();
         InvoiceLine? line = _lines.SingleOrDefault();
+        if (line is null || line.CatalogItemId != catalogItemId || line.Quantity != quantity)
+        {
+            ClearFigures();
+        }
+
         if (line is null)
         {
             line = new InvoiceLine { Id = Guid.CreateVersion7(), InvoiceId = Id };
@@ -95,6 +110,11 @@ public sealed class Invoice : IAuditable
         if (State == InvoiceState.Numbered && !string.Equals(Number, number, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("A numbered invoice keeps its number.");
+        }
+
+        if (totals.LineNets.Count != _lines.Count)
+        {
+            throw new InvalidOperationException("The totals carry a net for every line, and only for those.");
         }
 
         Number = number;
@@ -126,6 +146,21 @@ public sealed class Invoice : IAuditable
     }
 
     // private Methods
+    // A changed numbered invoice no longer matches its figures; the page autosaves, so an
+    // unchanged save must keep them. Finalization under the same number repopulates them.
+    private void ClearFigures()
+    {
+        NetAmount = null;
+        VatAmount = null;
+        GrossAmount = null;
+        foreach (InvoiceLine line in _lines)
+        {
+            line.NetAmount = null;
+            line.TaxCategory = null;
+            line.VatRate = null;
+        }
+    }
+
     private void RefuseWhenLocked()
     {
         if (State == InvoiceState.Locked)

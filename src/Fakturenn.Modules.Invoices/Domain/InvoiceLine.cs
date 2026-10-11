@@ -8,14 +8,13 @@ namespace Fakturenn.Modules.Invoices.Domain;
 /// </summary>
 public sealed class InvoiceLine : IAuditable
 {
-    // public Properties
-    public Guid Id { get; set; }
-    public Guid InvoiceId { get; set; }
-    public Guid CatalogItemId { get; set; }
-    public decimal Quantity { get; set; }
-    public decimal? NetAmount { get; set; }
-    public TaxCategory? TaxCategory { get; set; }
-    public decimal? VatRate { get; set; }
+    public Guid Id { get; internal set; }
+    public Guid InvoiceId { get; internal set; }
+    public Guid CatalogItemId { get; internal set; }
+    public decimal Quantity { get; internal set; }
+    public decimal? NetAmount { get; internal set; }
+    public TaxCategory? TaxCategory { get; internal set; }
+    public decimal? VatRate { get; internal set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTimeOffset ModifiedAt { get; set; }
