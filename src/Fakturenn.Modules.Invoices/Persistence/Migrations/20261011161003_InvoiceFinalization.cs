@@ -93,7 +93,11 @@ namespace Fakturenn.Modules.Invoices.Persistence.Migrations
                 {
                     InvoiceId = table.Column<Guid>(type: "uuid", nullable: false),
                     Content = table.Column<byte[]>(type: "bytea", nullable: false),
-                    Sha256 = table.Column<byte[]>(type: "bytea", nullable: false)
+                    Sha256 = table.Column<byte[]>(type: "bytea", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    CreatedBy = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
+                    ModifiedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    ModifiedBy = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false)
                 },
                 constraints: table =>
                 {

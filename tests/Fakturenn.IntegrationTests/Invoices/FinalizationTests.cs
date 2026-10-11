@@ -6,7 +6,9 @@ using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Modules.Invoices.Snapshots;
 using Fakturenn.Modules.Organizations;
 using Fakturenn.Modules.Organizations.Contracts;
+using Fakturenn.SharedKernel;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Fakturenn.IntegrationTests.Invoices;
 
@@ -96,8 +98,60 @@ public sealed class FinalizationTests(PostgresFixture postgres) : IClassFixture<
 
         FinalizationResult second = await FinalizeAsync(data, invoiceId, 1071.00m);
 
+        second.Succeeded.Should().BeTrue();
         second.Number.Should().Be(first.Number);
         (await HashAsync(invoiceId)).Should().NotEqual(firstHash);
+        await using InvoicesDbContext refreshed = postgres.CreateContext();
+        (await new GetInvoice(refreshed).HandleAsync(invoiceId, TestContext.Current.CancellationToken))!.Gross.Should().Be(1071.00m);
+    }
+
+    [Fact]
+    public async Task A_locked_invoice_is_refused_by_preview_and_finalization_alike()
+    {
+        // Both paths share one resolution, so the totals a user confirms and the refusals a user
+        // sees cannot disagree (review M12).
+        (InvoiceTestData data, Guid invoiceId) = await DraftAsync(new DateTimeOffset(2026, 2, 10, 10, 0, 0, TimeSpan.Zero), 8m);
+        (await FinalizeAsync(data, invoiceId, 952.00m)).Succeeded.Should().BeTrue();
+        await using (InvoicesDbContext db = postgres.CreateContext())
+        {
+            Invoice invoice = await db.Invoices.SingleAsync(i => i.Id == invoiceId, TestContext.Current.CancellationToken);
+            invoice.Lock();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var slices = data.Slices();
+        await using (slices.Scope)
+        {
+            (await slices.Preview.HandleAsync(invoiceId, TestContext.Current.CancellationToken)).Refusal.Should().Be(FinalizationRefusal.InvoiceLocked);
+        }
+
+        (await FinalizeAsync(data, invoiceId, 952.00m)).Refusal.Should().Be(FinalizationRefusal.InvoiceLocked);
+    }
+
+    [Fact]
+    public async Task A_draft_save_waits_for_a_finalization_in_flight()
+    {
+        // Review I1: a save that loaded before a finalization committed applied its edit after it,
+        // moving the issue date under a number derived from the old one. A holds the invoice row
+        // as finalization does; the save must wait for it, then see the invoice Numbered.
+        (InvoiceTestData data, Guid invoiceId) = await DraftAsync(new DateTimeOffset(2026, 3, 10, 10, 0, 0, TimeSpan.Zero), 8m);
+        await using InvoicesDbContext a = postgres.CreateContext();
+        await using IDbContextTransaction finalizing = await a.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        Invoice invoice = await a.Invoices.Include(i => i.Lines).SingleAsync(i => i.Id == invoiceId, TestContext.Current.CancellationToken);
+        InvoiceTotals totals = InvoiceCalculator.Calculate([new PricedLine(invoice.Lines[0].Quantity, 100m, new Percentage(19m), TaxCategory.S)], "EUR");
+        invoice.ApplyFinalization("R2603101", invoice.IssueDate.AddDays(14), totals, TaxCategory.S, 19m);
+        await a.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Task save = EditAsync(data, invoiceId, issueDate: new DateOnly(2026, 3, 31), quantity: 8m);
+        await postgres.WaitUntilBlockedAsync("\"Invoices\"");
+        save.IsCompleted.Should().BeFalse("the save must wait for the finalization's row lock");
+        await finalizing.CommitAsync(TestContext.Current.CancellationToken);
+
+        Func<Task> saved = () => save;
+        await saved.Should().ThrowAsync<InvalidOperationException>("a numbered invoice keeps its issue date");
+        await using InvoicesDbContext db = postgres.CreateContext();
+        (await db.Invoices.AsNoTracking().SingleAsync(i => i.Id == invoiceId, TestContext.Current.CancellationToken))
+            .IssueDate.Should().Be(new DateOnly(2026, 3, 10));
     }
 
     [Fact]

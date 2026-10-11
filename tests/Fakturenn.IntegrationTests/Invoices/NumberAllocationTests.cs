@@ -1,10 +1,8 @@
-using System.Globalization;
 using AwesomeAssertions;
 using Fakturenn.Modules.Invoices.Features;
 using Fakturenn.Modules.Invoices.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using Npgsql;
 
 namespace Fakturenn.IntegrationTests.Invoices;
 
@@ -29,7 +27,7 @@ public sealed class NumberAllocationTests(PostgresFixture postgres) : IClassFixt
         await using IDbContextTransaction bTransaction = await b.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Task<long> second = NumberAllocator.AllocateAsync(b, scope, start: 1, TestContext.Current.CancellationToken);
 
-        await WaitUntilBlockedAsync();
+        await postgres.WaitUntilBlockedAsync("NumberCounters");
         second.IsCompleted.Should().BeFalse("B must wait for A's uncommitted row");
 
         await aTransaction.CommitAsync(TestContext.Current.CancellationToken);
@@ -75,25 +73,5 @@ public sealed class NumberAllocationTests(PostgresFixture postgres) : IClassFixt
     {
         await using InvoicesDbContext db = postgres.CreateContext();
         await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
-    }
-
-    private async Task WaitUntilBlockedAsync()
-    {
-        await using NpgsqlConnection observer = new(postgres.ConnectionString);
-        await observer.OpenAsync(TestContext.Current.CancellationToken);
-        for (int attempt = 0; attempt < 100; attempt++)
-        {
-            await using NpgsqlCommand command = observer.CreateCommand();
-            command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%NumberCounters%'";
-            long waiting = Convert.ToInt64(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken), CultureInfo.InvariantCulture);
-            if (waiting > 0)
-            {
-                return;
-            }
-
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
-
-        throw new TimeoutException("B never blocked on A's row; the interleave was not forced.");
     }
 }

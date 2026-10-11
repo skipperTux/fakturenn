@@ -10,7 +10,7 @@ public sealed class ListInvoices(InvoicesDbContext db)
     public async Task<IReadOnlyList<InvoiceView>> HandleAsync(CancellationToken cancellationToken)
     {
         List<Invoice> invoices = await db.Invoices.AsNoTracking().Include(i => i.Lines)
-            .OrderByDescending(i => i.IssueDate).ThenBy(i => i.Number)
+            .OrderByDescending(i => i.IssueDate).ThenByDescending(i => i.CreatedAt)
             .ToListAsync(cancellationToken);
         return [.. invoices.Select(InvoiceView.From)];
     }

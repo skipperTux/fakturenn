@@ -36,15 +36,10 @@ public sealed class FinalizeInvoice(InvoicesDbContext db, InvoiceResolution reso
         db.ChangeTracker.Clear();
         await using IDbContextTransaction transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        // Step 1: lock the invoice and re-check its state under the lock. Two tabs, a
+        // Step 1: lock the invoice; resolution re-checks its state under the lock. Two tabs, a
         // double click and a strategy retry after a commit-time failure all land here.
-        await db.Database.ExecuteSqlAsync(
-            $"SELECT 1 FROM invoices.\"Invoices\" WHERE \"Id\" = {invoiceId} FOR UPDATE", cancellationToken);
+        await db.LockInvoiceAsync(invoiceId, cancellationToken);
         Invoice invoice = await db.Invoices.Include(i => i.Lines).SingleAsync(i => i.Id == invoiceId, cancellationToken);
-        if (invoice.State == InvoiceState.Locked)
-        {
-            return new FinalizationResult(invoice.Number, FinalizationRefusal.InvoiceLocked, null);
-        }
 
         ResolvedInvoice resolved = await resolution.ResolveAsync(invoice, cancellationToken);
         if (resolved.Refusal is FinalizationRefusal refusal)

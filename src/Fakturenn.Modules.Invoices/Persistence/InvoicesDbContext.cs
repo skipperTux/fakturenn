@@ -20,6 +20,14 @@ public sealed class InvoicesDbContext(DbContextOptions<InvoicesDbContext> option
     public DbSet<NumberCounter> NumberCounters => Set<NumberCounter>();
     public DbSet<InvoiceSnapshotRecord> Snapshots => Set<InvoiceSnapshotRecord>();
 
+    // internal Methods
+    /// <summary>
+    /// Finalization and draft saves take this row lock before loading, so each sees the invoice
+    /// only after the other has committed (spec section 5 step 1, review I1).
+    /// </summary>
+    internal Task LockInvoiceAsync(Guid invoiceId, CancellationToken cancellationToken) =>
+        Database.ExecuteSqlAsync($"SELECT 1 FROM invoices.\"Invoices\" WHERE \"Id\" = {invoiceId} FOR UPDATE", cancellationToken);
+
     // protected Methods
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

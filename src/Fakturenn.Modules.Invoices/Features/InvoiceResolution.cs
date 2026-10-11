@@ -18,10 +18,10 @@ public sealed record ResolvedInvoice(
     InvoiceTotals? Totals);
 
 /// <summary>
-/// Steps 2 to 5 of spec section 5, shared by preview and finalization so the totals a user
-/// confirms come from the code that numbers them (review M12). Reads go through the other
-/// modules' contracts and their own contexts — outside the invoice transaction, accepted in
-/// the spec.
+/// Spec section 5's state check and steps 2 to 5, shared by preview and finalization so the
+/// refusals and totals a user confirms come from the code that numbers them (review M12).
+/// Reads go through the other modules' contracts and their own contexts — outside the invoice
+/// transaction, accepted in the spec.
 /// </summary>
 public sealed class InvoiceResolution(
     ISellerProvider sellers,
@@ -29,34 +29,19 @@ public sealed class InvoiceResolution(
     IProjectProvider projects,
     ICatalogItemProvider catalog)
 {
-    // public static Methods
-    public static InvoiceSnapshotDocument Document(Invoice invoice, string number, DateOnly dueDate, ResolvedInvoice resolved)
-    {
-        ArgumentNullException.ThrowIfNull(invoice);
-        ArgumentNullException.ThrowIfNull(resolved);
-
-        List<SnapshotLine> lines = [.. invoice.Lines.Select((line, index) => new SnapshotLine(
-            resolved.Items[index]!, resolved.CustomerItemNumbers[index], line.Quantity.Value,
-            resolved.Totals!.LineNets[index], TaxCategory.S, resolved.Items[index]!.VatRate))];
-
-        return new InvoiceSnapshotDocument(
-            invoice.Id, number, invoice.IssueDate, invoice.ServicePeriodStart, invoice.ServicePeriodEnd, dueDate,
-            resolved.Seller!, resolved.Customer!, resolved.Project, lines, resolved.Totals!.Subtotals,
-            resolved.Totals.Net, resolved.Totals.Vat, resolved.Totals.Gross, resolved.Totals.Currency);
-    }
-
     // public Methods
     public async Task<ResolvedInvoice> ResolveAsync(Invoice invoice, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(invoice);
 
-        FinalizationRefusal? draftRefusal = invoice.Lines.Count == 0 ? FinalizationRefusal.NoLine
+        FinalizationRefusal? invoiceRefusal = invoice.State == InvoiceState.Locked ? FinalizationRefusal.InvoiceLocked
+            : invoice.Lines.Count == 0 ? FinalizationRefusal.NoLine
             : invoice.Lines.Any(line => line.Quantity.Value <= 0m) ? FinalizationRefusal.QuantityNotPositive
             : invoice.ServicePeriodEnd < invoice.ServicePeriodStart ? FinalizationRefusal.ServicePeriodInvalid
             : null;
-        if (draftRefusal is not null)
+        if (invoiceRefusal is not null)
         {
-            return Refused(draftRefusal.Value);
+            return Refused(invoiceRefusal.Value);
         }
 
         SellerSnapshot seller = await sellers.GetAsync(cancellationToken);
@@ -91,6 +76,22 @@ public sealed class InvoiceResolution(
             seller.Currency);
 
         return new ResolvedInvoice(null, seller, customer, project, items, references, totals);
+    }
+
+    // internal static Methods
+    internal static InvoiceSnapshotDocument Document(Invoice invoice, string number, DateOnly dueDate, ResolvedInvoice resolved)
+    {
+        ArgumentNullException.ThrowIfNull(invoice);
+        ArgumentNullException.ThrowIfNull(resolved);
+
+        List<SnapshotLine> lines = [.. invoice.Lines.Select((line, index) => new SnapshotLine(
+            resolved.Items[index]!, resolved.CustomerItemNumbers[index], line.Quantity.Value,
+            resolved.Totals!.LineNets[index], TaxCategory.S, resolved.Items[index]!.VatRate))];
+
+        return new InvoiceSnapshotDocument(
+            invoice.Id, number, invoice.IssueDate, invoice.ServicePeriodStart, invoice.ServicePeriodEnd, dueDate,
+            resolved.Seller!, resolved.Customer!, resolved.Project, lines, resolved.Totals!.Subtotals,
+            resolved.Totals.Net, resolved.Totals.Vat, resolved.Totals.Gross, resolved.Totals.Currency);
     }
 
     // private static Methods

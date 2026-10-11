@@ -14,8 +14,8 @@ namespace Fakturenn.Modules.Invoices.Features;
 /// </summary>
 public static class NumberAllocator
 {
-    // public const Fields
-    public const string Sql =
+    // internal const Fields
+    internal const string Sql =
         "INSERT INTO invoices.\"NumberCounters\" (\"ScopeKey\", \"Value\") VALUES (@scope, @start) "
         + "ON CONFLICT (\"ScopeKey\") DO UPDATE SET \"Value\" = invoices.\"NumberCounters\".\"Value\" + 1 "
         + "RETURNING \"Value\"";

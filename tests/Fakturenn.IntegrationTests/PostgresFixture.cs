@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Fakturenn.IntegrationTests;
@@ -37,6 +39,32 @@ public sealed class PostgresFixture : IAsyncLifetime
     public TContext Create<TContext>(Func<DbContextOptions<TContext>, TContext> create)
         where TContext : DbContext =>
         create(new DbContextOptionsBuilder<TContext>().UseNpgsql(ConnectionString).Options);
+
+    /// <summary>
+    /// Returns once another session waits on a lock in a statement containing
+    /// <paramref name="queryFragment"/>, which is how a test proves an interleave was forced
+    /// rather than won by timing.
+    /// </summary>
+    public async Task WaitUntilBlockedAsync(string queryFragment)
+    {
+        await using NpgsqlConnection observer = new(ConnectionString);
+        await observer.OpenAsync(TestContext.Current.CancellationToken);
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            await using NpgsqlCommand command = observer.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE @pattern";
+            command.Parameters.AddWithValue("pattern", $"%{queryFragment}%");
+            long waiting = Convert.ToInt64(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken), CultureInfo.InvariantCulture);
+            if (waiting > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        throw new TimeoutException("B never blocked on A's row; the interleave was not forced.");
+    }
 
     public IdentityDbContext CreateIdentityContext() =>
         new(
