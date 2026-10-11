@@ -164,8 +164,16 @@
         }
 
         string reference = _projectReference;
-        await Operations.RunAsync<SaveProject, Guid>(
-            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(null, customerId, reference, token), CancellationToken.None);
+        try
+        {
+            await Operations.RunAsync<SaveProject, Guid>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(null, customerId, reference, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // A double submit raced itself on the unique reference; the other one saved it.
+        }
+
         _projectReference = string.Empty;
         await LoadSelectionAsync(customerId);
     });
@@ -178,8 +186,16 @@
         }
 
         string number = _referenceNumber;
-        await Operations.RunAsync<SaveCatalogItemReference>(
-            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(customerId, itemId, number, token), CancellationToken.None);
+        try
+        {
+            await Operations.RunAsync<SaveCatalogItemReference>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(customerId, itemId, number, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // A double submit raced itself on the (customer, item) key; the other one saved it.
+        }
+
         _referenceNumber = string.Empty;
         await LoadSelectionAsync(customerId);
     });

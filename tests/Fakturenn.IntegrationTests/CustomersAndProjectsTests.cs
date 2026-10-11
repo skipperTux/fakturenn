@@ -56,6 +56,22 @@ public sealed class CustomersAndProjectsTests(PostgresFixture postgres) : IClass
             .Should().Be(new ProjectSnapshot(project, customer, "PRJ-2026-083"));
     }
 
+    [Fact]
+    public async Task Adding_a_reference_the_customer_already_has_returns_that_project()
+    {
+        // Typing an existing reference again is an ordinary mistake. The unique index on
+        // (CustomerId, Reference) would otherwise throw, and in a circuit that ends the page.
+        await using ProjectsDbContext db = postgres.Create<ProjectsDbContext>(options => new(options));
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        Guid customer = Guid.CreateVersion7();
+
+        Guid first = await new SaveProject(db).HandleAsync(null, customer, "PRJ-TWICE", TestContext.Current.CancellationToken);
+        Guid second = await new SaveProject(db).HandleAsync(null, customer, " PRJ-TWICE ", TestContext.Current.CancellationToken);
+
+        second.Should().Be(first);
+        (await db.Projects.CountAsync(p => p.CustomerId == customer, TestContext.Current.CancellationToken)).Should().Be(1);
+    }
+
     // private Methods
     private async Task<CustomersDbContext> CustomersAsync()
     {
