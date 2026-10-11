@@ -5,3 +5,10 @@
 # the repository's file-scoped-namespace rule instead.
 [*.cs]
 csharp_style_namespace_declarations = file_scoped:none
+
+# The generator also always emits `using System;`, which ImplicitUsings makes
+# redundant, so IDE0005 (error repository-wide) fires on every generated
+# migration that touches a System type. Same reasoning as above: exempt the
+# generated-only folder rather than strip a using the next `migrations add`
+# would put straight back.
+dotnet_diagnostic.IDE0005.severity = none

@@ -24,21 +24,23 @@ public sealed class DatabaseMigratorTests(PostgresFixture postgres) : IClassFixt
         DatabaseOptions options = new() { StartupTimeoutSeconds = 30, RetryDelaySeconds = 1 };
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         Func<DbContext>[] createContexts = [postgres.CreateContext];
+        await using InvoicesDbContext invoices = postgres.CreateContext();
+        long migrations = invoices.Database.GetMigrations().LongCount();
 
         int firstResult = await DatabaseMigrator.RunAsync(
             createContexts, options, NullLogger.Instance, cancellationToken);
 
         firstResult.Should().Be(0);
         (await CountSchemas(cancellationToken)).Should().Be(1L);
-        (await CountHistoryRows(cancellationToken)).Should().Be(1L);
+        (await CountHistoryRows(cancellationToken)).Should().Be(migrations);
 
         // Running "--migrate" again -- e.g. a redeployed migration Job that finds
-        // nothing pending -- must succeed and must not duplicate the history row.
+        // nothing pending -- must succeed and must not duplicate the history rows.
         int secondResult = await DatabaseMigrator.RunAsync(
             createContexts, options, NullLogger.Instance, cancellationToken);
 
         secondResult.Should().Be(0);
-        (await CountHistoryRows(cancellationToken)).Should().Be(1L);
+        (await CountHistoryRows(cancellationToken)).Should().Be(migrations);
     }
 
     [Fact]

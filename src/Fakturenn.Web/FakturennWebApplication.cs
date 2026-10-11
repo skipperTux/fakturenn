@@ -1,4 +1,5 @@
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Infrastructure.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
 using Fakturenn.Web.Components;
 using Fakturenn.Web.Components.Account;
@@ -94,11 +95,8 @@ public static class FakturennWebApplication
         // references neither Wolverine nor Fakturenn.Infrastructure.Messaging, and its
         // DbContext is untouched -- the same arrangement as the audit interceptor.
         //
-        // InvoicesDbContext is schema-only today (no DbSet, one migration that creates the
-        // schema). Enrolling an empty context is fine: the outbox binds to its connection
-        // and transaction, not to its entities. Wolverine's model customizer does map its
-        // envelope entities into this context's model, but as ExcludeFromMigrations(true),
-        // so the module's own migrations cannot drift.
+        // Wolverine's model customizer maps its envelope entities into this context's model,
+        // but as ExcludeFromMigrations(true), so the module's own migrations cannot drift.
         //
         // The schema argument is inert in Wolverine 6.30.0 and 6.48.1 -- disassembly of
         // addDbContextWithWolverineIntegration shows the parameter is never read. The schema
@@ -115,10 +113,12 @@ public static class FakturennWebApplication
         // the whole unit of work to Database.CreateExecutionStrategy(), which is what EF
         // requires of any user-initiated transaction under a retrying strategy.
         builder.Services.AddDbContextWithWolverineIntegration<InvoicesDbContext>(
-            options => options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
-                databaseOptions.MaxRetries,
-                TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
-                errorCodesToAdd: null)),
+            (serviceProvider, options) => options
+                .UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+                    databaseOptions.MaxRetries,
+                    TimeSpan.FromSeconds(databaseOptions.RetryDelaySeconds),
+                    errorCodesToAdd: null))
+                .AddInterceptors(serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>()),
             MessagingConfiguration.SchemaName);
 
         builder.AddFakturennIdentity(connectionString, databaseOptions);

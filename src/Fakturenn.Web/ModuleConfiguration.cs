@@ -5,6 +5,8 @@ using Fakturenn.Modules.Catalog.Persistence;
 using Fakturenn.Modules.Customers.Contracts;
 using Fakturenn.Modules.Customers.Features;
 using Fakturenn.Modules.Customers.Persistence;
+using Fakturenn.Modules.Invoices.Contracts;
+using Fakturenn.Modules.Invoices.Features;
 using Fakturenn.Modules.Organizations.Contracts;
 using Fakturenn.Modules.Organizations.Features;
 using Fakturenn.Modules.Organizations.Persistence;
@@ -51,6 +53,16 @@ public static class ModuleConfiguration
         builder.Services.AddScoped<ListCatalogItems>();
         builder.Services.AddScoped<SaveCatalogItem>();
         builder.Services.AddScoped<ICatalogItemProvider, CatalogItemProvider>();
+
+        // InvoicesDbContext itself is registered by FakturennWebApplication, enrolled with Wolverine.
+        builder.Services.AddScoped<InvoiceResolution>();
+        builder.Services.AddScoped<CreateDraft>();
+        builder.Services.AddScoped<SaveDraft>();
+        builder.Services.AddScoped<PreviewInvoice>();
+        builder.Services.AddScoped<FinalizeInvoice>();
+        builder.Services.AddScoped<GetInvoice>();
+        builder.Services.AddScoped<ListInvoices>();
+        builder.Services.AddScoped<INumberingStatus, NumberingStatus>();
     }
 
     // private static Methods

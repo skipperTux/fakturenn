@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Fakturenn.Modules.Invoices.Contracts\Fakturenn.Modules.Invoices.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Organizations.Contracts\Fakturenn.Modules.Organizations.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.SharedKernel\Fakturenn.SharedKernel.csproj" />
   </ItemGroup>
