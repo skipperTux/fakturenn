@@ -40,8 +40,18 @@ public sealed class CircuitOperations(
         }
 
         await using AsyncServiceScope scope = scopes.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<CurrentPrincipal>().Principal = state.User;
-        return await operation(scope.ServiceProvider.GetRequiredService<TService>(), cancellationToken);
+        CurrentPrincipal current = scope.ServiceProvider.GetRequiredService<CurrentPrincipal>();
+        try
+        {
+            current.Principal = state.User;
+            return await operation(scope.ServiceProvider.GetRequiredService<TService>(), cancellationToken);
+        }
+        finally
+        {
+            // Anything the operation started and left running shares the principal's holder;
+            // clearing it here keeps that work from acting as this user afterwards.
+            current.Principal = null;
+        }
     }
 
     public Task RunAsync<TService>(

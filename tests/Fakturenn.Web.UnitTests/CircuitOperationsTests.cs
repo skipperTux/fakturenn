@@ -56,6 +56,48 @@ public sealed class CircuitOperationsTests
         await act.Should().ThrowAsync<OperationRefusedException>();
     }
 
+    [Fact]
+    public async Task The_principal_is_gone_once_the_operation_returns()
+    {
+        await using ServiceProvider services = Services(new FixedAuthenticationStateProvider(User(Permissions.MasterDataManage)));
+        await using AsyncServiceScope circuit = services.CreateAsyncScope();
+        CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
+
+        await operations.RunAsync<Probe, string>(
+            Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe.Seen), TestContext.Current.CancellationToken);
+
+        services.GetRequiredService<CurrentPrincipal>().Principal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Work_an_operation_started_does_not_act_as_its_user_after_it_returns()
+    {
+        // A Task.Run, a timer or a message loop started inside an operation copies its
+        // execution context, and with it the ambient principal. Rows it writes later must not
+        // carry the name of whoever happened to start it.
+        await using ServiceProvider services = Services(new FixedAuthenticationStateProvider(User(Permissions.MasterDataManage)));
+        await using AsyncServiceScope circuit = services.CreateAsyncScope();
+        CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
+        TaskCompletionSource operationReturned = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string>? startedInside = null;
+
+        await operations.RunAsync<Probe, bool>(
+            Permissions.MasterDataManage,
+            (probe, _) =>
+            {
+                startedInside = Task.Run(async () =>
+                {
+                    await operationReturned.Task;
+                    return probe.Seen;
+                });
+                return Task.FromResult(true);
+            },
+            TestContext.Current.CancellationToken);
+        operationReturned.SetResult();
+
+        (await startedInside!).Should().Be("nobody");
+    }
+
     // private static Methods
     private static ClaimsPrincipal User(string permission) =>
         new(new ClaimsIdentity(
@@ -70,7 +112,7 @@ public sealed class CircuitOperationsTests
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
         services.AddScoped<AuthenticationStateProvider>(_ => provider);
-        services.AddScoped<CurrentPrincipal>();
+        services.AddSingleton<CurrentPrincipal>();
         services.AddScoped<CircuitOperations>();
         services.AddScoped<Probe>();
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
