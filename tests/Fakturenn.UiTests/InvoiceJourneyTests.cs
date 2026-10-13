@@ -100,6 +100,24 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
     }
 
     [Fact]
+    public async Task A_double_click_on_new_creates_one_draft()
+    {
+        // Stage 1 has no draft delete, so a second draft from one double click would stay.
+        IPage page = await app.SignInAsAdministratorAsync(_browser!);
+        await EnsureMasterDataAsync(page, app);
+        await page.GotoAsync(app.Url("/invoices"));
+        await ChooseAsync(page, "invoice-new-customer", "Example Client GmbH");
+        int before = await app.CountInvoicesAsync();
+
+        await page.GetByTestId("invoice-new").DblClickAsync();
+
+        // Counted once the draft page has loaded, which takes several operations longer than
+        // a second CreateDraft would.
+        await Expect(page.GetByTestId("invoice-catalog-item").Filter(new() { Visible = true })).ToBeVisibleAsync();
+        (await app.CountInvoicesAsync()).Should().Be(before + 1);
+    }
+
+    [Fact]
     public async Task An_edited_numbered_invoice_is_confirmed_again_under_its_number()
     {
         // Spec section 4: a numbered invoice's data stays editable. The edit clears its

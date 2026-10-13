@@ -565,6 +565,14 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             .SingleOrDefaultAsync();
     }
 
+    /// <summary>How many invoices exist, drafts included.</summary>
+    public async Task<int> CountInvoicesAsync()
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        return await scope.ServiceProvider.GetRequiredService<InvoicesDbContext>().Invoices.CountAsync();
+    }
+
     // private Properties
 
     /// <summary>The running host's container, so a test can borrow its real services.</summary>

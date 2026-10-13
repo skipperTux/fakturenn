@@ -23,7 +23,7 @@
                 <MudSelectItem T="Guid?" Value="customer.Id">@customer.LegalName</MudSelectItem>
             }
         </MudSelect>
-        <MudButton OnClick="CreateAsync" Disabled="_newCustomerId is null" Variant="Variant.Filled" Color="Color.Primary" data-testid="invoice-new">@Localizer["Invoices_New"]</MudButton>
+        <MudButton OnClick="CreateAsync" Disabled="@(_newCustomerId is null || _creating)" Variant="Variant.Filled" Color="Color.Primary" data-testid="invoice-new">@Localizer["Invoices_New"]</MudButton>
     </MudStack>
 
     <MudTable Items="_invoices" Hover="true" OnRowClick="@((TableRowClickEventArgs<InvoiceView> args) => Navigation.NavigateTo($"/invoices/{args.Item!.Id}"))">
@@ -48,6 +48,7 @@
     private IReadOnlyList<CustomerSnapshot> _customers = [];
     private IReadOnlyList<InvoiceView>? _invoices;
     private Guid? _newCustomerId;
+    private bool _creating;
 
     protected override async Task OnInitializedAsync()
     {
@@ -67,11 +68,14 @@
 
     private async Task CreateAsync()
     {
-        if (_newCustomerId is not Guid customerId)
+        // A double click delivers two clicks before the button re-renders disabled, and Stage 1
+        // has no draft delete. The flag is set before the first await, so the second click sees it.
+        if (_creating || _newCustomerId is not Guid customerId)
         {
             return;
         }
 
+        _creating = true;
         try
         {
             Guid id = await Operations.RunAsync<CreateDraft, Guid>(
@@ -81,6 +85,10 @@
         catch (OperationRefusedException)
         {
             Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            _creating = false;
         }
     }
 }
