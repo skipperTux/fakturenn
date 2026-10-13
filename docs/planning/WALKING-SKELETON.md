@@ -24,7 +24,7 @@ Minimal organization
 - Legal name: Example Consulting
 - Country: DE
 - VAT ID: DE123456789
-- IBAN: DE00 0000 0000 0000 0000 00
+- IBAN: DE89 3704 0044 0532 0130 00
 - Currency: EUR
 
 ### Customer

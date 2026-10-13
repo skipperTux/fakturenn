@@ -19,12 +19,12 @@ human testing. It is not a production-readiness declaration. See
 ## Scope
 
 Quotations, orders, order confirmations, invoices, invoice corrections and
-payment reminders. Multiple organizations, customers with multiple addresses
-and contacts, projects, a service catalog, time import through a provider
-abstraction, PDF and timesheet rendering, ZUGFeRD/Factur-X and XRechnung,
-SMTP with optional IMAP, S/MIME and OpenPGP signing, an immutable archive,
-filesystem or S3-compatible storage, local identity with TOTP and optional
-generic OIDC, English and German.
+payment reminders. One organization per instance, customers with multiple
+addresses and contacts, projects, a service catalog, time import through a
+provider abstraction, PDF and timesheet rendering, ZUGFeRD/Factur-X and
+XRechnung, SMTP with optional IMAP, S/MIME and OpenPGP signing, an immutable
+archive, filesystem or S3-compatible storage, local identity with TOTP and
+optional generic OIDC, English and German.
 
 Not in scope: general ledger, double-entry bookkeeping, tax declarations,
 payroll, inventory, physical-goods workflows, supplier invoice processing,

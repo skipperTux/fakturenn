@@ -40,6 +40,13 @@ Requirements:
 - durable background work safe across replicas
 - no Docker socket dependency
 
+**Interactive pages hold server-side state per browser tab.** A Blazor circuit lives
+in one replica's memory: the negotiate request and the WebSocket must reach the same
+replica, and the circuit never moves. Above one replica, configure ingress session
+affinity, and forward WebSockets (`Upgrade`) at every proxy in front of the app. A
+rolling update ends open circuits — anything typed and not yet saved is lost, and the
+page reconnects or reloads.
+
 Initial distribution:
 
 - Kustomize base and overlays
@@ -356,3 +363,12 @@ first publisher ships:
 - Do **not** exclude the `messaging` schema from the dump. Restoring a database
   without it leaves an instance that refuses to start (see the `--migrate`
   section: the schema is provisioned there, never at boot).
+
+**A restore rewinds the invoice counter.** Restoring a dump older than the last
+numbered invoice makes the next finalizations issue numbers that already exist. After
+any restore, before anyone finalizes, compare `invoices."NumberCounters"` with the
+highest number issued — the last invoice sent, or the archive — and raise the counter
+row for each affected scope to it.
+
+**The snapshot hash detects corruption, not tampering.** Whoever can rewrite a
+snapshot's bytes can rewrite its hash in the same row.

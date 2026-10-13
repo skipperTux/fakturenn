@@ -131,6 +131,23 @@ public sealed class AdminUserManagementTests(SetupHostFixture host)
         LocationPath(response).Should().Be("/account/denied");
     }
 
+    [Theory]
+    [InlineData("/organization")]
+    [InlineData("/customers")]
+    [InlineData("/catalog")]
+    [InlineData("/invoices")]
+    public async Task A_business_page_refuses_a_user_without_its_permission(string path)
+    {
+        // Spec section 11: refused at the page as well as at the slice, which
+        // CircuitOperationsTests covers. The fallback policy alone would admit this user.
+        using HttpClient client = await SignedInClientAsync($"page-forbidden-{Slug(path)}@example.test");
+
+        using HttpResponseMessage response = await GetAsync(client, path);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Found);
+        LocationPath(response).Should().Be("/account/denied", $"{path} must require its permission");
+    }
+
     [Fact]
     public async Task The_user_list_renders_for_an_administrator()
     {

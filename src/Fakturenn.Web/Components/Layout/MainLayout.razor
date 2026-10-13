@@ -5,18 +5,17 @@
 @inject IStringLocalizer<SharedResource> Localizer
 
 <MudThemeProvider />
-<MudPopoverProvider />
-<MudSnackbarProvider />
 
 <MudLayout>
     <MudAppBar Elevation="1">
         <MudText Typo="Typo.h6">Fakturenn</MudText>
         <MudSpacer />
-        @* Spec section 8: sign-out is "rendered in the layout when signed in". Every page
-           in this application is static SSR today, so the signed-in test is the request's
-           own principal rather than an AuthorizeView -- nothing registers a cascading
-           authentication state, and adding one to answer a yes/no question the request
-           already carries would be a registration with a single consumer.
+        @* Spec section 8: sign-out is "rendered in the layout when signed in". The layout
+           is always rendered statically -- the business pages declare their interactive
+           render mode on the page, which does not reach the layout -- so the signed-in test
+           is the request's own principal rather than an AuthorizeView. Nothing registers a
+           cascading authentication state, and adding one to answer a yes/no question the
+           request already carries would be a registration with a single consumer.
 
            A real form post, not a link: POST /account/logout is the only shape that can
            carry an antiforgery token, and Round A made every /account post require one.
@@ -26,6 +25,10 @@
            and the button looks broken. *@
         @if (IsSignedIn)
         {
+            <MudButton Href="/invoices" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-invoices">@Localizer["Nav_Invoices"]</MudButton>
+            <MudButton Href="/customers" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-customers">@Localizer["Nav_Customers"]</MudButton>
+            <MudButton Href="/catalog" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-catalog">@Localizer["Nav_Catalog"]</MudButton>
+            <MudButton Href="/organization" Variant="Variant.Text" Color="Color.Inherit" data-testid="nav-organization">@Localizer["Nav_Organization"]</MudButton>
             <form method="post" action="/account/logout" data-testid="sign-out-form">
                 <AntiforgeryToken />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit" data-testid="sign-out-submit">

@@ -1,7 +1,9 @@
 using AwesomeAssertions;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -15,6 +17,22 @@ namespace Fakturenn.Web.UnitTests;
 /// </summary>
 public sealed class IdentityConfigurationTests
 {
+    [Fact]
+    public void An_endpoint_without_an_authorize_attribute_requires_a_signed_in_user()
+    {
+        // Spec section 8 [S4]: a page that forgets its attribute must be refused, not
+        // anonymous. Without a fallback policy it is reachable without signing in --
+        // the organization page with its IBAN included.
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+
+        AuthorizationOptions options =
+            app.Services.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+
+        options.FallbackPolicy.Should().NotBeNull();
+        options.FallbackPolicy!.Requirements.Should().ContainSingle()
+            .Which.Should().BeOfType<Microsoft.AspNetCore.Authorization.Infrastructure.DenyAnonymousAuthorizationRequirement>();
+    }
+
     [Fact]
     public void The_claims_principal_factory_is_the_permission_factory()
     {
@@ -35,6 +53,19 @@ public sealed class IdentityConfigurationTests
             scope.ServiceProvider.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
 
         factory.Should().BeOfType<PermissionClaimsPrincipalFactory>();
+    }
+
+    [Fact]
+    public void The_authentication_state_provider_is_the_revalidating_one()
+    {
+        // Static SSR works with the framework's stock provider, so nothing else fails if
+        // this registration goes: a locked user's open circuit would keep its access
+        // (spec section 8, review S3).
+        WebApplication app = FakturennWebApplication.Build(["--urls", "http://127.0.0.1:0"]);
+        using IServiceScope scope = app.Services.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<AuthenticationStateProvider>()
+            .Should().BeOfType<SecurityStampRevalidatingAuthenticationStateProvider>();
     }
 
     [Fact]

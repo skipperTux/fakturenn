@@ -41,7 +41,7 @@ Invariants:
 
 - one active legal identity per organization;
 - one default currency;
-- numbering is scoped by organization and document type;
+- numbering is per scope key, configured on the one organization;
 - private keys are referenced, never stored as ordinary fields.
 
 ## 3. Customer aggregate
@@ -49,7 +49,6 @@ Invariants:
 ```text
 Customer
 - Id
-- OrganizationId
 - CustomerNumber
 - LegalName
 - DisplayName
@@ -94,7 +93,6 @@ Invariants:
 ```text
 Project
 - Id
-- OrganizationId
 - CustomerId
 - ProjectNumber
 - Name
@@ -124,7 +122,6 @@ CustomerProjectReference
 ```text
 CatalogItem
 - Id
-- OrganizationId
 - CatalogItemNumber
 - Type
 - Name
@@ -132,7 +129,7 @@ CatalogItem
 - UnitCode
 - DefaultPrice
 - Currency
-- TaxCategoryId
+- VatRate
 - Active
 ```
 
@@ -143,6 +140,8 @@ Types:
 - FixedPriceService
 - Expense
 - Product
+
+`Type` is deferred to E05; Stage 1 stores no type.
 
 Customer-specific reference:
 
@@ -258,10 +257,16 @@ Draft → Finalized → Sent
 States:
 
 ```text
-Draft → Finalized → Sent → PartiallyPaid → Paid
-                         ↘ Overdue → ReminderIssued
-Finalized → Corrected
+Draft → Numbered → Locked → Sent → PartiallyPaid → Paid
+                             ↘ Overdue → ReminderIssued
+Locked → Corrected
 ```
+
+`Numbered` is entered by finalization: the number is allocated, the snapshot
+written. The number and the issue date are frozen from here; everything else stays
+editable, and each edit is finalized again under the same number. `Locked` is the
+issued document — PDF and XML rendered, validated and archived — and nothing
+changes after it.
 
 ### InvoiceCorrection
 
@@ -276,7 +281,6 @@ Separate aggregate referencing an overdue invoice.
 ```text
 Invoice
 - Id
-- OrganizationId
 - CustomerId
 - ProjectId?
 - Status
@@ -353,7 +357,6 @@ Snapshot lines include both internal and customer-specific references.
 ```text
 CustomFieldDefinition
 - Id
-- OrganizationId
 - Key
 - DisplayName
 - DataType
@@ -409,7 +412,6 @@ Invoice payment state is derived from recorded payments.
 ```text
 DocumentArtifact
 - Id
-- OrganizationId
 - RelatedEntityType
 - RelatedEntityId
 - ArtifactType
@@ -438,7 +440,6 @@ Artifacts include:
 ```text
 OutboundMessage
 - Id
-- OrganizationId
 - RelatedDocumentId
 - MessageId
 - From
@@ -474,7 +475,8 @@ Initial events:
 
 ## 15. Open modelling questions
 
-- Whether number sequences belong to Organizations or Documents module
+- ~~Whether number sequences belong to Organizations or Documents module~~ —
+  answered: the configuration lives in Organizations, the counter in Invoices
 - Exact correction semantics for partial corrections
 - Required first-class EN 16931 references
 - Custom-field storage representation

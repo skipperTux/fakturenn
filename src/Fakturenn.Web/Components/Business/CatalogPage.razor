@@ -1,0 +1,155 @@
+﻿@page "/catalog"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.MasterDataManage)]
+@using System.Globalization
+@using Fakturenn.Modules.Catalog
+@using Fakturenn.Modules.Catalog.Contracts
+@using Fakturenn.Modules.Catalog.Features
+@using Microsoft.EntityFrameworkCore
+@inject CircuitOperations Operations
+@inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
+
+<InteractiveProviders />
+<PageTitle>@Localizer["Catalog_PageTitle"]</PageTitle>
+<MudText Typo="Typo.h4" GutterBottom="true">@Localizer["Catalog_Title"]</MudText>
+
+@* Nothing renders until the list is loaded, so an empty table never stands in for one that
+   is still loading. *@
+@if (_items is not null)
+{
+    <MudTable Items="_items" Hover="true" OnRowClick="@((TableRowClickEventArgs<CatalogItemSnapshot> args) => Select(args.Item!))" Class="mb-6">
+        <HeaderContent>
+            <MudTh>@Localizer["Catalog_Number"]</MudTh>
+            <MudTh>@Localizer["Catalog_Name"]</MudTh>
+            <MudTh>@Localizer["Catalog_UnitPrice"]</MudTh>
+            <MudTh>@Localizer["Catalog_VatRate"]</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd data-testid="catalog-row">@context.CatalogItemNumber</MudTd>
+            <MudTd>@context.Name</MudTd>
+            @* Up to four decimals, as stored and as an invoice multiplies it; N2 would hide them. *@
+            <MudTd>@context.UnitPrice.ToString("#,0.00##") @context.Currency / @context.Unit</MudTd>
+            <MudTd>@context.VatRate.ToString("0.##")&nbsp;%</MudTd>
+        </RowTemplate>
+    </MudTable>
+
+    <MudStack Spacing="2">
+        <MudTextField @bind-Value="_number" Label="@Localizer["Catalog_Number"]" MaxLength="@CatalogRules.MaxNumberLength" data-testid="catalog-number" />
+        <MudTextField @bind-Value="_name" Label="@Localizer["Catalog_Name"]" MaxLength="@CatalogRules.MaxNameLength" data-testid="catalog-name" />
+        <MudTextField @bind-Value="_unit" Label="@Localizer["Catalog_Unit"]" MaxLength="3" data-testid="catalog-unit" />
+        @* Culture given explicitly: without it MudNumericField 9.11 switches to the invariant
+           culture after its first render, and "100,50" in German reads as 10050 (review M14).
+           The format drops the column scale Npgsql reads back: "100,5", not "100,5000". *@
+        <MudNumericField T="decimal" @bind-Value="_price" Label="@Localizer["Catalog_UnitPrice"]" Min="0" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-price" />
+        <MudTextField @bind-Value="_currency" Label="@Localizer["Catalog_Currency"]" MaxLength="3" data-testid="catalog-currency" />
+        <MudNumericField T="decimal" @bind-Value="_vatRate" Label="@Localizer["Catalog_VatRate"]" Min="0" Max="100" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-vat-rate" />
+        @foreach (string error in _errors)
+        {
+            <MudAlert Severity="Severity.Error" data-testid="catalog-error">@error</MudAlert>
+        }
+        <MudStack Row="true">
+            <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary" data-testid="catalog-save">@Localizer["Common_Save"]</MudButton>
+            <MudButton OnClick="New" Variant="Variant.Text" data-testid="catalog-new">@Localizer["Common_New"]</MudButton>
+        </MudStack>
+    </MudStack>
+}
+
+@code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
+    private IReadOnlyList<CatalogItemSnapshot>? _items;
+    private Guid? _selectedId;
+    private int _selection;
+    private string _number = string.Empty;
+    private string _name = string.Empty;
+    private string _unit = "HUR";
+    private decimal _price;
+    private string _currency = "EUR";
+    private decimal _vatRate = 19m;
+    private IReadOnlyList<string> _errors = [];
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _gate.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() => RunAsync(LoadAsync);
+
+    private async Task LoadAsync() =>
+        _items = await Operations.RunAsync<ListCatalogItems, IReadOnlyList<CatalogItemSnapshot>>(
+            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+
+    private void Select(CatalogItemSnapshot item)
+    {
+        _selection++;
+        _selectedId = item.Id;
+        (_number, _name, _unit, _price, _currency, _vatRate) = (item.CatalogItemNumber, item.Name, item.Unit, item.UnitPrice, item.Currency, item.VatRate);
+        _errors = [];
+    }
+
+    private void New()
+    {
+        _selection++;
+        _selectedId = null;
+        (_number, _name, _unit, _price, _currency, _vatRate) = (string.Empty, string.Empty, "HUR", 0m, "EUR", 19m);
+        _errors = [];
+    }
+
+    private Task SaveAsync() => RunAsync(async () =>
+    {
+        CatalogItemForm form = new(_selectedId, _number, _name, _unit, _price, _currency, _vatRate);
+        int selection = _selection;
+        CatalogSaveResult result;
+        try
+        {
+            result = await Operations.RunAsync<SaveCatalogItem, CatalogSaveResult>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // Two saves raced on one number; the unique index decided.
+            result = new CatalogSaveResult(null, [CatalogError.NumberTaken]);
+        }
+
+        _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
+        if (result.Id is Guid id)
+        {
+            // New and a row click do not wait for the gate. Either one while this saved means
+            // the form belongs to another record, and binding it to this one would let its next
+            // save overwrite it. A counter, not the ids: a create starts from null, and New
+            // resets to null.
+            if (_selection == selection)
+            {
+                _selectedId = id;
+            }
+
+            await LoadAsync();
+        }
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            await action();
+        }
+        catch (OperationRefusedException)
+        {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
+        }
+    }
+}

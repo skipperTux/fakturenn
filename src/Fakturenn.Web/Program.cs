@@ -1,8 +1,12 @@
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Authorization;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Fakturenn.Web.Operations;
 using Microsoft.AspNetCore.DataProtection;
@@ -56,6 +60,26 @@ if (args.Contains("--migrate"))
             .UseNpgsql(migrationConnectionString)
             .Options);
 
+    OrganizationsDbContext CreateOrganizationsMigrationContext() =>
+        new(new DbContextOptionsBuilder<OrganizationsDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
+    CustomersDbContext CreateCustomersMigrationContext() =>
+        new(new DbContextOptionsBuilder<CustomersDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
+    ProjectsDbContext CreateProjectsMigrationContext() =>
+        new(new DbContextOptionsBuilder<ProjectsDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
+    CatalogDbContext CreateCatalogMigrationContext() =>
+        new(new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseNpgsql(migrationConnectionString)
+            .Options);
+
     // One factory per context that owns migrations. A future module with its own
     // DbContext adds one more entry here rather than a discovery mechanism -- see
     // DatabaseMigrator's remarks for why the signature takes a list instead of a single
@@ -70,6 +94,10 @@ if (args.Contains("--migrate"))
     [
         CreateDataProtectionMigrationContext,
         CreateIdentityMigrationContext,
+        CreateOrganizationsMigrationContext,
+        CreateCustomersMigrationContext,
+        CreateProjectsMigrationContext,
+        CreateCatalogMigrationContext,
         CreateMigrationContext,
     ];
 
@@ -97,6 +125,23 @@ if (args.Contains("--migrate"))
         catch (Exception failure)
         {
             MigrationSeedLog.MessagingProvisioningFailed(migrationLogger, failure);
+            exitCode = 1;
+        }
+    }
+
+    // Step three: the one organization row (spec section 2). Insert-if-absent, so a re-run on
+    // upgrade never touches what the operator has entered, number scheme included.
+    if (exitCode == 0)
+    {
+        try
+        {
+            await using OrganizationsDbContext organizations = CreateOrganizationsMigrationContext();
+            await OrganizationSeeder.SeedAsync(organizations, CancellationToken.None);
+            MigrationSeedLog.SeededOrganization(migrationLogger);
+        }
+        catch (Exception failure)
+        {
+            MigrationSeedLog.OrganizationSeedingFailed(migrationLogger, failure);
             exitCode = 1;
         }
     }
@@ -195,4 +240,14 @@ internal static partial class MigrationSeedLog
             + "migrated. Restore the backup taken before this run rather than re-running "
             + "against this state.")]
     public static partial void MessagingProvisioningFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Ensured the organization row exists.")]
+    public static partial void SeededOrganization(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "Could not seed the organization row. The database may be partially "
+            + "migrated. Restore the backup taken before this run rather than re-running "
+            + "against this state.")]
+    public static partial void OrganizationSeedingFailed(ILogger logger, Exception exception);
 }

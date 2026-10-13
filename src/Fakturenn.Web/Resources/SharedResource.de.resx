@@ -312,6 +312,126 @@
   <data name="AppTagline" xml:space="preserve">
     <value>Ihre Rechnungen, Ihre Identität, Ihre Infrastruktur.</value>
   </data>
+  <data name="Catalog_Currency" xml:space="preserve">
+    <value>Währung (ISO 4217)</value>
+  </data>
+  <data name="Catalog_Error_CurrencyInvalid" xml:space="preserve">
+    <value>Die Währung muss ein dreistelliger ISO-4217-Code sein, zum Beispiel EUR.</value>
+  </data>
+  <data name="Catalog_Error_NameMissing" xml:space="preserve">
+    <value>Bitte geben Sie eine Bezeichnung ein.</value>
+  </data>
+  <data name="Catalog_Error_NameTooLong" xml:space="preserve">
+    <value>Die Bezeichnung darf höchstens 200 Zeichen lang sein.</value>
+  </data>
+  <data name="Catalog_Error_NumberMissing" xml:space="preserve">
+    <value>Bitte geben Sie eine Katalognummer ein.</value>
+  </data>
+  <data name="Catalog_Error_NumberTaken" xml:space="preserve">
+    <value>Diese Katalognummer ist bereits vergeben.</value>
+  </data>
+  <data name="Catalog_Error_NumberTooLong" xml:space="preserve">
+    <value>Die Katalognummer darf höchstens 50 Zeichen lang sein.</value>
+  </data>
+  <data name="Catalog_Error_PriceNegative" xml:space="preserve">
+    <value>Der Einzelpreis darf nicht negativ sein.</value>
+  </data>
+  <data name="Catalog_Error_PriceOutOfRange" xml:space="preserve">
+    <value>Der Einzelpreis darf höchstens vier Nachkommastellen haben und muss kleiner als 100.000.000.000.000 sein.</value>
+  </data>
+  <data name="Catalog_Error_UnitInvalid" xml:space="preserve">
+    <value>Die Einheit muss ein Code nach UN/ECE-Empfehlung 20 aus bis zu drei Buchstaben oder Ziffern sein, zum Beispiel HUR für eine Stunde.</value>
+  </data>
+  <data name="Catalog_Error_VatRateInvalid" xml:space="preserve">
+    <value>Der Umsatzsteuersatz muss zwischen 0 und 100 Prozent liegen und darf höchstens zwei Nachkommastellen haben.</value>
+  </data>
+  <data name="Catalog_Name" xml:space="preserve">
+    <value>Bezeichnung</value>
+  </data>
+  <data name="Catalog_Number" xml:space="preserve">
+    <value>Katalognummer</value>
+  </data>
+  <data name="Catalog_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Katalog</value>
+  </data>
+  <data name="Catalog_Title" xml:space="preserve">
+    <value>Katalog</value>
+  </data>
+  <data name="Catalog_Unit" xml:space="preserve">
+    <value>Einheit (UN/ECE-Empf. 20)</value>
+  </data>
+  <data name="Catalog_UnitPrice" xml:space="preserve">
+    <value>Einzelpreis</value>
+  </data>
+  <data name="Catalog_VatRate" xml:space="preserve">
+    <value>Umsatzsteuersatz (%)</value>
+  </data>
+  <data name="Common_Add" xml:space="preserve">
+    <value>Hinzufügen</value>
+  </data>
+  <data name="Common_Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="Common_New" xml:space="preserve">
+    <value>Neu</value>
+  </data>
+  <data name="Common_Save" xml:space="preserve">
+    <value>Speichern</value>
+  </data>
+  <data name="Customer_Error_CountryInvalid" xml:space="preserve">
+    <value>Das Land muss ein zweistelliger ISO-3166-1-Code sein, zum Beispiel DE.</value>
+  </data>
+  <data name="Customer_Error_CustomerNumberMissing" xml:space="preserve">
+    <value>Bitte geben Sie eine Kundennummer ein.</value>
+  </data>
+  <data name="Customer_Error_CustomerNumberTaken" xml:space="preserve">
+    <value>Diese Kundennummer ist bereits vergeben.</value>
+  </data>
+  <data name="Customer_Error_CustomerNumberTooLong" xml:space="preserve">
+    <value>Die Kundennummer darf höchstens 50 Zeichen lang sein.</value>
+  </data>
+  <data name="Customer_Error_LegalNameMissing" xml:space="preserve">
+    <value>Bitte geben Sie den Namen oder die Firma des Kunden ein.</value>
+  </data>
+  <data name="Customer_Error_LegalNameTooLong" xml:space="preserve">
+    <value>Der Name darf höchstens 200 Zeichen lang sein.</value>
+  </data>
+  <data name="Customer_Error_VatIdInvalid" xml:space="preserve">
+    <value>Die USt-IdNr. muss mit dem Ländercode des Kunden beginnen, gefolgt von 2 bis 12 Buchstaben oder Ziffern.</value>
+  </data>
+  <data name="Customers_CatalogItem" xml:space="preserve">
+    <value>Katalogeintrag</value>
+  </data>
+  <data name="Customers_Country" xml:space="preserve">
+    <value>Land (ISO 3166-1)</value>
+  </data>
+  <data name="Customers_CustomerCatalogItemNumber" xml:space="preserve">
+    <value>Katalognummer des Kunden</value>
+  </data>
+  <data name="Customers_ItemNumbers" xml:space="preserve">
+    <value>Katalognummern des Kunden</value>
+  </data>
+  <data name="Customers_LegalName" xml:space="preserve">
+    <value>Name oder Firma</value>
+  </data>
+  <data name="Customers_Number" xml:space="preserve">
+    <value>Kundennummer</value>
+  </data>
+  <data name="Customers_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Kunden</value>
+  </data>
+  <data name="Customers_ProjectReference" xml:space="preserve">
+    <value>Projektreferenz</value>
+  </data>
+  <data name="Customers_Projects" xml:space="preserve">
+    <value>Projekte</value>
+  </data>
+  <data name="Customers_Title" xml:space="preserve">
+    <value>Kunden</value>
+  </data>
+  <data name="Customers_VatId" xml:space="preserve">
+    <value>USt-IdNr.</value>
+  </data>
   <data name="Identity_DuplicateEmail" xml:space="preserve">
     <value>Es existiert bereits ein Konto mit der E-Mail-Adresse {0}.</value>
   </data>
@@ -351,8 +471,248 @@
   <data name="Identity_UserLockoutNotEnabled" xml:space="preserve">
     <value>Für dieses Konto ist die Sperrung nicht aktiviert.</value>
   </data>
+  <data name="Invoice_CatalogItem" xml:space="preserve">
+    <value>Katalogeintrag</value>
+  </data>
+  <data name="Invoice_ChangedElsewhere" xml:space="preserve">
+    <value>Diese Rechnung wurde inzwischen in einem anderen Tab nummeriert, deshalb wurde Ihre letzte Änderung nicht gespeichert. Die Seite zeigt jetzt den aktuellen Stand.</value>
+  </data>
+  <data name="Invoice_Confirm" xml:space="preserve">
+    <value>Bestätigen</value>
+  </data>
+  <data name="Invoice_ConfirmText" xml:space="preserve">
+    <value>Rechnung abschließen mit einem Bruttobetrag von</value>
+  </data>
+  <data name="Invoice_Customer" xml:space="preserve">
+    <value>Kunde</value>
+  </data>
+  <data name="Invoice_DueDate" xml:space="preserve">
+    <value>Fällig am</value>
+  </data>
+  <data name="Invoice_Gross" xml:space="preserve">
+    <value>Brutto</value>
+  </data>
+  <data name="Invoice_IssueDate" xml:space="preserve">
+    <value>Rechnungsdatum</value>
+  </data>
+  <data name="Invoice_NeedsConfirmation" xml:space="preserve">
+    <value>Diese Rechnung wurde seit der Nummerierung geändert. Bitte prüfen und bestätigen Sie sie erneut; die Nummer bleibt erhalten.</value>
+  </data>
+  <data name="Invoice_Net" xml:space="preserve">
+    <value>Netto</value>
+  </data>
+  <data name="Invoice_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Rechnung</value>
+  </data>
+  <data name="Invoice_Project" xml:space="preserve">
+    <value>Projekt</value>
+  </data>
+  <data name="Invoice_Quantity" xml:space="preserve">
+    <value>Menge</value>
+  </data>
+  <data name="Invoice_Review" xml:space="preserve">
+    <value>Prüfen und abschließen</value>
+  </data>
+  <data name="Invoice_ServicePeriodEnd" xml:space="preserve">
+    <value>Leistungszeitraum bis</value>
+  </data>
+  <data name="Invoice_ServicePeriodStart" xml:space="preserve">
+    <value>Leistungszeitraum von</value>
+  </data>
+  <data name="Invoice_State_Draft" xml:space="preserve">
+    <value>Entwurf</value>
+  </data>
+  <data name="Invoice_State_Locked" xml:space="preserve">
+    <value>Festgeschrieben</value>
+  </data>
+  <data name="Invoice_State_Numbered" xml:space="preserve">
+    <value>Nummeriert</value>
+  </data>
+  <data name="Invoice_Title" xml:space="preserve">
+    <value>Rechnung</value>
+  </data>
+  <data name="Invoice_Vat" xml:space="preserve">
+    <value>USt.</value>
+  </data>
+  <data name="Invoices_Customer" xml:space="preserve">
+    <value>Kunde</value>
+  </data>
+  <data name="Invoices_Gross" xml:space="preserve">
+    <value>Brutto</value>
+  </data>
+  <data name="Invoices_IssueDate" xml:space="preserve">
+    <value>Rechnungsdatum</value>
+  </data>
+  <data name="Invoices_New" xml:space="preserve">
+    <value>Neue Rechnung</value>
+  </data>
+  <data name="Invoices_Number" xml:space="preserve">
+    <value>Nummer</value>
+  </data>
+  <data name="Invoices_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Rechnungen</value>
+  </data>
+  <data name="Invoices_State" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="Invoices_Title" xml:space="preserve">
+    <value>Rechnungen</value>
+  </data>
   <data name="Layout_SignOut" xml:space="preserve">
     <value>Abmelden</value>
+  </data>
+  <data name="Nav_Catalog" xml:space="preserve">
+    <value>Katalog</value>
+  </data>
+  <data name="Nav_Customers" xml:space="preserve">
+    <value>Kunden</value>
+  </data>
+  <data name="Nav_Invoices" xml:space="preserve">
+    <value>Rechnungen</value>
+  </data>
+  <data name="Nav_Organization" xml:space="preserve">
+    <value>Organisation</value>
+  </data>
+  <data name="Organization_Country" xml:space="preserve">
+    <value>Land (ISO 3166-1)</value>
+  </data>
+  <data name="Organization_Currency" xml:space="preserve">
+    <value>Währung (ISO 4217)</value>
+  </data>
+  <data name="Organization_Error_CountryInvalid" xml:space="preserve">
+    <value>Das Land muss ein zweistelliger ISO-3166-1-Code sein, zum Beispiel DE.</value>
+  </data>
+  <data name="Organization_Error_CurrencyInvalid" xml:space="preserve">
+    <value>Die Währung muss ein dreistelliger ISO-4217-Code sein, zum Beispiel EUR.</value>
+  </data>
+  <data name="Organization_Error_IbanInvalid" xml:space="preserve">
+    <value>Das ist keine gültige IBAN. Bitte prüfen Sie Ländercode, Prüfziffern und Länge.</value>
+  </data>
+  <data name="Organization_Error_LegalNameTooLong" xml:space="preserve">
+    <value>Der Name darf höchstens 200 Zeichen lang sein.</value>
+  </data>
+  <data name="Organization_Error_NextNumberInvalid" xml:space="preserve">
+    <value>Die nächste Nummer muss mindestens 1 sein.</value>
+  </data>
+  <data name="Organization_Error_PaddingInvalid" xml:space="preserve">
+    <value>Die Stellenzahl muss zwischen 1 und 9 liegen.</value>
+  </data>
+  <data name="Organization_Error_PaymentTermsInvalid" xml:space="preserve">
+    <value>Das Zahlungsziel muss zwischen 0 und 365 Tagen liegen.</value>
+  </data>
+  <data name="Organization_Error_PrefixInvalid" xml:space="preserve">
+    <value>Das Präfix darf aus bis zu neun Buchstaben oder Ziffern bestehen, sonst nichts.</value>
+  </data>
+  <data name="Organization_Error_SchemeLocked" xml:space="preserve">
+    <value>Das Nummernschema kann nicht mehr geändert werden: Danach wurden bereits Rechnungsnummern vergeben.</value>
+  </data>
+  <data name="Organization_Error_TimeZoneInvalid" xml:space="preserve">
+    <value>Unbekannte Zeitzone. Bitte verwenden Sie einen IANA-Namen wie Europe/Berlin.</value>
+  </data>
+  <data name="Organization_Error_VatIdInvalid" xml:space="preserve">
+    <value>Die USt-IdNr. muss mit dem Ländercode der Organisation beginnen, gefolgt von 2 bis 12 Buchstaben oder Ziffern.</value>
+  </data>
+  <data name="Organization_Iban" xml:space="preserve">
+    <value>Bankverbindung (IBAN)</value>
+  </data>
+  <data name="Organization_IssueDateDefault" xml:space="preserve">
+    <value>Rechnungsdatum einer neuen Rechnung</value>
+  </data>
+  <data name="Organization_IssueDateDefault_LastDayOfPreviousMonth" xml:space="preserve">
+    <value>Letzter Tag des Vormonats</value>
+  </data>
+  <data name="Organization_IssueDateDefault_Today" xml:space="preserve">
+    <value>Heute</value>
+  </data>
+  <data name="Organization_LegalName" xml:space="preserve">
+    <value>Name oder Firma</value>
+  </data>
+  <data name="Organization_NextNumber" xml:space="preserve">
+    <value>Nächste Nummer</value>
+  </data>
+  <data name="Organization_NumberScheme" xml:space="preserve">
+    <value>Rechnungsnummern</value>
+  </data>
+  <data name="Organization_Padding" xml:space="preserve">
+    <value>Stellen</value>
+  </data>
+  <data name="Organization_PageTitle" xml:space="preserve">
+    <value>Fakturenn — Organisation</value>
+  </data>
+  <data name="Organization_PaymentTerms" xml:space="preserve">
+    <value>Zahlungsziel (Tage)</value>
+  </data>
+  <data name="Organization_Prefix" xml:space="preserve">
+    <value>Präfix</value>
+  </data>
+  <data name="Organization_ResetScope" xml:space="preserve">
+    <value>Zähler beginnt neu</value>
+  </data>
+  <data name="Organization_ResetScope_Continuous" xml:space="preserve">
+    <value>Nie</value>
+  </data>
+  <data name="Organization_ResetScope_PerDay" xml:space="preserve">
+    <value>Täglich</value>
+  </data>
+  <data name="Organization_ResetScope_PerMonth" xml:space="preserve">
+    <value>Monatlich</value>
+  </data>
+  <data name="Organization_ResetScope_PerYear" xml:space="preserve">
+    <value>Jährlich</value>
+  </data>
+  <data name="Organization_Saved" xml:space="preserve">
+    <value>Gespeichert.</value>
+  </data>
+  <data name="Organization_SchemeLockedNotice" xml:space="preserve">
+    <value>Nach diesem Schema wurden bereits Rechnungsnummern vergeben, deshalb kann es nicht mehr geändert werden.</value>
+  </data>
+  <data name="Organization_TimeZone" xml:space="preserve">
+    <value>Zeitzone (IANA)</value>
+  </data>
+  <data name="Organization_Title" xml:space="preserve">
+    <value>Organisation</value>
+  </data>
+  <data name="Organization_VatId" xml:space="preserve">
+    <value>USt-IdNr.</value>
+  </data>
+  <data name="Refusal_CatalogItemMissing" xml:space="preserve">
+    <value>Der Katalogeintrag dieser Rechnung existiert nicht mehr.</value>
+  </data>
+  <data name="Refusal_CrossBorderVatNotImplemented" xml:space="preserve">
+    <value>Rechnungen an Kunden in einem anderen Land werden noch nicht unterstützt: Reverse Charge und Ausfuhr folgen mit M2.</value>
+  </data>
+  <data name="Refusal_CurrencyMismatch" xml:space="preserve">
+    <value>Der Katalogeintrag ist in einer anderen Währung bepreist als die Organisation.</value>
+  </data>
+  <data name="Refusal_CustomerIncomplete" xml:space="preserve">
+    <value>Der Kunde ist unvollständig: Name, Land und Kundennummer sind erforderlich.</value>
+  </data>
+  <data name="Refusal_CustomerMissing" xml:space="preserve">
+    <value>Der Kunde dieser Rechnung existiert nicht mehr.</value>
+  </data>
+  <data name="Refusal_InvoiceLocked" xml:space="preserve">
+    <value>Diese Rechnung ist festgeschrieben und kann nicht mehr geändert werden.</value>
+  </data>
+  <data name="Refusal_NoLine" xml:space="preserve">
+    <value>Bitte wählen Sie einen Katalogeintrag.</value>
+  </data>
+  <data name="Refusal_ProjectBelongsToAnotherCustomer" xml:space="preserve">
+    <value>Das Projekt gehört zu einem anderen Kunden.</value>
+  </data>
+  <data name="Refusal_QuantityNotPositive" xml:space="preserve">
+    <value>Bitte geben Sie eine Menge größer als null ein.</value>
+  </data>
+  <data name="Refusal_SellerIncomplete" xml:space="preserve">
+    <value>Die Organisation ist unvollständig: Name, Land, USt-IdNr., IBAN, Währung und Zeitzone sind erforderlich.</value>
+  </data>
+  <data name="Refusal_ServicePeriodInvalid" xml:space="preserve">
+    <value>Der Leistungszeitraum endet vor seinem Beginn.</value>
+  </data>
+  <data name="Refusal_StandardRateMustBePositive" xml:space="preserve">
+    <value>Eine Inlandsrechnung braucht einen Umsatzsteuersatz über null: Steuerfreie Leistungen werden noch nicht unterstützt.</value>
+  </data>
+  <data name="Refusal_TotalsChanged" xml:space="preserve">
+    <value>Die Beträge haben sich seit Ihrer Prüfung geändert. Bitte prüfen Sie die neuen Beträge und bestätigen Sie erneut.</value>
   </data>
   <data name="Setup_AlreadyConfigured" xml:space="preserve">
     <value>Bereits eingerichtet</value>

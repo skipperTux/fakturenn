@@ -48,9 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never started, and work that was committed is not lost when the process
   stops. Nothing uses this yet; it is the foundation the invoicing and mail
   features will run on.
+- **Organization, customers, projects and catalog.** Enter your company once, then
+  your customers with their projects and their own numbers for your services, and
+  your catalog with prices and VAT rates. Each has its own page after you sign in.
+- **Invoice numbering.** Draft an invoice and give it a number from your own scheme —
+  a prefix, a per-day, per-month or per-year counter, or a running one continued
+  from another tool. Numbers never repeat and never skip, and they carry the invoice's
+  own date, so an invoice written today for last month gets last month's number.
+  Nothing is sent yet; PDF and e-invoice follow.
 
 ### Changed
 
+- **Signed-out visitors reach only the sign-in pages.** Every other page now
+  requires signing in, including any added later without an explicit exception.
 - **PostgreSQL 18.** The reference Compose deployment and every test container
   move from PostgreSQL 17 to 18. A database volume created by an earlier build
   does not start under 18: run `docker compose down --volumes` once. Its data is
@@ -83,6 +93,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because there is no restart policy. `docker compose --profile migrate run --rm
   migrate` now comes first — it starts the database itself, so it works against
   an empty volume — and `docker compose up --detach` follows.
+- **Above one replica, the proxy must forward WebSockets and keep each browser on
+  one replica.** The organization, customer, catalog and invoice pages hold each
+  open tab's state on the server that first served it. Every proxy in front of
+  Fakturenn must forward WebSockets, and the ingress needs session affinity. See
+  `docs/operations/DEPLOYMENT-BASELINE.md`.
+- **A rolling update ends the open pages' sessions.** Anything typed on those
+  pages and not yet saved is lost when its replica stops; the page reconnects or
+  reloads.
+- **After restoring a backup, reconcile the invoice counter before anyone
+  finalizes an invoice.** A restored database can be older than the last
+  numbered invoice, and the next invoice would then be given a number already
+  issued. `docs/operations/DEPLOYMENT-BASELINE.md` describes the check.
 - **An instance with no database configured says so at every start**, at
   critical level, naming the consequence: messages are held in memory and will
   not survive a restart. Such an instance still starts and still answers

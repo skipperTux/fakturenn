@@ -11,4 +11,5 @@
 - ADR-009 Native .NET localization
 - ADR-010 E-Invoice-EU adapter boundary
 
-All ADRs are initially `Proposed` until accepted in the implementation repository.
+Each ADR starts as `Proposed` and becomes `Accepted` once accepted in the implementation
+repository; its header carries its current status. Several are `Accepted` already.

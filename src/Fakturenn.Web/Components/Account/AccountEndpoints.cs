@@ -194,7 +194,7 @@ public static class AccountEndpoints
                     return Results.Redirect("/account/login");
                 },
                 cancellationToken);
-        });
+        }).AllowAnonymous();
 
         // "/enrol-totp/verify", not "/enrol-totp". A Blazor static-SSR page endpoint
         // accepts POST as well as GET, so mapping this handler on the page's own route
@@ -329,7 +329,7 @@ public static class AccountEndpoints
             AuthEventLog.Account(loggerFactory, AuthEvents.SignInSucceeded, email);
 
             return Results.Redirect("/");
-        });
+        }).AllowAnonymous();
 
         group.MapPost("/login-2fa/submit", async (
             HttpContext http,
@@ -383,7 +383,7 @@ public static class AccountEndpoints
             return pending?.MustChangePassword == true
                 ? Results.Redirect("/account/change-password")
                 : Results.Redirect("/");
-        });
+        }).AllowAnonymous();
 
         group.MapPost("/login-recovery/submit", async (
             HttpContext http,
@@ -421,7 +421,7 @@ public static class AccountEndpoints
             AuthEventLog.AccountAlert(loggerFactory, AuthEvents.RecoveryCodeUsed, email);
 
             return Results.Redirect("/");
-        });
+        }).AllowAnonymous();
 
         group.MapPost("/change-password/submit", async (
             HttpContext http,

@@ -4,9 +4,8 @@ using Xunit.v3;
 // This assembly runs one test at a time, deliberately -- the same reason
 // Fakturenn.UiTests does, arrived at the same way.
 //
-// Four classes here build a real host through FakturennWebApplication.Build --
-// SharedResourceTests, AccountFormsTests, IdentityConfigurationTests and
-// MessagingCompositionTests, which builds one per guard -- nine build sites in all.
+// Several classes here build a real host through FakturennWebApplication.Build, some of
+// them once per test; grep for it rather than trusting a count here.
 // Build assigns a fresh Serilog bootstrap
 // ReloadableLogger to the process-global Log.Logger, and the host's AddSerilog freezes it
 // when the service provider resolves the logger. Two classes doing that at once race on

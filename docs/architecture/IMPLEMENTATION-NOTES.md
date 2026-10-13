@@ -361,9 +361,15 @@ mechanisms, on purpose:
 - Regenerated migration files come back with a UTF-8 BOM every time.
   `dotnet format` strips it from the migration itself but **not** from the
   `.Designer.cs` or the model snapshot, because it skips files marked
-  auto-generated. Those two need stripping by hand after every regenerate, or
-  the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
+  auto-generated. Those two need stripping by hand after every `migrations add`,
+  or the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
   `head -c3 <file> | od -An -tx1` — `ef bb bf` means the BOM is still there.
+  CI's BOM check rejects it, so strip every generated `.cs`, the model snapshot
+  included.
+- **A child entity with a client-set key needs `ValueGeneratedNever()`.**
+  `InvoiceLine.Id` is assigned by the domain. Without the call, EF treats a
+  client-set key on an entity discovered through a navigation as an existing row,
+  issues an UPDATE, and fails with `DbUpdateConcurrencyException`.
 - **A unique index serialises only rows that collide on the indexed value, so it
   is not a general check-then-act guard.** E02a Task 9's `POST /account/setup`
   shipped a comment claiming Identity's unique index on `NormalizedUserName`
@@ -410,6 +416,14 @@ Measured while building the messaging foundation. The design decisions and their
 reasoning are in
 `docs/superpowers/specs/2026-08-19-wolverine-durable-processing-design.md`; this
 is what the running code turned out to do.
+
+**`AuditSaveChangesInterceptor` and everything it depends on must be singletons.**
+`AddDbContextWithWolverineIntegration` runs its options delegate on the **root**
+provider, because its options are a singleton. `ICurrentUserAccessor`,
+`CurrentPrincipal` and `IClock` are therefore singletons too. Development's scope
+validation turned a scoped interceptor into "Cannot resolve scoped service from
+root provider"; without validation it silently stamped "system" instead.
+`Every_registered_context_resolves_under_scope_validation` guards it.
 
 **Last verified against Wolverine 6.48.1 and JasperFx 2.81.0** (2026-10-08), by
 decompiling the shipped assemblies rather than reading release notes — the
@@ -733,6 +747,61 @@ claims about library internals that no test exercises.
   omits `5`, and silently found six of ten codes. The alphabet is an internal
   detail of `UserManager`; extract the codes from the rendered markup instead.
 
+## Circuits
+
+How the interactive business pages reach a module, and what the circuit changes
+about code that was written for an HTTP request.
+
+- **`/` (Home) stays `[AllowAnonymous]` and shows only the tagline.** The
+  authenticated-by-default fallback policy covers every other page; Home is the
+  one exception, so a signed-out visitor has somewhere to land. Business
+  navigation therefore sits in the layout behind the signed-in check, not on
+  Home. Anything added to Home is public.
+- **`CircuitOperations` is the only door from a page to a module.** It re-reads
+  `AuthenticationStateProvider` and authorizes on every call, because a circuit
+  makes no new HTTP request: the page attribute is evaluated once, and revalidation
+  turns the state anonymous only for a caller that asks again. Only then does it set
+  `CurrentPrincipal`, and that is for audit alone — it grants nothing.
+- **Pages declare `InteractiveServerRenderMode(prerender: false)` and no
+  `IDbContextFactory` is used.** Prerendering runs `OnInitializedAsync` twice, which
+  would create two drafts, and puts controls on screen before the circuit can answer
+  a click. A factory was rejected because Wolverine refuses handlers whose only
+  route to a context is one, and these operations become handlers once Stage 2
+  publishes; `CircuitOperations` opens a DI scope per operation instead, which also
+  keeps a tab-long `DbContext` from tracking everything it ever loaded.
+- **`CurrentPrincipal` is an `AsyncLocal` holding a holder object, set in `try` and
+  cleared in `finally`.** Every flow the operation started copies the execution
+  context and so shares the holder; clearing the holder makes all of them see null
+  afterwards, where resetting the `AsyncLocal` would reach only the flow that does
+  it. This is `IHttpContextAccessor`'s pattern. A nested `RunAsync` would clear the
+  outer principal early; nothing nests today.
+- **A business page runs one operation at a time, behind a per-page `SemaphoreSlim`
+  in its `RunAsync`.** Without it a save still in flight could finish after the next
+  one and put its older state back: the preview, or, through the reload, a field
+  changed since. That is reasoned from the code, not measured — removing the gate
+  left the business-page browser tests green ten runs in ten. Each handler builds its
+  form inside the gate. The exception is the confirmed gross, taken at the click,
+  because finalization numbers only what the user saw (M12). The `_disposed` check
+  before `Release` is load-bearing: releasing a disposed `SemaphoreSlim` throws
+  `ObjectDisposedException` (measured), which would end the circuit of a user who
+  leaves a page mid-save.
+- **After a save the invoice page refreshes only what the server decides** —
+  `_invoice` and the preview. The full load, which writes the editable fields, runs
+  on the first load, after a refused save and after finalization, and sets the
+  fields before `_invoice`: the form renders once `_invoice` is set, and a choice
+  made from then on must not be put back by the rest of the load.
+- **A browser test waits for a `MudSelect`'s option list to close before typing into
+  the next field.** `InvoiceJourneyTests.ChooseAsync` does. A fill while the list was
+  still closing read back empty straight after the fill, about once in forty, and no
+  change reached the page. A user cannot do that — the open list covers the page.
+- **`MudNumericField` parses with the invariant culture unless `Culture` is given.**
+  German "8,5" became 85. Every decimal field sets `Culture` to the user's; the
+  integer fields have no separator to misread. The decimal fields also set
+  `Format="0.####"`: Npgsql reads a `numeric` back with the column's scale, so a
+  reloaded 8 otherwise reads "8.0000".
+- **`MudDatePicker` sends a second change after a refused save**, so a save that
+  changes nothing is a guarded no-op rather than a second refusal.
+
 ## Antiforgery, the security stamp, and forms that sit open
 
 Everything below was measured against a real instance during the E02a defect
@@ -834,13 +903,13 @@ already signed out.
   system that nothing reads — verified by grepping the migration: no `AspNetRoles`
   table exists anywhere in the schema. The three stock user tables (`AspNetUsers`,
   `AspNetUserClaims`, `AspNetUserTokens`, plus logins) are kept.
-- **The application is static SSR by default, and every page relies on that.**
-  `AddInteractiveServerComponents()` and `AddInteractiveServerRenderMode()` are both
-  registered, but **no component declares `@rendermode`**, so no circuit is ever
-  negotiated. Two things depend on it. First, all the account forms post to real
-  endpoints (`AccountEndpoints`) rather than handling submission in a component,
-  because `SignInManager` issues the authentication cookie by writing a `Set-Cookie`
-  header to the HTTP *response*, and a component running inside an established circuit
+- **The account pages are static SSR, and they rely on it.** Only the business pages
+  declare a render mode (see "Circuits"); `<Routes />` and every account page
+  declare none, so no circuit is negotiated for them. Two things depend on it.
+  First, all the account forms post to real endpoints (`AccountEndpoints`) rather
+  than handling submission in a component, because `SignInManager` issues the
+  authentication cookie by writing a `Set-Cookie` header to the HTTP *response*,
+  and a component running inside an established circuit
   is handling a WebSocket message, not a request whose response headers are still
   open. This is a structural constraint, not a tuning problem: it is why every form in
   `Components/Account/` posts to a route rather than binding an `@onclick`. Second,
@@ -924,14 +993,12 @@ already signed out.
 - **`/_blazor` is deliberately NOT allowlisted, and that is a decision, not an
   oversight.** `AddInteractiveServerRenderMode()` is registered and
   `MapRazorComponents` runs after the gate, so circuit requests do reach it and are
-  redirected. This is harmless today only because **no component declares a render
-  mode** — `<Routes />` has none — so no circuit is ever negotiated. The moment
-  somebody adds `@rendermode InteractiveServer`, a gated user's page will load and
-  nothing on it will work, which looks like a broken component rather than a gate
-  decision. Failing closed is still correct: allowlisting the circuit endpoint would
-  let a gated user render any interactive page server-side and bypass the gate
-  entirely. Whoever introduces interactivity has to decide what a half-enrolled
-  user's circuit may do.
+  redirected. Account pages are static, so they never ask for a circuit. A gated
+  user who opens a business page never gets as far as a circuit either: the
+  business routes are not allowlisted, so `EnrolmentGateMiddleware` redirects the
+  page GET itself to the outstanding obligation. Allowlisting the circuit endpoint
+  would let a gated user render any interactive page server-side and bypass the
+  gate entirely.
 - **Static-asset allowlist entries would be dead code, and this was measured against
   a `dotnet publish` output rather than the test host.** Instrumenting the gate to
   log every path it sees: `/app.css`, `/_framework/blazor.web.js` and
@@ -1255,6 +1322,12 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
 
 ## Small facts that cost an afternoon each
 
+- **In .NET regex, `$` matches before a final `\n`.** A validation pattern ending
+  in `$` accepts "abc\n". Patterns end in `\z`.
+- **`Guid.CreateVersion7()` collides on short prefixes.** The leading hex digits
+  change only about every 65 seconds, so test data that takes the first eight
+  characters as a uniqueness suffix gets the same one all test run. Use
+  `Guid.NewGuid()` for suffixes.
 - **EF Core does not pluralise a model name. The table takes the `DbSet`
   property's name**, which convention makes plural, which is why the Identity
   tables are `Roles` / `RolePermissions` / `UserRoles` while the entities are

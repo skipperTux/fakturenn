@@ -1,0 +1,256 @@
+﻿@page "/customers"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Permissions.MasterDataManage)]
+@using Fakturenn.Modules.Catalog.Contracts
+@using Fakturenn.Modules.Catalog.Features
+@using Fakturenn.Modules.Customers
+@using Fakturenn.Modules.Customers.Contracts
+@using Fakturenn.Modules.Customers.Features
+@using Fakturenn.Modules.Projects
+@using Fakturenn.Modules.Projects.Contracts
+@using Fakturenn.Modules.Projects.Features
+@using Microsoft.EntityFrameworkCore
+@inject CircuitOperations Operations
+@inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
+
+<InteractiveProviders />
+<PageTitle>@Localizer["Customers_PageTitle"]</PageTitle>
+<MudText Typo="Typo.h4" GutterBottom="true">@Localizer["Customers_Title"]</MudText>
+
+@* Nothing renders until the lists are loaded, so an empty table never stands in for one
+   that is still loading. *@
+@if (_customers is not null)
+{
+    <MudTable Items="_customers" Hover="true" OnRowClick="@((TableRowClickEventArgs<CustomerSnapshot> args) => SelectAsync(args.Item!))" Class="mb-6">
+        <HeaderContent>
+            <MudTh>@Localizer["Customers_Number"]</MudTh>
+            <MudTh>@Localizer["Customers_LegalName"]</MudTh>
+            <MudTh>@Localizer["Customers_Country"]</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd data-testid="customer-row">@context.CustomerNumber</MudTd>
+            <MudTd>@context.LegalName</MudTd>
+            <MudTd>@context.CountryCode</MudTd>
+        </RowTemplate>
+    </MudTable>
+
+    <MudStack Spacing="2">
+        <MudTextField @bind-Value="_legalName" Label="@Localizer["Customers_LegalName"]" MaxLength="@CustomerRules.MaxLegalNameLength" data-testid="customer-legal-name" />
+        <MudTextField @bind-Value="_country" Label="@Localizer["Customers_Country"]" MaxLength="2" data-testid="customer-country" />
+        <MudTextField @bind-Value="_vatId" Label="@Localizer["Customers_VatId"]" data-testid="customer-vat-id" />
+        <MudTextField @bind-Value="_number" Label="@Localizer["Customers_Number"]" MaxLength="@CustomerRules.MaxCustomerNumberLength" data-testid="customer-number" />
+        @foreach (string error in _errors)
+        {
+            <MudAlert Severity="Severity.Error" data-testid="customer-error">@error</MudAlert>
+        }
+        <MudStack Row="true">
+            <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary" data-testid="customer-save">@Localizer["Common_Save"]</MudButton>
+            <MudButton OnClick="New" Variant="Variant.Text" data-testid="customer-new">@Localizer["Common_New"]</MudButton>
+        </MudStack>
+    </MudStack>
+}
+
+@if (_selectedId is not null)
+{
+    <MudText Typo="Typo.h6" Class="mt-8">@Localizer["Customers_Projects"]</MudText>
+    <MudTable Items="_projects" Dense="true">
+        <RowTemplate>
+            <MudTd data-testid="project-row">@context.Reference</MudTd>
+        </RowTemplate>
+    </MudTable>
+    <MudStack Row="true" AlignItems="AlignItems.Center">
+        <MudTextField @bind-Value="_projectReference" Label="@Localizer["Customers_ProjectReference"]" MaxLength="@Project.MaxReferenceLength" data-testid="project-reference" />
+        <MudButton OnClick="AddProjectAsync" Variant="Variant.Outlined" data-testid="project-add">@Localizer["Common_Add"]</MudButton>
+    </MudStack>
+
+    <MudText Typo="Typo.h6" Class="mt-8">@Localizer["Customers_ItemNumbers"]</MudText>
+    <MudTable Items="_references" Dense="true">
+        <RowTemplate>
+            <MudTd data-testid="reference-row">@ItemNumber(context.Key)</MudTd>
+            <MudTd>@context.Value</MudTd>
+        </RowTemplate>
+    </MudTable>
+    <MudStack Row="true" AlignItems="AlignItems.Center">
+        <MudSelect T="Guid?" @bind-Value="_referenceItemId" Label="@Localizer["Customers_CatalogItem"]" data-testid="reference-catalog-item">
+            @foreach (CatalogItemSnapshot item in _items)
+            {
+                <MudSelectItem T="Guid?" Value="item.Id">@item.CatalogItemNumber</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_referenceNumber" Label="@Localizer["Customers_CustomerCatalogItemNumber"]" MaxLength="@CustomerRules.MaxCustomerCatalogItemNumberLength" data-testid="reference-number" />
+        <MudButton OnClick="SaveReferenceAsync" Variant="Variant.Outlined" data-testid="reference-save">@Localizer["Common_Save"]</MudButton>
+    </MudStack>
+}
+
+@code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
+    private IReadOnlyList<CustomerSnapshot>? _customers;
+    private IReadOnlyList<ProjectSnapshot> _projects = [];
+    private IReadOnlyList<CatalogItemSnapshot> _items = [];
+    private IReadOnlyDictionary<Guid, string> _references = new Dictionary<Guid, string>();
+    private Guid? _selectedId;
+    private int _selection;
+    private string _legalName = string.Empty;
+    private string _country = string.Empty;
+    private string _vatId = string.Empty;
+    private string _number = string.Empty;
+    private string _projectReference = string.Empty;
+    private Guid? _referenceItemId;
+    private string _referenceNumber = string.Empty;
+    private IReadOnlyList<string> _errors = [];
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _gate.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() => RunAsync(LoadListsAsync);
+
+    private async Task LoadListsAsync()
+    {
+        _items = await Operations.RunAsync<ListCatalogItems, IReadOnlyList<CatalogItemSnapshot>>(
+            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
+            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+    }
+
+    private Task SelectAsync(CustomerSnapshot customer) => RunAsync(async () =>
+    {
+        _selection++;
+        _selectedId = customer.Id;
+        (_legalName, _country, _vatId, _number) = (customer.LegalName, customer.CountryCode, customer.VatId ?? string.Empty, customer.CustomerNumber);
+        _errors = [];
+        await LoadSelectionAsync(customer.Id);
+    });
+
+    private async Task LoadSelectionAsync(Guid customerId)
+    {
+        _projects = await Operations.RunAsync<ListProjects, IReadOnlyList<ProjectSnapshot>>(
+            Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(customerId, token), CancellationToken.None);
+        _references = await Operations.RunAsync<ListCustomers, IReadOnlyDictionary<Guid, string>>(
+            Permissions.MasterDataManage, (slice, token) => slice.ReferencesAsync(customerId, token), CancellationToken.None);
+    }
+
+    private void New()
+    {
+        _selection++;
+        _selectedId = null;
+        (_legalName, _country, _vatId, _number) = (string.Empty, string.Empty, string.Empty, string.Empty);
+        _errors = [];
+    }
+
+    private Task SaveAsync() => RunAsync(async () =>
+    {
+        CustomerForm form = new(_selectedId, _legalName, _country, _vatId, _number);
+        int selection = _selection;
+        SaveResult result;
+        try
+        {
+            result = await Operations.RunAsync<SaveCustomer, SaveResult>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // Two saves raced on one number; the unique index decided.
+            result = new SaveResult(null, [CustomerError.CustomerNumberTaken]);
+        }
+
+        _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
+        if (result.Id is Guid id)
+        {
+            await LoadListsAsync();
+
+            // New does not wait for the gate. Pressed while this saved, the form belongs to
+            // another record, and binding it to this one would let its next save overwrite it.
+            // A counter, not the ids: a create starts from null, and New resets to null.
+            if (_selection == selection)
+            {
+                _selectedId = id;
+                await LoadSelectionAsync(id);
+            }
+        }
+    });
+
+    private Task AddProjectAsync() => RunAsync(async () =>
+    {
+        if (_selectedId is not Guid customerId || string.IsNullOrWhiteSpace(_projectReference))
+        {
+            return;
+        }
+
+        string reference = _projectReference;
+        try
+        {
+            await Operations.RunAsync<SaveProject, Guid>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(null, customerId, reference, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // A double submit raced itself on the unique reference; the other one saved it.
+        }
+
+        // Cleared only if it still holds what was saved, not what was typed since.
+        if (_projectReference == reference)
+        {
+            _projectReference = string.Empty;
+        }
+
+        await LoadSelectionAsync(customerId);
+    });
+
+    private Task SaveReferenceAsync() => RunAsync(async () =>
+    {
+        if (_selectedId is not Guid customerId || _referenceItemId is not Guid itemId)
+        {
+            return;
+        }
+
+        string number = _referenceNumber;
+        try
+        {
+            await Operations.RunAsync<SaveCatalogItemReference>(
+                Permissions.MasterDataManage, (slice, token) => slice.HandleAsync(customerId, itemId, number, token), CancellationToken.None);
+        }
+        catch (DbUpdateException)
+        {
+            // A double submit raced itself on the (customer, item) key; the other one saved it.
+        }
+
+        if (_referenceNumber == number)
+        {
+            _referenceNumber = string.Empty;
+        }
+
+        await LoadSelectionAsync(customerId);
+    });
+
+    private string ItemNumber(Guid id) =>
+        _items.FirstOrDefault(item => item.Id == id)?.CatalogItemNumber ?? id.ToString();
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            await action();
+        }
+        catch (OperationRefusedException)
+        {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
+            Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
+        }
+    }
+}

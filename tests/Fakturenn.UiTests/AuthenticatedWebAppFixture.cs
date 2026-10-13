@@ -1,9 +1,13 @@
 using AwesomeAssertions;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -118,6 +122,9 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
+        // Expect(...) keeps a timeout of its own, five seconds unless set, and process-wide.
+        Assertions.SetDefaultExpectTimeout(ColdStartTimeoutMilliseconds);
+
         await _postgres.StartAsync();
 
         await MigrateAsync();
@@ -504,6 +511,68 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
         await users.UpdateSecurityStampAsync(user);
     }
 
+    /// <summary>
+    /// Grants the Administrator role to an account, the way
+    /// <c>SetupHostFixture.AssignAdministratorRoleAsync</c> does. Permissions are claims
+    /// minted into the cookie, so this must happen before the account signs in.
+    /// </summary>
+    public async Task AssignAdministratorRoleAsync(string email)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        IdentityDbContext context = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        UserManager<ApplicationUser> users =
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        ApplicationUser user = await users.FindByEmailAsync(email)
+            ?? throw new InvalidOperationException($"No user with the e-mail address {email}.");
+        Guid roleId = await context.Roles
+            .Where(role => role.Name == RoleSeeder.AdministratorRoleName)
+            .Select(role => role.Id)
+            .SingleAsync();
+
+        context.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId });
+        await context.SaveChangesAsync();
+        await users.UpdateSecurityStampAsync(user);
+    }
+
+    /// <summary>
+    /// Who the audit interceptor recorded as having created a catalog item, or
+    /// <see langword="null"/> when no item carries that number.
+    /// </summary>
+    public async Task<string?> ReadCatalogItemCreatedByAsync(string catalogItemNumber)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        return await catalog.CatalogItems.AsNoTracking()
+            .Where(item => item.CatalogItemNumber == catalogItemNumber)
+            .Select(item => item.CreatedBy)
+            .SingleOrDefaultAsync();
+    }
+
+    /// <summary>The unit price stored for a catalog item, or <see langword="null"/> when no item carries that number.</summary>
+    public async Task<decimal?> ReadCatalogItemUnitPriceAsync(string catalogItemNumber)
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        return await catalog.CatalogItems.AsNoTracking()
+            .Where(item => item.CatalogItemNumber == catalogItemNumber)
+            .Select(item => (decimal?)item.UnitPrice)
+            .SingleOrDefaultAsync();
+    }
+
+    /// <summary>How many invoices exist, drafts included.</summary>
+    public async Task<int> CountInvoicesAsync()
+    {
+        await using AsyncServiceScope scope = Services.CreateAsyncScope();
+
+        return await scope.ServiceProvider.GetRequiredService<InvoicesDbContext>().Invoices.CountAsync();
+    }
+
     // private Properties
 
     /// <summary>The running host's container, so a test can borrow its real services.</summary>
@@ -541,6 +610,33 @@ public sealed class AuthenticatedWebAppFixture : IAsyncLifetime
             // before the instance serves traffic, so a real /setup post always meets an
             // existing Administrator role.
             await RoleSeeder.SeedAsync(identity, CancellationToken.None);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            // Seeded here for the same reason --migrate seeds it: the row exists before the
+            // instance serves traffic, and no request path ever creates it.
+            await organizations.Database.MigrateAsync();
+            await OrganizationSeeder.SeedAsync(organizations, CancellationToken.None);
+        }
+
+        await using (CustomersDbContext customers = new(
+            new DbContextOptionsBuilder<CustomersDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await customers.Database.MigrateAsync();
+        }
+
+        await using (ProjectsDbContext projects = new(
+            new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await projects.Database.MigrateAsync();
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await catalog.Database.MigrateAsync();
         }
 
         await using InvoicesDbContext invoices = new(

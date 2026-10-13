@@ -4,8 +4,12 @@ using System.Security.Claims;
 using Fakturenn.Infrastructure.DataProtection;
 using Fakturenn.Infrastructure.Messaging;
 using Fakturenn.IntegrationTests.Messaging;
+using Fakturenn.Modules.Catalog.Persistence;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -78,6 +82,33 @@ public sealed class SetupHostFixture : IAsyncLifetime
             // That accident makes a race test pass with no setup guard at all, which is
             // exactly the false green this endpoint has already produced once.
             await RoleSeeder.SeedAsync(identity, CancellationToken.None);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            // Seeded here for the same reason --migrate seeds it: the row exists before the
+            // instance serves traffic, and no request path ever creates it.
+            await organizations.Database.MigrateAsync();
+            await OrganizationSeeder.SeedAsync(organizations, CancellationToken.None);
+        }
+
+        await using (CustomersDbContext customers = new(
+            new DbContextOptionsBuilder<CustomersDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await customers.Database.MigrateAsync();
+        }
+
+        await using (ProjectsDbContext projects = new(
+            new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await projects.Database.MigrateAsync();
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(ConnectionString).Options))
+        {
+            await catalog.Database.MigrateAsync();
         }
 
         // Configuration through the command line rather than an environment variable:

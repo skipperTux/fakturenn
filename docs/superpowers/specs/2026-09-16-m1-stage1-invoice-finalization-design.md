@@ -89,7 +89,7 @@ and a forgotten line silently exempts an assembly from every architecture rule.
 | Organizations | `Organization`: legal name, country, VAT ID, IBAN, currency, time zone, payment terms in days, issue-date default. Number-scheme configuration. | `MailIdentityReference`, `SigningIdentityReference` → Stage 4. `OrganizationAddress` → E04. |
 | Customers | `Customer`: legal name, country, VAT ID (nullable), customer number. `CustomerCatalogItemReference`: per customer and catalog item, the `CustomerCatalogItemNumber`. | Delivery email, e-invoice profile, PDF template, signing policy → the stage that reads each. Contacts, multiple addresses, electronic address → E04. |
 | Projects | `Project`: belongs to one customer; `CustomerProjectReference`. | External mappings → E13. |
-| Catalog | `CatalogItem`: `CatalogItemNumber`, type, unit, unit price, VAT rate. | Translations, activity mappings → E05. |
+| Catalog | `CatalogItem`: `CatalogItemNumber`, unit, unit price, VAT rate. It stores no type in Stage 1: nothing reads one. | Item type (`HourlyService`), translations, activity mappings → E05, where the stage that renders a type adds it. |
 
 **`CustomerCatalogItemNumber` lives in Customers, not on the catalog item.** It is
 a per-customer reference — `SI-9001` is Example Client GmbH's name for
@@ -112,9 +112,12 @@ name pattern.
 The per-module checklist in `CLAUDE.md` under "Adding a new module" applies to
 all four, plus two items this stage adds to it:
 
-- **Row provenance.** Every new entity implements `IAuditable`, and every new
-  context registration adds `AuditSaveChangesInterceptor`. Today only
-  `IdentityDbContext` has it; `InvoicesDbContext` is registered without it, and
+- **Row provenance.** Every new entity implements `IAuditable`, except
+  `NumberCounter`: a sequence row written by the allocator's raw upsert, which the
+  interceptor never sees; the invoice that carries each number is its provenance.
+  (`InvoiceSnapshotRecord` does implement it.) Every new context registration adds
+  `AuditSaveChangesInterceptor`. Before Stage 1 only
+  `IdentityDbContext` had it; `InvoicesDbContext` was registered without it, and
   an entity copying Identity's `CreatedBy = string.Empty` saves empty provenance
   and a `0001-01-01` timestamp with no constraint objecting. A host-composition
   test in `Fakturenn.Web.UnitTests` asserts the interceptor on each context, and
@@ -142,7 +145,7 @@ states:
 | State | Entered by | May change |
 | --- | --- | --- |
 | `Draft` | Creating it | Everything. No number exists. |
-| `Numbered` | Finalization (§5) | Everything **except the number and the issue date**. Each edit re-runs finalization under the same number, overwriting the snapshot. |
+| `Numbered` | Finalization (§5) | Everything **except the number and the issue date**. Each edit clears the totals; the user's confirmation re-runs finalization under the same number, overwriting the snapshot. |
 | `Locked` | Stage 2–4: PDF and XML rendered, validated and archived | Nothing, ever. |
 
 The number and the issue date are frozen at allocation because the number is
@@ -207,7 +210,7 @@ integrity evidence against an operator. [C11]
 ## 5. Finalization
 
 Finalization takes a `Draft` to `Numbered`, or re-runs on a `Numbered` invoice
-after an edit. One unit of work on `InvoicesDbContext`, run **inside the
+after an edit, once the user confirms the new totals. One unit of work on `InvoicesDbContext`, run **inside the
 execution strategy**, because the context uses `EnableRetryOnFailure` and EF Core
 requires a user transaction to be retried as a whole: every load happens inside
 the delegate, so a retry starts from the database, not from a change tracker
@@ -263,8 +266,10 @@ Event-maintained read models were rejected for Stage 1: they need the events,
 the projections, and an answer for what finalization does when a projection is
 behind.
 
-Value objects are `readonly record struct`: `InvoiceNumber`, `Quantity`, and
-the shared kernel's existing `Money` and `Percentage`.
+Value objects are `readonly record struct`: `Quantity`, and the shared kernel's
+existing `Money` and `Percentage`. `InvoiceNumber` stays a string until
+`InvoiceCorrection` references a preceding invoice (EN 16931 BT-25), its second
+caller.
 
 ## 6. Numbering
 
@@ -388,9 +393,10 @@ mapping needs it.
 | `masterdata.manage` | Customers, projects, catalog items, customer catalog-item references. |
 | `invoices.manage` | Drafting and finalizing invoices. |
 
-The constants move from `Fakturenn.Modules.Identity/Authorization/Permissions.cs`
-to `Fakturenn.Modules.Identity.Contracts`, so business modules can reference them
-under architecture rule 5. [S4]
+The constants stay in `Fakturenn.Modules.Identity`
+(`Authorization/Permissions.cs`). Enforcement lives in `Fakturenn.Web`'s
+`CircuitOperations`, which already references Identity, and no module checks a
+permission, so moving them to `Identity.Contracts` would serve no reader. [S4]
 
 **Enforced twice: at the page and at the slice.** The page attribute decides
 what renders; each mutating slice — save organization, customer, project,

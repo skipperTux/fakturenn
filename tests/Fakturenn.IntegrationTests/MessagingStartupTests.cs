@@ -3,8 +3,12 @@ using System.Text;
 using AwesomeAssertions;
 using AwesomeAssertions.Execution;
 using Fakturenn.Infrastructure.DataProtection;
+using Fakturenn.Modules.Catalog.Persistence;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.Modules.Invoices.Persistence;
+using Fakturenn.Modules.Organizations.Persistence;
+using Fakturenn.Modules.Projects.Persistence;
 using Fakturenn.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -113,9 +117,13 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
 
         migrated.Should().BeEquivalentTo(
             [
+                CatalogDbContext.SchemaName,
+                CustomersDbContext.SchemaName,
                 DataProtectionDbContext.SchemaName,
                 IdentityDbContext.SchemaName,
                 InvoicesDbContext.SchemaName,
+                OrganizationsDbContext.SchemaName,
+                ProjectsDbContext.SchemaName,
             ],
             "this test's premise is a database that is fully EF-migrated and nothing more");
 
@@ -356,6 +364,30 @@ public sealed class MessagingStartupTests(SetupHostFixture host)
             DataProtectionProvider.Create("Fakturenn.Tests")))
         {
             await identity.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (OrganizationsDbContext organizations = new(
+            new DbContextOptionsBuilder<OrganizationsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await organizations.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (CustomersDbContext customers = new(
+            new DbContextOptionsBuilder<CustomersDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await customers.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (ProjectsDbContext projects = new(
+            new DbContextOptionsBuilder<ProjectsDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await projects.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (CatalogDbContext catalog = new(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(connectionString).Options))
+        {
+            await catalog.Database.MigrateAsync(TestContext.Current.CancellationToken);
         }
 
         await using (InvoicesDbContext invoices = new(

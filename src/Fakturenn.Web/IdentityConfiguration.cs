@@ -6,6 +6,7 @@ using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
 using Fakturenn.SharedKernel;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -14,9 +15,11 @@ namespace Fakturenn.Web;
 
 /// <summary>
 /// Registers ASP.NET Core Identity, permission-based authorization and the shared
-/// Data Protection key ring in the host. Nothing here reaches into a module: the
-/// module owns its entities, its context and its migrations, and this is the one
-/// place that composes them with the framework.
+/// Data Protection key ring in the host, and the circuit plumbing the interactive pages
+/// depend on: <see cref="CircuitOperations"/>, the ambient <see cref="CurrentPrincipal"/>
+/// and the security-stamp revalidating authentication state provider. Nothing here
+/// reaches into a module: the module owns its entities, its context and its migrations,
+/// and this is the one place that composes them with the framework.
 /// </summary>
 public static class IdentityConfiguration
 {
@@ -39,9 +42,18 @@ public static class IdentityConfiguration
             .PersistKeysToDbContext<DataProtectionDbContext>();
 
         builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped<CircuitOperations>();
+        builder.Services.AddScoped<AuthenticationStateProvider, SecurityStampRevalidatingAuthenticationStateProvider>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        builder.Services.AddScoped<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();
-        builder.Services.AddScoped<AuditSaveChangesInterceptor>();
+
+        // Singletons, all three, because Wolverine registers InvoicesDbContext's options as a
+        // singleton: its interceptor is resolved once, from the root provider. A scoped one
+        // there throws under scope validation -- Development, and so every browser test --
+        // and without it never sees the principal CircuitOperations sets on its scope.
+        // CurrentPrincipal is ambient so that a singleton can read it.
+        builder.Services.AddSingleton<CurrentPrincipal>();
+        builder.Services.AddSingleton<ICurrentUserAccessor, HttpContextCurrentUserAccessor>();
+        builder.Services.AddSingleton<AuditSaveChangesInterceptor>();
 
         builder.Services.AddDbContext<IdentityDbContext>((serviceProvider, options) =>
             options
@@ -132,7 +144,16 @@ public static class IdentityConfiguration
 
         builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
-        builder.Services.AddAuthorization();
+        // Authenticated by default (spec section 8, review S4). A page or endpoint that
+        // forgets its attribute is refused rather than anonymous. Everything a signed-out
+        // visitor must reach carries an explicit AllowAnonymous instead, so the exceptions
+        // are greppable. Files served by UseStaticFiles -- wwwroot, _content and the
+        // framework script -- bypass authorization because it runs first. A path with no
+        // file and no endpoint is challenged by the fallback: 302 to sign-in, not 404.
+        builder.Services.AddAuthorization(options =>
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build());
 
         // Lockout alone would make the login endpoint a user-enumeration oracle:
         // a locked account answers differently from an unknown one under load.

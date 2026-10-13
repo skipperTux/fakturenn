@@ -19,15 +19,11 @@ public static class EnrolmentGate
     /// page the gate then blocks, and blocks by redirecting to that same page.
     /// </para>
     /// <para>
-    /// <c>/_blazor</c> is deliberately <b>absent</b>. Nothing declares a render mode today,
-    /// so no circuit is ever negotiated and the omission costs nothing. When a component
-    /// eventually carries <c>@rendermode InteractiveServer</c>, a gated user's circuit
-    /// request will be redirected and that page will load but do nothing — which looks like
-    /// a broken component, not a gate decision. Failing closed is still the right default:
-    /// allowlisting the circuit endpoint would let a gated user render any interactive page
-    /// server-side and walk straight past this gate. Whoever introduces interactivity has to
-    /// decide what a half-enrolled user's circuit may do, and this comment is where that
-    /// decision belongs.
+    /// <c>/_blazor</c> is deliberately <b>absent</b>. The business pages declare
+    /// <c>InteractiveServer</c>, but a gated user never gets as far as a circuit: their routes
+    /// are not listed here either, so the gate redirects the page request itself to the
+    /// outstanding obligation. Allowlisting the circuit endpoint would let a gated user render
+    /// any interactive page server-side and walk straight past this gate.
     /// </para>
     /// <para>
     /// Static assets are <b>not</b> listed, and the omission is measured rather than

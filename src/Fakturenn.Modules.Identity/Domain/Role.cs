@@ -4,8 +4,8 @@ namespace Fakturenn.Modules.Identity.Domain;
 
 /// <summary>
 /// A named bundle of permissions. Deliberately not ASP.NET Core Identity's
-/// <c>IdentityRole</c>: epic E02b adds an OrganizationId to <see cref="UserRole"/>,
-/// and the stock join table has nowhere to put one.
+/// <c>IdentityRole</c>: roles and their join table are our own. With one organization
+/// per instance no OrganizationId column is planned (spec section 2).
 /// </summary>
 public sealed class Role : IAuditable
 {

@@ -16,9 +16,10 @@ namespace Fakturenn.Modules.Identity.Persistence;
 /// Derives from <see cref="IdentityUserContext{TUser, TKey}"/> rather than
 /// <c>IdentityDbContext</c> on purpose: the former creates users, claims, logins and
 /// tokens but no role tables. Roles live in <see cref="Roles"/> and
-/// <see cref="UserRoles"/> instead, because epic E02b needs an OrganizationId on the
-/// user-role join and AspNetUserRoles has nowhere to put one. Running both role
-/// systems side by side later would be worse than not adopting the stock one now.
+/// <see cref="UserRoles"/> instead, so that roles carry our own permissions. With one
+/// organization per instance no OrganizationId column is planned (spec section 2).
+/// Running both role systems side by side later would be worse than not adopting the
+/// stock one now.
 /// </para>
 /// </summary>
 public sealed class IdentityDbContext(

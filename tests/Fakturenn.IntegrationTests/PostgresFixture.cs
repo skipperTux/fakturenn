@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Fakturenn.Modules.Identity.Domain;
 using Fakturenn.Modules.Identity.Persistence;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Fakturenn.IntegrationTests;
@@ -33,6 +35,55 @@ public sealed class PostgresFixture : IAsyncLifetime
         new(new DbContextOptionsBuilder<InvoicesDbContext>()
             .UseNpgsql(ConnectionString)
             .Options);
+
+    public TContext Create<TContext>(Func<DbContextOptions<TContext>, TContext> create)
+        where TContext : DbContext =>
+        create(new DbContextOptionsBuilder<TContext>().UseNpgsql(ConnectionString).Options);
+
+    /// <summary>
+    /// A fresh, empty database in this container, for a test whose assertion must not depend
+    /// on what the class's other tests left in the shared one. Dropped first, so a re-run
+    /// starts from the same state.
+    /// </summary>
+    public async Task<string> CreateDatabaseAsync(string name)
+    {
+        await using NpgsqlConnection administration = new(ConnectionString);
+        await administration.OpenAsync(TestContext.Current.CancellationToken);
+        await using NpgsqlCommand drop = administration.CreateCommand();
+        drop.CommandText = $"DROP DATABASE IF EXISTS {name} WITH (FORCE)";
+        await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        await using NpgsqlCommand create = administration.CreateCommand();
+        create.CommandText = $"CREATE DATABASE {name}";
+        await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+        return new NpgsqlConnectionStringBuilder(ConnectionString) { Database = name }.ConnectionString;
+    }
+
+    /// <summary>
+    /// Returns once another session waits on a lock in a statement containing
+    /// <paramref name="queryFragment"/>, which is how a test proves an interleave was forced
+    /// rather than won by timing.
+    /// </summary>
+    public async Task WaitUntilBlockedAsync(string queryFragment)
+    {
+        await using NpgsqlConnection observer = new(ConnectionString);
+        await observer.OpenAsync(TestContext.Current.CancellationToken);
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            await using NpgsqlCommand command = observer.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE @pattern";
+            command.Parameters.AddWithValue("pattern", $"%{queryFragment}%");
+            long waiting = Convert.ToInt64(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken), CultureInfo.InvariantCulture);
+            if (waiting > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        throw new TimeoutException("B never blocked on A's row; the interleave was not forced.");
+    }
 
     public IdentityDbContext CreateIdentityContext() =>
         new(

@@ -46,13 +46,15 @@ Off by default, threshold in configuration.
 
 ## MudBlazor components render without their JavaScript
 
-**Lands in:** the epic that first needs an interactive component. Not urgent, but it is a standing constraint every UI epic will meet, so it should be met knowingly.
+**Lands in:** the epic that first needs an interactive component on a static page. Not urgent, but it is a standing constraint every UI epic will meet, so it should be met knowingly.
 
-**What was observed.** In the shipped E02a build, the floating label of a `MudTextField` sits on top of the value instead of shrinking above it — reproduced with a browser autofill on the sign-in form and with a typed authenticator code. It looks like a styling bug. It is not.
+**Narrowed by M1 Stage 1.** The business pages (organization, customers, projects, catalog, invoices) are interactive and fixed. The symptom remains on the static pages: the sign-in, authenticator and `/admin/users` forms.
 
-**The cause.** `AddInteractiveServerRenderMode()` is registered and `MapRazorComponents<App>()` calls it, but **no component declares `@rendermode`** — not `<Routes />`, not any page. Every component therefore renders as static server-side HTML with none of MudBlazor's JavaScript, and the floating label depends on that script to notice the field has a value. Anything else in MudBlazor that needs interactivity — dialogs, menus, snackbars, client-side validation — will fail the same way, silently, looking like CSS.
+**What was observed.** On those forms the floating label of a `MudTextField` sits on top of the value instead of shrinking above it — reproduced with a browser autofill on the sign-in form and with a typed authenticator code. It looks like a styling bug. It is not.
 
-**Why turning it on is not one line.** E02a's enrolment gate deliberately leaves `/_blazor` **blocked** (`EnrolmentGate`), because allowlisting the circuit endpoint would let a gated user open a SignalR connection and render components server-side, bypassing the gate for any interactive page. Failing closed was the right default while nothing was interactive. The epic that introduces interactivity has to decide how a gated user's circuit is handled, and `IMPLEMENTATION-NOTES.md` records the reasoning so that decision is met rather than rediscovered.
+**The cause.** A component without `@rendermode` renders as static server-side HTML with none of MudBlazor's JavaScript, and the floating label depends on that script to notice the field has a value. Anything else in MudBlazor that needs interactivity — dialogs, menus, snackbars, client-side validation — will fail the same way on a static page, silently, looking like CSS.
+
+**Why turning it on is not one line.** The enrolment gate deliberately leaves `/_blazor` **blocked** (`EnrolmentGate`) for a gated user, because allowlisting the circuit endpoint would let a gated user open a SignalR connection and render components server-side, bypassing the gate for any interactive page. `IMPLEMENTATION-NOTES.md` records the reasoning.
 
 **Sign-in must stay static.** Whatever else becomes interactive, the credential forms cannot come from a circuit — see `IMPLEMENTATION-NOTES.md` under "Testing the entrypoint" and the static-SSR notes.
 
@@ -158,3 +160,11 @@ finalized on the user's own word.
 first. Record the validation result and timestamp with the customer rather than
 re-checking at every finalization, and treat "VIES unreachable" as "not
 validated", never as "invalid".
+
+## UI modernization sprint
+
+**Proposed slot:** after Stage 1 merges, before Stage 2, so that later stages inherit the theme, the app shell and the form patterns.
+
+**Why.** The current UI is deliberately minimal: the default `MudThemeProvider` with no custom theme, an app bar only, and pages that are stacks of fields. Every stage that adds pages on top of that adds more to restyle later.
+
+**Input.** The product owner brings visual examples when it starts.
