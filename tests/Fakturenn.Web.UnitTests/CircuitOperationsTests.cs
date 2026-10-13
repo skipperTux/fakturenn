@@ -57,16 +57,18 @@ public sealed class CircuitOperationsTests
     }
 
     [Fact]
-    public async Task The_principal_is_gone_once_the_operation_returns()
+    public async Task Each_operation_gets_its_own_scope()
     {
+        // Spec C1: a scope, and so a DbContext, shared across a tab's operations would track
+        // everything it ever loaded and be shared by overlapping event handlers.
         await using ServiceProvider services = Services(new FixedAuthenticationStateProvider(User(Permissions.MasterDataManage)));
         await using AsyncServiceScope circuit = services.CreateAsyncScope();
         CircuitOperations operations = circuit.ServiceProvider.GetRequiredService<CircuitOperations>();
 
-        await operations.RunAsync<Probe, string>(
-            Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe.Seen), TestContext.Current.CancellationToken);
+        Probe first = await operations.RunAsync<Probe, Probe>(Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe), TestContext.Current.CancellationToken);
+        Probe second = await operations.RunAsync<Probe, Probe>(Permissions.MasterDataManage, (probe, _) => Task.FromResult(probe), TestContext.Current.CancellationToken);
 
-        services.GetRequiredService<CurrentPrincipal>().Principal.Should().BeNull();
+        second.Should().NotBeSameAs(first);
     }
 
     [Fact]

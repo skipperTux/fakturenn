@@ -6,7 +6,9 @@ namespace Fakturenn.IntegrationTests;
 /// <summary>
 /// What a signed-out visitor may reach under the authenticated-by-default fallback policy,
 /// and nothing more. Each row is a path that worked before the fallback policy and must
-/// keep working; each refusal is a path the policy exists to close.
+/// keep working. Of the refusals, only the circuit proves the fallback itself:
+/// <c>/admin/users</c> and <c>/account/change-password</c> were already closed by their own
+/// <c>[Authorize]</c> attributes, and stay in as regression rows.
 /// </summary>
 [Collection(RealHost.Name)]
 public sealed class AnonymousAccessTests(SetupHostFixture host)
@@ -70,8 +72,8 @@ public sealed class AnonymousAccessTests(SetupHostFixture host)
         using HttpResponseMessage response = await client.PostAsync(
             "/_blazor/negotiate?negotiateVersion=1", content: null, TestContext.Current.CancellationToken);
 
-        // The cookie handler answers 401 rather than 302 for a SignalR negotiate request.
-        response.StatusCode.Should().BeOneOf([HttpStatusCode.Found, HttpStatusCode.Unauthorized],
+        // Measured: the cookie handler answers 401 rather than 302 for a SignalR negotiate request.
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "the circuit endpoint carries no AllowAnonymous, so the fallback policy challenges it");
     }
 }

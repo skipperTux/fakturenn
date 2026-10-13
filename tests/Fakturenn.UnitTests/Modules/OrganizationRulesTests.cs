@@ -95,6 +95,55 @@ public sealed class OrganizationRulesTests
         (!errors.Contains(OrganizationError.LegalNameTooLong)).Should().Be(valid);
     }
 
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("EUR", true)]
+    [InlineData("eur", false)]
+    [InlineData("EU", false)]
+    [InlineData("EURO", false)]
+    public void Currency_is_an_uppercase_iso_4217_code(string currency, bool valid)
+    {
+        IReadOnlyList<OrganizationError> errors = OrganizationRules.Validate(Valid() with { Currency = currency });
+
+        (!errors.Contains(OrganizationError.CurrencyInvalid)).Should().Be(valid);
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(365, true)]
+    [InlineData(-1, false)]
+    [InlineData(366, false)]
+    public void Payment_terms_are_up_to_a_year(int days, bool valid)
+    {
+        IReadOnlyList<OrganizationError> errors = OrganizationRules.Validate(Valid() with { PaymentTermsDays = days });
+
+        (!errors.Contains(OrganizationError.PaymentTermsInvalid)).Should().Be(valid);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(9, true)]
+    [InlineData(0, false)]
+    [InlineData(10, false)]
+    public void Number_padding_is_one_to_nine_digits(int padding, bool valid)
+    {
+        IReadOnlyList<OrganizationError> errors = OrganizationRules.Validate(Valid() with { NumberPadding = padding });
+
+        (!errors.Contains(OrganizationError.PaddingInvalid)).Should().Be(valid);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(4711, true)]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    public void The_next_number_is_positive(long next, bool valid)
+    {
+        IReadOnlyList<OrganizationError> errors = OrganizationRules.Validate(Valid() with { NumberNextValue = next });
+
+        (!errors.Contains(OrganizationError.NextNumberInvalid)).Should().Be(valid);
+    }
+
     [Fact]
     public void An_unknown_time_zone_is_refused()
     {

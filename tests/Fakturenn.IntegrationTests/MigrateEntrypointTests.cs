@@ -130,19 +130,7 @@ public sealed class MigrateEntrypointTests(PostgresFixture postgres) : IClassFix
         // The previous state is main before Stage 1: Data Protection and Identity migrated,
         // Invoices at its InitialCreate, the four new schemas absent. The class fixture's
         // database is shared with tests that migrate everything, so this one works in its own.
-        NpgsqlConnectionStringBuilder builder = new(postgres.ConnectionString) { Database = "previous_release" };
-        await using (NpgsqlConnection administration = new(postgres.ConnectionString))
-        {
-            await administration.OpenAsync(TestContext.Current.CancellationToken);
-            await using NpgsqlCommand drop = administration.CreateCommand();
-            drop.CommandText = "DROP DATABASE IF EXISTS previous_release WITH (FORCE)";
-            await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-            await using NpgsqlCommand create = administration.CreateCommand();
-            create.CommandText = "CREATE DATABASE previous_release";
-            await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-        }
-
-        string connectionString = builder.ConnectionString;
+        string connectionString = await postgres.CreateDatabaseAsync("previous_release");
         await using (DataProtectionDbContext dataProtection = new(
             new DbContextOptionsBuilder<DataProtectionDbContext>().UseNpgsql(connectionString).Options))
         {
@@ -178,6 +166,13 @@ public sealed class MigrateEntrypointTests(PostgresFixture postgres) : IClassFix
         organizations.CommandText = "SELECT count(*) FROM organizations.\"Organizations\"";
         Convert.ToInt64(await organizations.ExecuteScalarAsync(TestContext.Current.CancellationToken), CultureInfo.InvariantCulture)
             .Should().Be(1);
+
+        // The invoices schema exists at the previous release already, so the count above
+        // cannot see a missing InvoiceFinalization; one of its tables can.
+        await using NpgsqlCommand counters = connection.CreateCommand();
+        counters.CommandText = "SELECT to_regclass('invoices.\"NumberCounters\"') IS NOT NULL";
+        ((bool)(await counters.ExecuteScalarAsync(TestContext.Current.CancellationToken))!)
+            .Should().BeTrue("InvoiceFinalization must be applied on upgrade");
     }
 
     private static Guid ReadAdministratorRoleId(IdentityDbContext context) =>

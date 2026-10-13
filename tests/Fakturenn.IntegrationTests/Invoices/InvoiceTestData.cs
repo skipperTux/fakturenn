@@ -25,6 +25,7 @@ internal sealed class InvoiceTestData(PostgresFixture postgres, IClock clock)
 {
     // public Properties
     public Guid CustomerId { get; private set; }
+    public string CustomerNumber { get; private set; } = string.Empty;
     public Guid ProjectId { get; private set; }
     public Guid CatalogItemId { get; private set; }
 
@@ -46,8 +47,9 @@ internal sealed class InvoiceTestData(PostgresFixture postgres, IClock clock)
             .Should().BeEmpty();
         // Not CreateVersion7: its leading hex digits are the timestamp, the same for a minute.
         string suffix = Guid.NewGuid().ToString("N")[..8];
+        CustomerNumber = $"C-{suffix}";
         CustomerId = (await new SaveCustomer(customers).HandleAsync(
-            new CustomerForm(null, "Example Client GmbH", "DE", "", $"C-{suffix}"), TestContext.Current.CancellationToken)).Id!.Value;
+            new CustomerForm(null, "Example Client GmbH", "DE", "", CustomerNumber), TestContext.Current.CancellationToken)).Id!.Value;
         ProjectId = await new SaveProject(projects).HandleAsync(null, CustomerId, "PRJ-2026-083", TestContext.Current.CancellationToken);
         CatalogItemId = (await new SaveCatalogItem(catalog).HandleAsync(
             new CatalogItemForm(null, $"DEV-{suffix}", "Backend development", "HUR", 100m, "EUR", 19m), TestContext.Current.CancellationToken)).Id!.Value;

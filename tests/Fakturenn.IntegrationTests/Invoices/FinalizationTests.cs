@@ -1,5 +1,8 @@
 using AwesomeAssertions;
 using Fakturenn.IntegrationTests.Fakes;
+using Fakturenn.Modules.Customers;
+using Fakturenn.Modules.Customers.Features;
+using Fakturenn.Modules.Customers.Persistence;
 using Fakturenn.Modules.Invoices.Domain;
 using Fakturenn.Modules.Invoices.Features;
 using Fakturenn.Modules.Invoices.Persistence;
@@ -48,6 +51,26 @@ public sealed class FinalizationTests(PostgresFixture postgres) : IClassFixture<
         InvoiceSnapshotDocument document = InvoiceSnapshotSerializer.Deserialize(snapshot.Content);
         document.Lines.Should().ContainSingle().Which.CustomerCatalogItemNumber.Should().Be("SI-9001");
         document.Seller.NumberScheme.Prefix.Should().Be("R");
+    }
+
+    [Fact]
+    public async Task A_draft_finalizes_with_the_customer_as_it_is_at_finalization()
+    {
+        // Spec section 5: a draft holds references only, resolved at finalization rather than
+        // at drafting, so a rename between the two reaches the invoice.
+        (InvoiceTestData data, Guid invoiceId) = await DraftAsync(new DateTimeOffset(2026, 1, 12, 10, 0, 0, TimeSpan.Zero), 8m);
+        await using (CustomersDbContext customers = postgres.Create<CustomersDbContext>(options => new(options)))
+        {
+            (await new SaveCustomer(customers).HandleAsync(
+                new CustomerForm(data.CustomerId, "Renamed Client GmbH", "DE", "", data.CustomerNumber), TestContext.Current.CancellationToken))
+                .Errors.Should().BeEmpty();
+        }
+
+        (await FinalizeAsync(data, invoiceId, 952.00m)).Succeeded.Should().BeTrue();
+
+        await using InvoicesDbContext db = postgres.CreateContext();
+        InvoiceSnapshotRecord snapshot = await db.Snapshots.AsNoTracking().SingleAsync(s => s.InvoiceId == invoiceId, TestContext.Current.CancellationToken);
+        InvoiceSnapshotSerializer.Deserialize(snapshot.Content).Customer.LegalName.Should().Be("Renamed Client GmbH");
     }
 
     [Fact]

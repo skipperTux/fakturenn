@@ -44,6 +44,23 @@ public sealed class CustomersAndProjectsTests(PostgresFixture postgres) : IClass
     }
 
     [Fact]
+    public async Task A_customer_catalog_item_number_is_replaced_then_removed_by_an_empty_one()
+    {
+        await using CustomersDbContext db = await CustomersAsync();
+        Guid item = Guid.CreateVersion7();
+        Guid customer = (await new SaveCustomer(db).HandleAsync(new CustomerForm(null, "A", "DE", "", "C-REF-SWAP"), TestContext.Current.CancellationToken)).Id!.Value;
+        ICustomerProvider provider = new CustomerProvider(db);
+        await new SaveCatalogItemReference(db).HandleAsync(customer, item, "SI-1", TestContext.Current.CancellationToken);
+
+        await new SaveCatalogItemReference(db).HandleAsync(customer, item, "SI-2", TestContext.Current.CancellationToken);
+        (await provider.FindCatalogItemReferenceAsync(customer, item, TestContext.Current.CancellationToken)).Should().Be("SI-2");
+
+        await new SaveCatalogItemReference(db).HandleAsync(customer, item, " ", TestContext.Current.CancellationToken);
+        (await db.CatalogItemReferences.CountAsync(r => r.CustomerId == customer, TestContext.Current.CancellationToken))
+            .Should().Be(0, "an empty reference deletes the row rather than storing an empty number");
+    }
+
+    [Fact]
     public async Task A_project_belongs_to_the_customer_it_was_created_on()
     {
         await using ProjectsDbContext db = postgres.Create<ProjectsDbContext>(options => new(options));

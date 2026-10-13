@@ -21,6 +21,7 @@ public sealed class CatalogRulesTests
 
     [Theory]
     [InlineData(-1)]
+    [InlineData(100.01)]
     [InlineData(100.5)]
     [InlineData(19.555)]
     public void Vat_rate_is_a_percentage_with_at_most_two_decimals(decimal rate)
@@ -28,10 +29,12 @@ public sealed class CatalogRulesTests
         CatalogRules.Validate(Item() with { VatRate = rate }).Should().Contain(CatalogError.VatRateInvalid);
     }
 
-    [Fact]
-    public void A_vat_rate_with_one_decimal_is_valid()
+    [Theory]
+    [InlineData(19.5)]
+    [InlineData(100)]
+    public void A_vat_rate_up_to_100_with_at_most_two_decimals_is_valid(decimal rate)
     {
-        CatalogRules.Validate(Item() with { VatRate = 19.5m }).Should().BeEmpty();
+        CatalogRules.Validate(Item() with { VatRate = rate }).Should().BeEmpty();
     }
 
     [Theory]
@@ -88,6 +91,7 @@ public sealed class CatalogRulesTests
     [Theory]
     [InlineData("0.0001", false)]
     [InlineData("0.00001", true)]
+    [InlineData("104.60000", false)]
     [InlineData("99999999999999.9999", false)]
     [InlineData("100000000000000", true)]
     public void Price_fits_numeric_18_4_without_rounding(string price, bool outOfRange)
