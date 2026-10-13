@@ -7,6 +7,7 @@
 @inject CircuitOperations Operations
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
 
 <InteractiveProviders />
 <PageTitle>@Localizer["Invoices_PageTitle"]</PageTitle>
@@ -45,50 +46,73 @@
 }
 
 @code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
     private IReadOnlyList<CustomerSnapshot> _customers = [];
     private IReadOnlyList<InvoiceView>? _invoices;
     private Guid? _newCustomerId;
     private bool _creating;
 
-    protected override async Task OnInitializedAsync()
+    public void Dispose()
     {
+        _disposed = true;
+        _gate.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() => RunAsync(async () =>
+    {
+        _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        _invoices = await Operations.RunAsync<ListInvoices, IReadOnlyList<InvoiceView>>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+    });
+
+    private Task CreateAsync()
+    {
+        // Stage 1 has no draft delete, so a double click must create one draft. The flag is set
+        // before the gate, so the second click is turned away rather than queued, and it stays
+        // set once the draft exists: a click landing before the navigation would otherwise
+        // create another (measured, 1 run in 10).
+        if (_creating)
+        {
+            return Task.CompletedTask;
+        }
+
+        _creating = true;
+        return RunAsync(async () =>
+        {
+            if (_newCustomerId is not Guid customerId)
+            {
+                _creating = false;
+                return;
+            }
+
+            Guid id = await Operations.RunAsync<CreateDraft, Guid>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(customerId, token), CancellationToken.None);
+            Navigation.NavigateTo($"/invoices/{id}");
+        });
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        await _gate.WaitAsync();
         try
         {
-            _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
-                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
-            _invoices = await Operations.RunAsync<ListInvoices, IReadOnlyList<InvoiceView>>(
-                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+            await action();
         }
         catch (OperationRefusedException)
         {
             // A full reload re-runs cookie authentication, which a circuit never repeats.
             Navigation.NavigateTo("/account/denied", forceLoad: true);
         }
-    }
-
-    private async Task CreateAsync()
-    {
-        // A double click delivers two clicks before the button re-renders disabled, and Stage 1
-        // has no draft delete. The flag is set before the first await, so the second click sees it.
-        if (_creating || _newCustomerId is not Guid customerId)
-        {
-            return;
-        }
-
-        _creating = true;
-        try
-        {
-            Guid id = await Operations.RunAsync<CreateDraft, Guid>(
-                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(customerId, token), CancellationToken.None);
-            Navigation.NavigateTo($"/invoices/{id}");
-        }
-        catch (OperationRefusedException)
-        {
-            Navigation.NavigateTo("/account/denied", forceLoad: true);
-        }
         finally
         {
-            _creating = false;
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
         }
     }
 }

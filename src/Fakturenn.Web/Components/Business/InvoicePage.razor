@@ -13,6 +13,7 @@
 @inject CircuitOperations Operations
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
 
 <InteractiveProviders />
 <PageTitle>@Localizer["Invoice_PageTitle"]</PageTitle>
@@ -108,6 +109,11 @@
 }
 
 @code {
+    // One operation at a time. A field change binds at once but its save waits here, so it
+    // builds its form from the fields as they are when its turn comes, and an earlier save
+    // still in flight can neither interleave with it nor finish after it.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
     private InvoiceView? _invoice;
     private FinalizationResult? _preview;
     private IReadOnlyList<CustomerSnapshot> _customers = [];
@@ -128,22 +134,29 @@
 
     private bool Locked => _invoice?.State == InvoiceState.Locked;
 
+    public void Dispose()
+    {
+        _disposed = true;
+        _gate.Dispose();
+    }
+
     protected override Task OnInitializedAsync() => RunAsync(async () =>
     {
         _customers = await Operations.RunAsync<ListCustomers, IReadOnlyList<CustomerSnapshot>>(
             Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
         _items = await Operations.RunAsync<ListCatalogItems, IReadOnlyList<CatalogItemSnapshot>>(
             Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
-        await ReloadAsync();
+        await LoadAsync();
     });
 
-    private async Task ReloadAsync()
+    // The full load, editable fields included: the first load, a refused save and after
+    // finalization only. After an ordinary save the fields stay the user's. Fields before
+    // _invoice: the form renders once _invoice is set, and a choice made from then on must not
+    // be put back by the rest of this load.
+    private async Task LoadAsync()
     {
-        InvoiceView? invoice = await Operations.RunAsync<GetInvoice, InvoiceView?>(
-            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, token), CancellationToken.None);
-        if (invoice is null)
+        if (await GetAsync() is not InvoiceView invoice)
         {
-            Navigation.NavigateTo("/invoices");
             return;
         }
 
@@ -156,6 +169,29 @@
         _invoice = invoice;
         await LoadProjectsAsync();
         await PreviewAsync();
+    }
+
+    // What the server decides -- state, number, figures, the preview -- and none of the fields
+    // the user edits. SavedForm reads the same view, so an unchanged save stays a no-op.
+    private async Task RefreshAsync()
+    {
+        if (await GetAsync() is InvoiceView invoice)
+        {
+            _invoice = invoice;
+            await PreviewAsync();
+        }
+    }
+
+    private async Task<InvoiceView?> GetAsync()
+    {
+        InvoiceView? invoice = await Operations.RunAsync<GetInvoice, InvoiceView?>(
+            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, token), CancellationToken.None);
+        if (invoice is null)
+        {
+            Navigation.NavigateTo("/invoices");
+        }
+
+        return invoice;
     }
 
     private async Task LoadProjectsAsync()
@@ -202,14 +238,14 @@
         {
             // The aggregate refused an edit its state forbids: another tab numbered or locked
             // the invoice since this one loaded it. Show the invoice as it now is, and say why.
-            await ReloadAsync();
+            await LoadAsync();
             _changedElsewhere = true;
             return;
         }
 
-        // A reload rather than a preview alone: an edit to a numbered invoice clears its
+        // A refresh rather than a preview alone: an edit to a numbered invoice clears its
         // figures, and the page has to show that it needs confirming again.
-        await ReloadAsync();
+        await RefreshAsync();
     }
 
     // Shown only when present: an edit to a numbered invoice clears the decision with the figures.
@@ -225,29 +261,35 @@
         _preview = await Operations.RunAsync<PreviewInvoice, FinalizationResult>(
             Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, token), CancellationToken.None);
 
-    private Task FinalizeAsync() => RunAsync(async () =>
+    private Task FinalizeAsync()
     {
+        // Taken at the click, not when its turn comes: the gross the user saw is the one
+        // finalization may number, and it refuses any other (review M12).
         decimal confirmed = _preview!.Totals!.Gross;
-        FinalizationResult result = await Operations.RunAsync<FinalizeInvoice, FinalizationResult>(
-            Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, confirmed, token), CancellationToken.None);
-
-        if (result.Refusal is FinalizationRefusal.TotalsChanged)
+        return RunAsync(async () =>
         {
-            // The panel stays open over the new totals, for a second confirmation.
-            _preview = result;
-            return;
-        }
+            FinalizationResult result = await Operations.RunAsync<FinalizeInvoice, FinalizationResult>(
+                Permissions.InvoicesManage, (slice, token) => slice.HandleAsync(Id, confirmed, token), CancellationToken.None);
 
-        _confirming = false;
-        await ReloadAsync();
-        if (!result.Succeeded)
-        {
-            _preview = result;
-        }
-    });
+            if (result.Refusal is FinalizationRefusal.TotalsChanged)
+            {
+                // The panel stays open over the new totals, for a second confirmation.
+                _preview = result;
+                return;
+            }
+
+            _confirming = false;
+            await LoadAsync();
+            if (!result.Succeeded)
+            {
+                _preview = result;
+            }
+        });
+    }
 
     private async Task RunAsync(Func<Task> action)
     {
+        await _gate.WaitAsync();
         try
         {
             await action();
@@ -256,6 +298,14 @@
         {
             // A full reload re-runs cookie authentication, which a circuit never repeats.
             Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
         }
     }
 }

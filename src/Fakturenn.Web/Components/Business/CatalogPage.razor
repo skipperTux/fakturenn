@@ -9,6 +9,7 @@
 @inject CircuitOperations Operations
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
 
 <InteractiveProviders />
 <PageTitle>@Localizer["Catalog_PageTitle"]</PageTitle>
@@ -56,6 +57,9 @@
 }
 
 @code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
     private IReadOnlyList<CatalogItemSnapshot>? _items;
     private Guid? _selectedId;
     private string _number = string.Empty;
@@ -65,6 +69,12 @@
     private string _currency = "EUR";
     private decimal _vatRate = 19m;
     private IReadOnlyList<string> _errors = [];
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _gate.Dispose();
+    }
 
     protected override Task OnInitializedAsync() => RunAsync(LoadAsync);
 
@@ -104,13 +114,20 @@
         _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
         if (result.Id is Guid id)
         {
-            _selectedId = id;
+            // Unless the user pressed New or picked another row while this saved: neither waits
+            // for the gate.
+            if (_selectedId == form.Id)
+            {
+                _selectedId = id;
+            }
+
             await LoadAsync();
         }
     });
 
     private async Task RunAsync(Func<Task> action)
     {
+        await _gate.WaitAsync();
         try
         {
             await action();
@@ -119,6 +136,14 @@
         {
             // A full reload re-runs cookie authentication, which a circuit never repeats.
             Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
         }
     }
 }

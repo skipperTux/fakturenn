@@ -13,6 +13,7 @@
 @inject CircuitOperations Operations
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
 
 <InteractiveProviders />
 <PageTitle>@Localizer["Customers_PageTitle"]</PageTitle>
@@ -84,6 +85,9 @@
 }
 
 @code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
     private IReadOnlyList<CustomerSnapshot>? _customers;
     private IReadOnlyList<ProjectSnapshot> _projects = [];
     private IReadOnlyList<CatalogItemSnapshot> _items = [];
@@ -97,6 +101,12 @@
     private Guid? _referenceItemId;
     private string _referenceNumber = string.Empty;
     private IReadOnlyList<string> _errors = [];
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _gate.Dispose();
+    }
 
     protected override Task OnInitializedAsync() => RunAsync(LoadListsAsync);
 
@@ -149,7 +159,12 @@
         _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
         if (result.Id is Guid id)
         {
-            _selectedId = id;
+            // Unless the user pressed New while this saved: New does not wait for the gate.
+            if (_selectedId == form.Id)
+            {
+                _selectedId = id;
+            }
+
             await LoadListsAsync();
             await LoadSelectionAsync(id);
         }
@@ -173,7 +188,12 @@
             // A double submit raced itself on the unique reference; the other one saved it.
         }
 
-        _projectReference = string.Empty;
+        // Cleared only if it still holds what was saved, not what was typed since.
+        if (_projectReference == reference)
+        {
+            _projectReference = string.Empty;
+        }
+
         await LoadSelectionAsync(customerId);
     });
 
@@ -195,7 +215,11 @@
             // A double submit raced itself on the (customer, item) key; the other one saved it.
         }
 
-        _referenceNumber = string.Empty;
+        if (_referenceNumber == number)
+        {
+            _referenceNumber = string.Empty;
+        }
+
         await LoadSelectionAsync(customerId);
     });
 
@@ -204,6 +228,7 @@
 
     private async Task RunAsync(Func<Task> action)
     {
+        await _gate.WaitAsync();
         try
         {
             await action();
@@ -212,6 +237,14 @@
         {
             // A full reload re-runs cookie authentication, which a circuit never repeats.
             Navigation.NavigateTo("/account/denied", forceLoad: true);
+        }
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
         }
     }
 }

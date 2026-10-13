@@ -775,6 +775,23 @@ about code that was written for an HTTP request.
   afterwards, where resetting the `AsyncLocal` would reach only the flow that does
   it. This is `IHttpContextAccessor`'s pattern. A nested `RunAsync` would clear the
   outer principal early; nothing nests today.
+- **A business page runs one operation at a time, behind a per-page `SemaphoreSlim`
+  in its `RunAsync`.** Without it a save still in flight finished after the next one
+  and put its older state back: the preview, or, through the reload, a field changed
+  since. Each handler builds its form inside the gate. The exception is the confirmed
+  gross, taken at the click, because finalization numbers only what the user saw
+  (M12). The `_disposed` check before `Release` is load-bearing: releasing a disposed
+  `SemaphoreSlim` throws `ObjectDisposedException` (measured), which would end the
+  circuit of a user who leaves a page mid-save.
+- **After a save the invoice page refreshes only what the server decides** --
+  `_invoice` and the preview. The full load, which writes the editable fields, runs
+  on the first load, after a refused save and after finalization, and sets the
+  fields before `_invoice`: the form renders once `_invoice` is set, and a choice
+  made from then on must not be put back by the rest of the load.
+- **A browser test waits for a `MudSelect`'s option list to close before typing into
+  the next field.** `InvoiceJourneyTests.ChooseAsync` does. A fill while the list was
+  still closing read back empty straight after the fill, about once in forty, and no
+  change reached the page. A user cannot do that -- the open list covers the page.
 - **`MudNumericField` parses with the invariant culture unless `Culture` is given.**
   German "8,5" became 85. Every decimal field sets `Culture` to the user's; the
   integer fields have no separator to misread. The decimal fields also set

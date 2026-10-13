@@ -295,11 +295,20 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
     /// <summary>
     /// Opens a MudSelect and picks an option. The visible box only: with a value, the select
     /// also renders a hidden input carrying the same <c>data-testid</c>.
+    /// <para>
+    /// Returns once the option list has closed. The circuit closes it after the click, and a
+    /// fill while it is still open was measured to type into nothing: the field read back empty
+    /// straight after the fill, about once in forty, and no change reached the page. A user
+    /// cannot do that -- the open list covers the page -- so this waits rather than the page
+    /// guarding against it.
+    /// </para>
     /// </summary>
     private static async Task ChooseAsync(IPage page, string testId, string option)
     {
         await page.GetByTestId(testId).Filter(new() { Visible = true }).ClickAsync();
-        await page.GetByRole(AriaRole.Option, new() { Name = option, Exact = true }).ClickAsync();
+        ILocator choice = page.GetByRole(AriaRole.Option, new() { Name = option, Exact = true });
+        await choice.ClickAsync();
+        await Expect(choice).ToBeHiddenAsync();
     }
 
     /// <summary>

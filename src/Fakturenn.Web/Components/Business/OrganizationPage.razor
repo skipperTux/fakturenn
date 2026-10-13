@@ -8,6 +8,7 @@
 @inject CircuitOperations Operations
 @inject NavigationManager Navigation
 @inject IStringLocalizer<SharedResource> Localizer
+@implements IDisposable
 
 <InteractiveProviders />
 <PageTitle>@Localizer["Organization_PageTitle"]</PageTitle>
@@ -56,6 +57,9 @@
 }
 
 @code {
+    // One operation at a time; see InvoicePage.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
     private OrganizationForm? _form;
     private string _legalName = string.Empty;
     private string _country = string.Empty;
@@ -73,46 +77,55 @@
     private bool _saved;
     private IReadOnlyList<OrganizationError> _errors = [];
 
-    protected override async Task OnInitializedAsync()
+    public void Dispose()
     {
-        OrganizationForm form;
-        try
-        {
-            form = await Operations.RunAsync<GetOrganization, OrganizationForm>(
-                Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
-            _schemeLocked = await Operations.RunAsync<INumberingStatus, bool>(
-                Permissions.OrganizationManage, (status, token) => status.AnyNumberAllocatedAsync(token), CancellationToken.None);
-        }
-        catch (OperationRefusedException)
-        {
-            // A full reload re-runs cookie authentication, which a circuit never repeats.
-            Navigation.NavigateTo("/account/denied", forceLoad: true);
-            return;
-        }
+        _disposed = true;
+        _gate.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() => RunAsync(async () =>
+    {
+        OrganizationForm form = await Operations.RunAsync<GetOrganization, OrganizationForm>(
+            Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(token), CancellationToken.None);
+        _schemeLocked = await Operations.RunAsync<INumberingStatus, bool>(
+            Permissions.OrganizationManage, (status, token) => status.AnyNumberAllocatedAsync(token), CancellationToken.None);
 
         (_legalName, _country, _vatId, _iban, _currency, _timeZone) =
             (form.LegalName, form.CountryCode, form.VatId, form.Iban, form.Currency, form.TimeZoneId);
         (_paymentTerms, _issueDateDefault, _prefix, _scope, _padding, _nextNumber) =
             (form.PaymentTermsDays, form.IssueDateDefault, form.NumberPrefix, form.NumberScope, form.NumberPadding, form.NumberNextValue);
         _form = form;
-    }
+    });
 
-    private async Task SaveAsync()
+    private Task SaveAsync() => RunAsync(async () =>
     {
         _saved = false;
         OrganizationForm form = new(_legalName, _country, _vatId, _iban, _currency, _timeZone, _paymentTerms,
             _issueDateDefault, _prefix, _scope, _padding, _nextNumber);
+        _errors = await Operations.RunAsync<SaveOrganization, IReadOnlyList<OrganizationError>>(
+            Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+        _saved = _errors.Count == 0;
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        await _gate.WaitAsync();
         try
         {
-            _errors = await Operations.RunAsync<SaveOrganization, IReadOnlyList<OrganizationError>>(
-                Permissions.OrganizationManage, (slice, token) => slice.HandleAsync(form, token), CancellationToken.None);
+            await action();
         }
         catch (OperationRefusedException)
         {
+            // A full reload re-runs cookie authentication, which a circuit never repeats.
             Navigation.NavigateTo("/account/denied", forceLoad: true);
-            return;
         }
-
-        _saved = _errors.Count == 0;
+        finally
+        {
+            // Left mid-operation: Dispose has run, and releasing a disposed semaphore throws.
+            if (!_disposed)
+            {
+                _gate.Release();
+            }
+        }
     }
 }
