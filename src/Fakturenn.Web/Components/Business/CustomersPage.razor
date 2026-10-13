@@ -6,6 +6,7 @@
 @using Fakturenn.Modules.Customers
 @using Fakturenn.Modules.Customers.Contracts
 @using Fakturenn.Modules.Customers.Features
+@using Fakturenn.Modules.Projects
 @using Fakturenn.Modules.Projects.Contracts
 @using Fakturenn.Modules.Projects.Features
 @using Microsoft.EntityFrameworkCore
@@ -59,8 +60,7 @@
         </RowTemplate>
     </MudTable>
     <MudStack Row="true" AlignItems="AlignItems.Center">
-        @* varchar(50), and SaveProject has no length rule of its own. *@
-        <MudTextField @bind-Value="_projectReference" Label="@Localizer["Customers_ProjectReference"]" MaxLength="50" data-testid="project-reference" />
+        <MudTextField @bind-Value="_projectReference" Label="@Localizer["Customers_ProjectReference"]" MaxLength="@Project.MaxReferenceLength" data-testid="project-reference" />
         <MudButton OnClick="AddProjectAsync" Variant="Variant.Outlined" data-testid="project-add">@Localizer["Common_Add"]</MudButton>
     </MudStack>
 
@@ -78,8 +78,7 @@
                 <MudSelectItem T="Guid?" Value="item.Id">@item.CatalogItemNumber</MudSelectItem>
             }
         </MudSelect>
-        @* varchar(50), and SaveCatalogItemReference has no length rule of its own. *@
-        <MudTextField @bind-Value="_referenceNumber" Label="@Localizer["Customers_CustomerCatalogItemNumber"]" MaxLength="50" data-testid="reference-number" />
+        <MudTextField @bind-Value="_referenceNumber" Label="@Localizer["Customers_CustomerCatalogItemNumber"]" MaxLength="@CustomerRules.MaxCustomerCatalogItemNumberLength" data-testid="reference-number" />
         <MudButton OnClick="SaveReferenceAsync" Variant="Variant.Outlined" data-testid="reference-save">@Localizer["Common_Save"]</MudButton>
     </MudStack>
 }

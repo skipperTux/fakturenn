@@ -24,6 +24,9 @@ public static class CustomerRules
     public const int MaxLegalNameLength = 200;
     public const int MaxCustomerNumberLength = 50;
 
+    /// <summary>The column's length. SaveCatalogItemReference has no length rule of its own.</summary>
+    public const int MaxCustomerCatalogItemNumberLength = 50;
+
     // public static Methods
     public static IReadOnlyList<CustomerError> Validate(CustomerForm form)
     {

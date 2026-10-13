@@ -30,7 +30,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         modelBuilder.Entity<CustomerCatalogItemReference>(reference =>
         {
             reference.HasKey(r => new { r.CustomerId, r.CatalogItemId });
-            reference.Property(r => r.CustomerCatalogItemNumber).HasMaxLength(50);
+            reference.Property(r => r.CustomerCatalogItemNumber).HasMaxLength(CustomerRules.MaxCustomerCatalogItemNumberLength);
             reference.HasOne<Customer>().WithMany().HasForeignKey(r => r.CustomerId).OnDelete(DeleteBehavior.Cascade);
         });
 

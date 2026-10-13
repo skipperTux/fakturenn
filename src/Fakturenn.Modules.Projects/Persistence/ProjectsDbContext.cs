@@ -19,7 +19,7 @@ public sealed class ProjectsDbContext(DbContextOptions<ProjectsDbContext> option
 
         modelBuilder.Entity<Project>(project =>
         {
-            project.Property(p => p.Reference).HasMaxLength(50);
+            project.Property(p => p.Reference).HasMaxLength(Project.MaxReferenceLength);
             project.HasIndex(p => new { p.CustomerId, p.Reference }).IsUnique();
         });
 
