@@ -93,6 +93,7 @@
     private IReadOnlyList<CatalogItemSnapshot> _items = [];
     private IReadOnlyDictionary<Guid, string> _references = new Dictionary<Guid, string>();
     private Guid? _selectedId;
+    private int _selection;
     private string _legalName = string.Empty;
     private string _country = string.Empty;
     private string _vatId = string.Empty;
@@ -120,6 +121,7 @@
 
     private Task SelectAsync(CustomerSnapshot customer) => RunAsync(async () =>
     {
+        _selection++;
         _selectedId = customer.Id;
         (_legalName, _country, _vatId, _number) = (customer.LegalName, customer.CountryCode, customer.VatId ?? string.Empty, customer.CustomerNumber);
         _errors = [];
@@ -136,6 +138,7 @@
 
     private void New()
     {
+        _selection++;
         _selectedId = null;
         (_legalName, _country, _vatId, _number) = (string.Empty, string.Empty, string.Empty, string.Empty);
         _errors = [];
@@ -144,6 +147,7 @@
     private Task SaveAsync() => RunAsync(async () =>
     {
         CustomerForm form = new(_selectedId, _legalName, _country, _vatId, _number);
+        int selection = _selection;
         SaveResult result;
         try
         {
@@ -159,14 +163,16 @@
         _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
         if (result.Id is Guid id)
         {
-            // Unless the user pressed New while this saved: New does not wait for the gate.
-            if (_selectedId == form.Id)
+            await LoadListsAsync();
+
+            // New does not wait for the gate. Pressed while this saved, the form belongs to
+            // another record, and binding it to this one would let its next save overwrite it.
+            // A counter, not the ids: a create starts from null, and New resets to null.
+            if (_selection == selection)
             {
                 _selectedId = id;
+                await LoadSelectionAsync(id);
             }
-
-            await LoadListsAsync();
-            await LoadSelectionAsync(id);
         }
     });
 

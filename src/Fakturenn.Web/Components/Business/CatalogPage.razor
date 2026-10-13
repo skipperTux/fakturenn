@@ -62,6 +62,7 @@
     private bool _disposed;
     private IReadOnlyList<CatalogItemSnapshot>? _items;
     private Guid? _selectedId;
+    private int _selection;
     private string _number = string.Empty;
     private string _name = string.Empty;
     private string _unit = "HUR";
@@ -84,6 +85,7 @@
 
     private void Select(CatalogItemSnapshot item)
     {
+        _selection++;
         _selectedId = item.Id;
         (_number, _name, _unit, _price, _currency, _vatRate) = (item.CatalogItemNumber, item.Name, item.Unit, item.UnitPrice, item.Currency, item.VatRate);
         _errors = [];
@@ -91,6 +93,7 @@
 
     private void New()
     {
+        _selection++;
         _selectedId = null;
         (_number, _name, _unit, _price, _currency, _vatRate) = (string.Empty, string.Empty, "HUR", 0m, "EUR", 19m);
         _errors = [];
@@ -99,6 +102,7 @@
     private Task SaveAsync() => RunAsync(async () =>
     {
         CatalogItemForm form = new(_selectedId, _number, _name, _unit, _price, _currency, _vatRate);
+        int selection = _selection;
         CatalogSaveResult result;
         try
         {
@@ -114,9 +118,11 @@
         _errors = [.. result.Errors.Select(error => RefusalMessages.For(Localizer, error))];
         if (result.Id is Guid id)
         {
-            // Unless the user pressed New or picked another row while this saved: neither waits
-            // for the gate.
-            if (_selectedId == form.Id)
+            // New and a row click do not wait for the gate. Either one while this saved means
+            // the form belongs to another record, and binding it to this one would let its next
+            // save overwrite it. A counter, not the ids: a create starts from null, and New
+            // resets to null.
+            if (_selection == selection)
             {
                 _selectedId = id;
             }
