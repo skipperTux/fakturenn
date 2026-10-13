@@ -141,6 +141,8 @@ Types:
 - Expense
 - Product
 
+`Type` is deferred to E05; Stage 1 stores no type.
+
 Customer-specific reference:
 
 ```text

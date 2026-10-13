@@ -15,9 +15,11 @@ namespace Fakturenn.Web;
 
 /// <summary>
 /// Registers ASP.NET Core Identity, permission-based authorization and the shared
-/// Data Protection key ring in the host. Nothing here reaches into a module: the
-/// module owns its entities, its context and its migrations, and this is the one
-/// place that composes them with the framework.
+/// Data Protection key ring in the host, and the circuit plumbing the interactive pages
+/// depend on: <see cref="CircuitOperations"/>, the ambient <see cref="CurrentPrincipal"/>
+/// and the security-stamp revalidating authentication state provider. Nothing here
+/// reaches into a module: the module owns its entities, its context and its migrations,
+/// and this is the one place that composes them with the framework.
 /// </summary>
 public static class IdentityConfiguration
 {

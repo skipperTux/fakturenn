@@ -362,8 +362,7 @@ mechanisms, on purpose:
   `dotnet format` strips it from the migration itself but **not** from the
   `.Designer.cs` or the model snapshot, because it skips files marked
   auto-generated. Those two need stripping by hand after every `migrations add`,
-  or
-  the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
+  or the next `dotnet format --verify-no-changes` fails on CHARSET. Verify with
   `head -c3 <file> | od -An -tx1` — `ef bb bf` means the BOM is still there.
   CI's BOM check rejects it, so strip every generated `.cs`, the model snapshot
   included.
@@ -756,8 +755,8 @@ about code that was written for an HTTP request.
 - **`/` (Home) stays `[AllowAnonymous]` and shows only the tagline.** The
   authenticated-by-default fallback policy covers every other page; Home is the
   one exception, so a signed-out visitor has somewhere to land. Business
-  navigation therefore sits in the layout behind the signed-in check, not on Home. Anything added to Home is
-  public.
+  navigation therefore sits in the layout behind the signed-in check, not on
+  Home. Anything added to Home is public.
 - **`CircuitOperations` is the only door from a page to a module.** It re-reads
   `AuthenticationStateProvider` and authorizes on every call, because a circuit
   makes no new HTTP request: the page attribute is evaluated once, and revalidation
@@ -777,8 +776,11 @@ about code that was written for an HTTP request.
   it. This is `IHttpContextAccessor`'s pattern. A nested `RunAsync` would clear the
   outer principal early; nothing nests today.
 - **`MudNumericField` parses with the invariant culture unless `Culture` is given.**
-  German "8,5" became 85. Every decimal field sets `Culture` to the user's; the integer fields have no separator to misread.
-  `MudDatePicker` sends a second change after a refused save, so a save that
+  German "8,5" became 85. Every decimal field sets `Culture` to the user's; the
+  integer fields have no separator to misread. The decimal fields also set
+  `Format="0.####"`: Npgsql reads a `numeric` back with the column's scale, so a
+  reloaded 8 otherwise reads "8.0000".
+- **`MudDatePicker` sends a second change after a refused save**, so a save that
   changes nothing is a guarded no-op rather than a second refusal.
 
 ## Antiforgery, the security stamp, and forms that sit open
@@ -884,9 +886,9 @@ already signed out.
   `AspNetUserClaims`, `AspNetUserTokens`, plus logins) are kept.
 - **The account pages are static SSR, and they rely on it.** Only the business pages
   declare a render mode (see "Circuits"); `<Routes />` and every account page
-  declare none, so no circuit is negotiated for them. Two things depend on it. First, all the account forms post to real
-  endpoints (`AccountEndpoints`) rather than handling submission in a component,
-  because `SignInManager` issues the authentication cookie by writing a `Set-Cookie`
+  declare none, so no circuit is negotiated for them. Two things depend on it.
+  First, all the account forms post to real endpoints (`AccountEndpoints`) rather
+  than handling submission in a component, because `SignInManager` issues the authentication cookie by writing a `Set-Cookie`
   header to the HTTP *response*, and a component running inside an established circuit
   is handling a WebSocket message, not a request whose response headers are still
   open. This is a structural constraint, not a tuning problem: it is why every form in
@@ -971,13 +973,12 @@ already signed out.
 - **`/_blazor` is deliberately NOT allowlisted, and that is a decision, not an
   oversight.** `AddInteractiveServerRenderMode()` is registered and
   `MapRazorComponents` runs after the gate, so circuit requests do reach it and are
-  redirected. Account pages are static, so they never ask for a circuit. A business
-  page does declare `InteractiveServer`, so a gated user who opens one gets a page
-  that loads and does nothing, which looks like a broken component rather than a
-  gate decision. Failing closed is still correct: allowlisting the circuit endpoint would
-  let a gated user render any interactive page server-side and bypass the gate
-  entirely. Whoever introduces interactivity has to decide what a half-enrolled
-  user's circuit may do.
+  redirected. Account pages are static, so they never ask for a circuit. A gated
+  user who opens a business page never gets as far as a circuit either: the
+  business routes are not allowlisted, so `EnrolmentGateMiddleware` redirects the
+  page GET itself to the outstanding obligation. Allowlisting the circuit endpoint
+  would let a gated user render any interactive page server-side and bypass the
+  gate entirely.
 - **Static-asset allowlist entries would be dead code, and this was measured against
   a `dotnet publish` output rather than the test host.** Instrumenting the gate to
   log every path it sees: `/app.css`, `/_framework/blazor.web.js` and
@@ -1307,7 +1308,6 @@ installed from `IdentityDbContext.OnConfiguring`. Added in E02a Task 14.
   change only about every 65 seconds, so test data that takes the first eight
   characters as a uniqueness suffix gets the same one all test run. Use
   `Guid.NewGuid()` for suffixes.
-
 - **EF Core does not pluralise a model name. The table takes the `DbSet`
   property's name**, which convention makes plural, which is why the Identity
   tables are `Roles` / `RolePermissions` / `UserRoles` while the entities are

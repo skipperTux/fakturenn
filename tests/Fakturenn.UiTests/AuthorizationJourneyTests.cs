@@ -53,7 +53,8 @@ public sealed class AuthorizationJourneyTests(AuthenticatedWebAppFixture app) : 
         // 302 to the sign-in page. The framework script is served by UseStaticFiles, which
         // runs before UseAuthorization, so a signed-out visitor still gets the runtime. It
         // is tested here and not in AnonymousAccessTests because only this host runs in
-        // Development, where the file exists; the integration host answers 404 for it.
+        // Development, where the file exists; the integration host has no such file, so the
+        // fallback policy answers 302 for the path there.
         IBrowserContext context = await AuthenticatedWebAppFixture.NewContextAsync(_browser!);
         IPage page = await context.NewPageAsync();
 
