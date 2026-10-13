@@ -62,7 +62,7 @@
         @if (_invoice.Gross is decimal gross)
         {
             <MudText>@Localizer["Invoice_Net"]: <span data-testid="invoice-net">@_invoice.Net?.ToString("N2")</span> @_invoice.Currency</MudText>
-            <MudText>@Localizer["Invoice_Vat"] (@_invoice.TaxCategory, @_invoice.VatRate?.ToString("0.##")&nbsp;%): <span data-testid="invoice-vat">@_invoice.Vat?.ToString("N2")</span> @_invoice.Currency</MudText>
+            <MudText>@Localizer["Invoice_Vat"]@TaxLabel(_invoice): <span data-testid="invoice-vat">@_invoice.Vat?.ToString("N2")</span> @_invoice.Currency</MudText>
             <MudText Typo="Typo.h6">@Localizer["Invoice_Gross"]: <span data-testid="invoice-gross">@gross.ToString("N2")</span> @_invoice.Currency</MudText>
         }
         else if (_preview?.Totals is InvoiceTotals totals)
@@ -75,9 +75,10 @@
         {
             <MudAlert Severity="Severity.Warning" data-testid="invoice-refusal">@RefusalMessages.For(Localizer, refusal)</MudAlert>
         }
+        @* Cleared with the figures by an edit to a numbered invoice, so nothing stale shows. *@
         @if (_invoice.DueDate is DateOnly due)
         {
-            <MudText>@Localizer["Invoice_DueDate"]: @due.ToString("d")</MudText>
+            <MudText data-testid="invoice-due-date">@Localizer["Invoice_DueDate"]: @due.ToString("d")</MudText>
         }
     </MudPaper>
 
@@ -209,6 +210,10 @@
         // figures, and the page has to show that it needs confirming again.
         await ReloadAsync();
     }
+
+    // Shown only when present: an edit to a numbered invoice clears the decision with the figures.
+    private static string TaxLabel(InvoiceView invoice) =>
+        invoice is { TaxCategory: TaxCategory category, VatRate: decimal rate } ? $" ({category}, {rate:0.##}\u00a0%)" : string.Empty;
 
     private DraftForm? SavedForm() => _invoice is { CatalogItemId: Guid catalogItemId } saved
         ? new(saved.Id, saved.CustomerId, saved.ProjectId, catalogItemId, saved.Quantity,

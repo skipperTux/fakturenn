@@ -97,12 +97,14 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
         await page.GetByTestId("invoice-review").ClickAsync();
         await page.GetByTestId("invoice-confirm").ClickAsync();
         await Expect(page.GetByTestId("invoice-number")).ToHaveTextAsync(InvoiceNumber());
+        await Expect(page.GetByTestId("invoice-due-date")).ToBeVisibleAsync();
         string number = await page.GetByTestId("invoice-number").InnerTextAsync();
 
         await page.GetByTestId("invoice-quantity").FillAsync("9");
         await page.GetByTestId("invoice-quantity").PressAsync("Tab");
 
         await Expect(page.GetByTestId("invoice-needs-confirmation")).ToBeVisibleAsync();
+        await Expect(page.GetByTestId("invoice-due-date")).ToBeHiddenAsync();
         await Expect(page.GetByTestId("invoice-gross")).ToHaveTextAsync("1,071.00");
         await page.GetByTestId("invoice-review").ClickAsync();
         await page.GetByTestId("invoice-confirm").ClickAsync();
@@ -111,6 +113,7 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
         await Expect(page.GetByTestId("invoice-review")).ToBeHiddenAsync();
         await Expect(page.GetByTestId("invoice-number")).ToHaveTextAsync(number);
         await Expect(page.GetByTestId("invoice-gross")).ToHaveTextAsync("1,071.00");
+        await Expect(page.GetByTestId("invoice-due-date")).ToBeVisibleAsync();
     }
 
     [Fact]

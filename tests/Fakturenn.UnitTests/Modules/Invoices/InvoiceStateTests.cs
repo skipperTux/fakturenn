@@ -85,8 +85,11 @@ public sealed class InvoiceStateTests
         invoice.Lines[0].NetAmount.Should().BeNull();
         invoice.Lines[0].TaxCategory.Should().BeNull();
         invoice.Lines[0].VatRate.Should().BeNull();
+        invoice.TaxCategory.Should().BeNull();
+        invoice.VatRate.Should().BeNull();
+        invoice.DueDate.Should().BeNull("finalization derives it, and finalization repopulates it");
         invoice.Number.Should().Be("R2608311");
-        invoice.DueDate.Should().Be(_issue.AddDays(14));
+        invoice.IssueDate.Should().Be(_issue);
     }
 
     [Fact]
@@ -97,6 +100,9 @@ public sealed class InvoiceStateTests
         invoice.Edit(invoice.CustomerId, null, _issue, _issue, _issue);
 
         invoice.GrossAmount.Should().BeNull();
+        invoice.TaxCategory.Should().BeNull();
+        invoice.VatRate.Should().BeNull();
+        invoice.DueDate.Should().BeNull();
     }
 
     [Fact]
@@ -124,6 +130,9 @@ public sealed class InvoiceStateTests
         invoice.GrossAmount.Should().Be(1071.00m);
         invoice.Lines[0].NetAmount.Should().Be(900.00m);
         invoice.Lines[0].VatRate.Should().Be(19m);
+        invoice.TaxCategory.Should().Be(TaxCategory.S);
+        invoice.VatRate.Should().Be(19m);
+        invoice.DueDate.Should().Be(_issue.AddDays(14));
     }
 
     [Fact]

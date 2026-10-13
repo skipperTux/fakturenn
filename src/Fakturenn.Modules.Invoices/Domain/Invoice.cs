@@ -148,11 +148,16 @@ public sealed class Invoice : IAuditable
     // private Methods
     // A changed numbered invoice no longer matches its figures; the page autosaves, so an
     // unchanged save must keep them. Finalization under the same number repopulates them.
+    // Everything finalization derives goes, the due date and the tax decision included; the
+    // number and the issue date are frozen at allocation and stay.
     private void ClearFigures()
     {
+        DueDate = null;
         NetAmount = null;
         VatAmount = null;
         GrossAmount = null;
+        TaxCategory = null;
+        VatRate = null;
         foreach (InvoiceLine line in _lines)
         {
             line.NetAmount = null;
