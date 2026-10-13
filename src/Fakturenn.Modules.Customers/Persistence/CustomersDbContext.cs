@@ -22,7 +22,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         {
             customer.Property(c => c.LegalName).HasMaxLength(CustomerRules.MaxLegalNameLength);
             customer.Property(c => c.CountryCode).HasMaxLength(2);
-            customer.Property(c => c.VatId).HasMaxLength(14);
+            customer.Property(c => c.VatId).HasMaxLength(EuIdentifiers.MaxVatIdLength);
             customer.Property(c => c.CustomerNumber).HasMaxLength(CustomerRules.MaxCustomerNumberLength);
             customer.HasIndex(c => c.CustomerNumber).IsUnique();
         });

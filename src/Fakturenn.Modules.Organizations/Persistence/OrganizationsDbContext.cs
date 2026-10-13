@@ -25,7 +25,7 @@ public sealed class OrganizationsDbContext(DbContextOptions<OrganizationsDbConte
                 $"\"Id\" = '{Organization.SingletonId}'"));
             organization.Property(o => o.LegalName).HasMaxLength(200);
             organization.Property(o => o.CountryCode).HasMaxLength(2);
-            organization.Property(o => o.VatId).HasMaxLength(14);
+            organization.Property(o => o.VatId).HasMaxLength(EuIdentifiers.MaxVatIdLength);
             organization.Property(o => o.Iban).HasMaxLength(34);
             organization.Property(o => o.Currency).HasMaxLength(3);
             organization.Property(o => o.TimeZoneId).HasMaxLength(64);

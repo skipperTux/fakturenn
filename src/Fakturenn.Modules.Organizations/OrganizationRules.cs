@@ -1,6 +1,6 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 using Fakturenn.Modules.Organizations.Contracts;
+using Fakturenn.SharedKernel;
 
 namespace Fakturenn.Modules.Organizations;
 
@@ -63,12 +63,12 @@ public static partial class OrganizationRules
             errors.Add(OrganizationError.LegalNameTooLong);
         }
 
-        if (form.CountryCode.Length > 0 && !IsCountry(form.CountryCode))
+        if (form.CountryCode.Length > 0 && !EuIdentifiers.IsCountry(form.CountryCode))
         {
             errors.Add(OrganizationError.CountryInvalid);
         }
 
-        if (form.VatId.Length > 0 && !IsVatIdFor(form.CountryCode, form.VatId))
+        if (form.VatId.Length > 0 && !EuIdentifiers.IsVatIdFor(form.CountryCode, form.VatId))
         {
             errors.Add(OrganizationError.VatIdInvalid);
         }
@@ -116,37 +116,6 @@ public static partial class OrganizationRules
         iban.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
 
     // private static Methods
-    private static bool IsCountry(string code)
-    {
-        if (!CountryPattern().IsMatch(code))
-        {
-            return false;
-        }
-
-        try
-        {
-            return string.Equals(new RegionInfo(code).TwoLetterISORegionName, code, StringComparison.Ordinal);
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
-    private static bool IsVatIdFor(string country, string vatId)
-    {
-        Match match = VatIdPattern().Match(vatId);
-        if (!match.Success)
-        {
-            return false;
-        }
-
-        // Greece uses EL in VAT IDs and GR as its ISO 3166 code.
-        string prefix = match.Groups["country"].Value;
-        return string.Equals(prefix, country, StringComparison.Ordinal)
-            || (prefix == "EL" && country == "GR");
-    }
-
     private static bool IsIban(string input)
     {
         string iban = NormalizeIban(input);
@@ -184,12 +153,6 @@ public static partial class OrganizationRules
             return false;
         }
     }
-
-    [GeneratedRegex("^[A-Z]{2}\\z", RegexOptions.CultureInvariant)]
-    private static partial Regex CountryPattern();
-
-    [GeneratedRegex("^(?<country>[A-Z]{2})[A-Z0-9+*]{2,12}\\z", RegexOptions.CultureInvariant)]
-    private static partial Regex VatIdPattern();
 
     [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex IbanPattern();
