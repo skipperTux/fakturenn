@@ -223,7 +223,8 @@ playwright -p tests/Fakturenn.UiTests/Fakturenn.UiTests.csproj install chromium
 dotnet run --project src/Fakturenn.Web --urls http://127.0.0.1:5099
 
 # Apply migrations — never happens automatically. Runs the EF migrations, provisions
-# Wolverine's message storage, seeds the system roles, and refuses (exit 1) if the
+# Wolverine's message storage, inserts the organization row if it is missing (never
+# touching an existing one), seeds the system roles, and refuses (exit 1) if the
 # database stores a permission this version does not define. No transaction spans the
 # steps: a failure part-way names the step and leaves the operator to restore a backup.
 dotnet run --project src/Fakturenn.Web -- --migrate

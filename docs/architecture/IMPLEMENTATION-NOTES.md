@@ -776,14 +776,16 @@ about code that was written for an HTTP request.
   it. This is `IHttpContextAccessor`'s pattern. A nested `RunAsync` would clear the
   outer principal early; nothing nests today.
 - **A business page runs one operation at a time, behind a per-page `SemaphoreSlim`
-  in its `RunAsync`.** Without it a save still in flight finished after the next one
-  and put its older state back: the preview, or, through the reload, a field changed
-  since. Each handler builds its form inside the gate. The exception is the confirmed
-  gross, taken at the click, because finalization numbers only what the user saw
-  (M12). The `_disposed` check before `Release` is load-bearing: releasing a disposed
-  `SemaphoreSlim` throws `ObjectDisposedException` (measured), which would end the
-  circuit of a user who leaves a page mid-save.
-- **After a save the invoice page refreshes only what the server decides** --
+  in its `RunAsync`.** Without it a save still in flight could finish after the next
+  one and put its older state back: the preview, or, through the reload, a field
+  changed since. That is reasoned from the code, not measured — removing the gate
+  left the business-page browser tests green ten runs in ten. Each handler builds its
+  form inside the gate. The exception is the confirmed gross, taken at the click,
+  because finalization numbers only what the user saw (M12). The `_disposed` check
+  before `Release` is load-bearing: releasing a disposed `SemaphoreSlim` throws
+  `ObjectDisposedException` (measured), which would end the circuit of a user who
+  leaves a page mid-save.
+- **After a save the invoice page refreshes only what the server decides** —
   `_invoice` and the preview. The full load, which writes the editable fields, runs
   on the first load, after a refused save and after finalization, and sets the
   fields before `_invoice`: the form renders once `_invoice` is set, and a choice
@@ -791,7 +793,7 @@ about code that was written for an HTTP request.
 - **A browser test waits for a `MudSelect`'s option list to close before typing into
   the next field.** `InvoiceJourneyTests.ChooseAsync` does. A fill while the list was
   still closing read back empty straight after the fill, about once in forty, and no
-  change reached the page. A user cannot do that -- the open list covers the page.
+  change reached the page. A user cannot do that — the open list covers the page.
 - **`MudNumericField` parses with the invariant culture unless `Culture` is given.**
   German "8,5" became 85. Every decimal field sets `Culture` to the user's; the
   integer fields have no separator to misread. The decimal fields also set
@@ -905,8 +907,9 @@ already signed out.
   declare a render mode (see "Circuits"); `<Routes />` and every account page
   declare none, so no circuit is negotiated for them. Two things depend on it.
   First, all the account forms post to real endpoints (`AccountEndpoints`) rather
-  than handling submission in a component, because `SignInManager` issues the authentication cookie by writing a `Set-Cookie`
-  header to the HTTP *response*, and a component running inside an established circuit
+  than handling submission in a component, because `SignInManager` issues the
+  authentication cookie by writing a `Set-Cookie` header to the HTTP *response*,
+  and a component running inside an established circuit
   is handling a WebSocket message, not a request whose response headers are still
   open. This is a structural constraint, not a tuning problem: it is why every form in
   `Components/Account/` posts to a route rather than binding an `@onclick`. Second,
