@@ -68,6 +68,11 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
         await DraftAsync(page, app, "DEV-BACKEND", "8,5");
 
         await Expect(page.GetByTestId("invoice-net")).ToContainTextAsync("850,00");
+
+        // Reloaded from numeric(18,4), whose scale Npgsql keeps: without a format the field
+        // would read back "8,5000".
+        await page.ReloadAsync();
+        await Expect(page.GetByTestId("invoice-quantity")).ToHaveValueAsync("8,5");
     }
 
     [Fact]
@@ -84,6 +89,14 @@ public sealed partial class InvoiceJourneyTests(AuthenticatedWebAppFixture app) 
         await Expect(page.Locator("tr", new() { Has = page.GetByTestId("catalog-row").Filter(new() { HasText = "PRICE-DE" }) }))
             .ToContainTextAsync("100,50 EUR");
         (await app.ReadCatalogItemUnitPriceAsync("PRICE-DE")).Should().Be(100.50m);
+
+        // Reloaded, the stored scale comes back with the value: "100,5000" and "19,00"
+        // without a format on the fields.
+        await page.ReloadAsync();
+        await page.GetByTestId("catalog-row").Filter(new() { HasText = "PRICE-DE" }).ClickAsync();
+        await Expect(page.GetByTestId("catalog-number")).ToHaveValueAsync("PRICE-DE");
+        await Expect(page.GetByTestId("catalog-price")).ToHaveValueAsync("100,5");
+        await Expect(page.GetByTestId("catalog-vat-rate")).ToHaveValueAsync("19");
     }
 
     [Fact]

@@ -39,10 +39,11 @@
         <MudTextField @bind-Value="_name" Label="@Localizer["Catalog_Name"]" MaxLength="@CatalogRules.MaxNameLength" data-testid="catalog-name" />
         <MudTextField @bind-Value="_unit" Label="@Localizer["Catalog_Unit"]" MaxLength="3" data-testid="catalog-unit" />
         @* Culture given explicitly: without it MudNumericField 9.11 switches to the invariant
-           culture after its first render, and "100,50" in German reads as 10050 (review M14). *@
-        <MudNumericField T="decimal" @bind-Value="_price" Label="@Localizer["Catalog_UnitPrice"]" Min="0" Culture="CultureInfo.CurrentCulture" data-testid="catalog-price" />
+           culture after its first render, and "100,50" in German reads as 10050 (review M14).
+           The format drops the column scale Npgsql reads back: "100,5", not "100,5000". *@
+        <MudNumericField T="decimal" @bind-Value="_price" Label="@Localizer["Catalog_UnitPrice"]" Min="0" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-price" />
         <MudTextField @bind-Value="_currency" Label="@Localizer["Catalog_Currency"]" MaxLength="3" data-testid="catalog-currency" />
-        <MudNumericField T="decimal" @bind-Value="_vatRate" Label="@Localizer["Catalog_VatRate"]" Min="0" Max="100" Culture="CultureInfo.CurrentCulture" data-testid="catalog-vat-rate" />
+        <MudNumericField T="decimal" @bind-Value="_vatRate" Label="@Localizer["Catalog_VatRate"]" Min="0" Max="100" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-vat-rate" />
         @foreach (string error in _errors)
         {
             <MudAlert Severity="Severity.Error" data-testid="catalog-error">@error</MudAlert>

@@ -49,8 +49,9 @@
             }
         </MudSelect>
         @* Culture given explicitly: without it MudNumericField 9.11 switches to the invariant
-           culture after its first render, and "8,5" in German reads as 85 (review M14). *@
-        <MudNumericField T="decimal" @bind-Value="_quantity" @bind-Value:after="ChangedAsync" Disabled="Locked" Culture="CultureInfo.CurrentCulture" Label="@Localizer["Invoice_Quantity"]" data-testid="invoice-quantity" />
+           culture after its first render, and "8,5" in German reads as 85 (review M14). The
+           format drops the scale Npgsql reads back from numeric(18,4): "8", not "8,0000". *@
+        <MudNumericField T="decimal" @bind-Value="_quantity" @bind-Value:after="ChangedAsync" Disabled="Locked" Culture="CultureInfo.CurrentCulture" Format="0.####" Label="@Localizer["Invoice_Quantity"]" data-testid="invoice-quantity" />
         <MudDatePicker @bind-Date="_issueDate" @bind-Date:after="ChangedAsync" Disabled="@(_invoice.State != InvoiceState.Draft)" Label="@Localizer["Invoice_IssueDate"]" data-testid="invoice-issue-date" />
         <MudDatePicker @bind-Date="_periodStart" @bind-Date:after="ChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_ServicePeriodStart"]" data-testid="invoice-period-start" />
         <MudDatePicker @bind-Date="_periodEnd" @bind-Date:after="ChangedAsync" Disabled="Locked" Label="@Localizer["Invoice_ServicePeriodEnd"]" data-testid="invoice-period-end" />
