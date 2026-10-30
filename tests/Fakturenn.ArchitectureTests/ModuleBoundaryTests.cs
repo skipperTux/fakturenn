@@ -21,6 +21,7 @@ public sealed class ModuleBoundaryTests
 
         assemblies.Should().Contain([
             "Fakturenn.SharedKernel",
+            "Fakturenn.SharedKernel.Persistence",
             "Fakturenn.Infrastructure.Storage",
             "Fakturenn.Infrastructure.Persistence",
             "Fakturenn.Infrastructure.DataProtection",
