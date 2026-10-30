@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DEPLOYMENT-BASELINE.md` required; now skipping it fails loudly at startup
   instead of producing an instance that accepts work and cannot guarantee
   delivery of it.
+- **Run `--migrate` after every upgrade, before starting the new version.** This
+  version's message storage gains columns and a table for failed messages, and
+  the startup check above does not look at them. An instance upgraded without
+  `--migrate` starts normally and fails only the first time a message cannot be
+  delivered.
 - **The Compose instructions run the migration first.** The published order used
   to be `docker compose up --detach` and then the migration; with the change
   above that leaves the application container exited and nothing on port 8080,
