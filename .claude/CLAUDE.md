@@ -163,8 +163,8 @@ At E02a the integration suite started **eleven concurrent PostgreSQL containers*
 at peak. Stage 1 added fixture classes since: 15 test files use
 `IClassFixture<PostgresFixture>` now. The new peak is **unmeasured**, because the
 CI log records no container starts or stops at its default verbosity. Measure it
-locally, with `docker events` running beside the suite, before you add another
-fixture: a runner has two cores.
+locally, with `podman events` (or `docker events`) running beside the suite,
+before you add another fixture: a runner has two cores.
 
 `DOTNET_USE_POLLING_FILE_WATCHER=1` is set on **all three** test jobs
 (`build-test`, `integration`, `ui`). It is insurance, not a known requirement:
