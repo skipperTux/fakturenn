@@ -1,6 +1,7 @@
 # Fakturenn branding
 
-The logo, the app icons, and how to regenerate the icons.
+The logo, the app icons, and how to regenerate the icons. Who may use the name
+and the logo, and how, is in [TRADEMARKS.md](../../TRADEMARKS.md).
 
 ## Logo
 
