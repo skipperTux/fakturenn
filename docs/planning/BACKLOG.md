@@ -167,4 +167,46 @@ validated", never as "invalid".
 
 **Why.** The current UI is deliberately minimal: the default `MudThemeProvider` with no custom theme, an app bar only, and pages that are stacks of fields. Every stage that adds pages on top of that adds more to restyle later.
 
-**Input.** The product owner brings visual examples when it starts.
+**Input.** The product owner brings visual examples when it starts. The logo and
+icons are in `docs/branding/`.
+
+**Reference to learn from.**
+[CleanArchitectureWithBlazorServer](https://github.com/neozhu/CleanArchitectureWithBlazorServer)
+(MIT; keep its notice on anything copied) runs the same stack — .NET 10,
+MudBlazor 9, Interactive Server without prerendering — and its UI is polished.
+Worth borrowing, in order of value per effort:
+
+- the theme: one file with light and dark palettes, typography and sizes
+  (`src/Server.UI/Themes/Theme.cs`)
+- the app shell: a responsive `MudDrawer` with grouped navigation and a user card
+- a page header carrying breadcrumbs on the left and the page's actions on the
+  right
+- list pages as `MudDataGrid` with `ServerData`, row action menus, and loading
+  and empty states
+- a confirmation dialog, snackbar defaults, and an `ErrorBoundary` that recovers
+  on navigation
+
+Port the markup, not the page logic. Its pages call a mediator directly; here
+every call goes through `CircuitOperations`, including a grid's `ServerData`
+delegate. It also filters its menu by role names, not permission policies, and
+carries multi-tenancy, which Fakturenn does not have. Fakturenn's layout is
+static SSR, so a drawer toggle or a dark-mode switch needs a small interactive
+component inside it.
+
+**Also in scope**, deferred to this sprint by Stage 1:
+
+- **Lists sort and filter by column.** Every list becomes a `MudDataGrid` with
+  sortable, filterable columns. Sorting starts client-side over the loaded list,
+  and moves into the slice through `ServerData` once volumes demand it. The
+  invoice number does not sort as text, because `R26083110` sorts before
+  `R2608312`. Sort it by issue date and counter instead.
+- **Navigation follows permissions.** Today the layout shows all four business
+  links to every signed-in user, so a user without the permission clicks
+  through to "Access denied".
+- **The favicon.** Serve the icons from `docs/branding/icons/`;
+  `docs/branding/BRANDING.md` says which files. Today `/favicon.ico` is answered with a
+  redirect to sign-in for a signed-out visitor, which costs a sign-in page
+  render.
+- **Edits before a catalog item is chosen.** The invoice page saves nothing until
+  an item is picked, so a customer, project or date set before that is lost when
+  the user leaves the page.
