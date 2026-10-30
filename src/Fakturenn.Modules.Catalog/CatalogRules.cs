@@ -27,8 +27,8 @@ public static partial class CatalogRules
     public const int MaxNameLength = 200;
 
     // private const Fields
-    // numeric(18,4) holds up to 10^14 - 0.0001; PostgreSQL would round further decimals silently.
-    private const int PriceScale = 4;
+    // numeric(20,6) holds up to 10^14 - 0.000001; PostgreSQL would round further decimals silently.
+    private const int PriceScale = 6;
     private const decimal PriceCeiling = 100_000_000_000_000m;
     private const int VatRateScale = 2;
 

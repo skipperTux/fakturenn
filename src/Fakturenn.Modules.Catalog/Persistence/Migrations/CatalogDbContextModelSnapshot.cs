@@ -66,8 +66,8 @@ namespace Fakturenn.Modules.Catalog.Persistence.Migrations
                         .HasColumnType("character varying(3)");
 
                     b.Property<decimal>("UnitPrice")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("numeric(18,4)");
+                        .HasPrecision(20, 6)
+                        .HasColumnType("numeric(20,6)");
 
                     b.Property<decimal>("VatRate")
                         .HasPrecision(5, 2)

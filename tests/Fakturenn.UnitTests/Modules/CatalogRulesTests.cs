@@ -89,12 +89,12 @@ public sealed class CatalogRulesTests
     }
 
     [Theory]
-    [InlineData("0.0001", false)]
-    [InlineData("0.00001", true)]
+    [InlineData("0.000001", false)]
+    [InlineData("0.0000001", true)]
     [InlineData("104.60000", false)]
-    [InlineData("99999999999999.9999", false)]
+    [InlineData("99999999999999.999999", false)]
     [InlineData("100000000000000", true)]
-    public void Price_fits_numeric_18_4_without_rounding(string price, bool outOfRange)
+    public void Price_fits_numeric_20_6_without_rounding(string price, bool outOfRange)
     {
         IReadOnlyList<CatalogError> errors = CatalogRules.Validate(
             Item() with { UnitPrice = decimal.Parse(price, System.Globalization.CultureInfo.InvariantCulture) });

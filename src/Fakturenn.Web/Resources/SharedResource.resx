@@ -337,7 +337,7 @@
     <value>The unit price must not be negative.</value>
   </data>
   <data name="Catalog_Error_PriceOutOfRange" xml:space="preserve">
-    <value>The unit price may have at most four decimal places and must be below 100,000,000,000,000.</value>
+    <value>The unit price may have at most six decimal places and must be below 100,000,000,000,000.</value>
   </data>
   <data name="Catalog_Error_UnitInvalid" xml:space="preserve">
     <value>The unit must be a UN/ECE Recommendation 20 code of up to three letters or digits, such as HUR for an hour.</value>

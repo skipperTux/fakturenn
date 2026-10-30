@@ -29,8 +29,8 @@
         <RowTemplate>
             <MudTd data-testid="catalog-row">@context.CatalogItemNumber</MudTd>
             <MudTd>@context.Name</MudTd>
-            @* Up to four decimals, as stored and as an invoice multiplies it; N2 would hide them. *@
-            <MudTd>@context.UnitPrice.ToString("#,0.00##") @context.Currency / @context.Unit</MudTd>
+            @* Up to six decimals, as stored and as an invoice multiplies it; N2 would hide them. *@
+            <MudTd>@context.UnitPrice.ToString("#,0.00####") @context.Currency / @context.Unit</MudTd>
             <MudTd>@context.VatRate.ToString("0.##")&nbsp;%</MudTd>
         </RowTemplate>
     </MudTable>
@@ -42,7 +42,7 @@
         @* Culture given explicitly: without it MudNumericField 9.11 switches to the invariant
            culture after its first render, and "100,50" in German reads as 10050 (review M14).
            The format drops the column scale Npgsql reads back: "100,5", not "100,5000". *@
-        <MudNumericField T="decimal" @bind-Value="_price" Label="@Localizer["Catalog_UnitPrice"]" Min="0" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-price" />
+        <MudNumericField T="decimal" @bind-Value="_price" Label="@Localizer["Catalog_UnitPrice"]" Min="0" Culture="CultureInfo.CurrentCulture" Format="0.######" data-testid="catalog-price" />
         <MudTextField @bind-Value="_currency" Label="@Localizer["Catalog_Currency"]" MaxLength="3" data-testid="catalog-currency" />
         <MudNumericField T="decimal" @bind-Value="_vatRate" Label="@Localizer["Catalog_VatRate"]" Min="0" Max="100" Culture="CultureInfo.CurrentCulture" Format="0.####" data-testid="catalog-vat-rate" />
         @foreach (string error in _errors)
