@@ -210,3 +210,20 @@ component inside it.
 - **Edits before a catalog item is chosen.** The invoice page saves nothing until
   an item is picked, so a customer, project or date set before that is lost when
   the user leaves the page.
+
+## Startup misses a stale message-storage schema
+
+**Lands in:** before the first tagged release that bumps Wolverine.
+
+**What happens.** The startup check refuses an instance whose message storage was
+never provisioned, but it does not compare the schema with what the running
+Wolverine version expects. WolverineFx 6.59.0 added columns to
+`wolverine_dead_letters` and a `wolverine_dead_letter_history` table, so an
+instance upgraded without `--migrate` starts normally and fails the first time a
+message is dead-lettered. The CHANGELOG tells operators to migrate after every
+upgrade. Nothing enforces it, and no test covers it.
+
+**Options.** Have startup ask Wolverine whether its storage is up to date, and
+refuse to start when it is not. Or record the applied Wolverine version during
+`--migrate` and refuse on a mismatch. Either way, add an integration test that
+provisions with the old schema and expects startup to refuse.

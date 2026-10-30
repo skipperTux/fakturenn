@@ -208,14 +208,16 @@ additions not covered there:
   `Fakturenn.UiTests` and `Fakturenn.Web.UnitTests` both rely on serial
   execution. Three sources disagreed on the replacement and two were wrong: the
   4.0.0 release notes say `ParallelMode.Off`, and the Developer Intelligence
-  MCP suggested `ParallelMode.Self`. The shipped 4.0.1 enum is `None`,
-  `Collections`, `All` — decompiled, not read about. The default is still
+  MCP suggested `ParallelMode.Self`. The shipped enum is `None`,
+  `Collections`, `All` — decompiled on 4.0.1, not read about, and re-verified on
+  4.0.2, whose `ParallelizationAttribute`, `ParallelMode` and
+  `CollectionBehaviorAttribute` decompile identically. The default is still
   `Collections`, so suites that set nothing are unaffected.
   **Do not trust a green run to prove the attribute works**: the race it
   prevents failed 2 runs in 13. Ask the runner instead —
   `bin/Release/net10.0/<Project> --xunit-info --xunit-diagnostics on` prints
   `parallel mode = none`, and `parallel mode = collections [N threads]` once
-  the attribute is removed. Remove the two `using` lines with it when mutating,
+  the attribute is removed (both re-run on 4.0.2). Remove the two `using` lines with it when mutating,
   or IDE0005 fails the build and the run silently reuses the old binary.
   4.0.0's packaging kept `xunit.v3.core` at 3.0.1 so neither type resolved;
   4.0.1 fixed that.
@@ -425,10 +427,11 @@ validation turned a scoped interceptor into "Cannot resolve scoped service from
 root provider"; without validation it silently stamped "system" instead.
 `Every_registered_context_resolves_under_scope_validation` guards it.
 
-**Last verified against Wolverine 6.48.1 and JasperFx 2.81.0** (2026-10-08), by
+**Last verified against Wolverine 6.59.0 and JasperFx 2.96.1** (2026-10-30), by
 decompiling the shipped assemblies rather than reading release notes — the
-epic's earlier mistakes all came from trusting documentation. Entries below that
-name 6.30.0 were re-checked and still hold unless they say otherwise. On the next
+epic's earlier mistakes all came from trusting documentation. The previous pass
+was 6.48.1 and JasperFx 2.81.0 (2026-10-08). An older version named below is
+history — what that version did — not where a fact was last checked. On the next
 upgrade, re-check every entry here, not only the ones a test covers: most are
 claims about library internals that no test exercises.
 
@@ -436,8 +439,10 @@ claims about library internals that no test exercises.
   `AddDbContextWithWolverineIntegration` now calls
   `ReplaceService<IModelCacheKeyFactory, WolverineModelCacheKeyFactory>()` *after*
   the caller's own options callback, keying the model on context type plus
-  Wolverine schema (GH-3497). In 6.30.0 only the tenanted builders did this. Any
-  cache-key factory the context registers itself is silently overwritten. That
+  Wolverine schema (GH-3497) — and, in 6.59.0, the conjoined-tenancy options,
+  which are null for every context here. In 6.30.0 only the tenanted builders
+  did this. Any cache-key factory the context registers itself is silently
+  overwritten. That
   matters for exactly one context here: `IdentityDbContext` depends on
   `UserTokenProtectorModelCacheKeyFactory` for the Data Protection key ring, so
   **enrolling Identity would silently undo the E02a fix.**
@@ -455,6 +460,14 @@ claims about library internals that no test exercises.
   starts, and nothing tests that. `--migrate` on every upgrade is the only thing
   keeping message storage current.
 
+  **6.59.0 is such an upgrade.** It adds seven columns to
+  `wolverine_dead_letters` and a new `wolverine_dead_letter_history` table, and
+  the probe reads neither. A database last provisioned under 6.48.1 therefore
+  starts cleanly on 6.59.0 and fails only when Wolverine first dead-letters a
+  message — `DatabasePersistence.ConfigureDeadLetterCommands` writes the new
+  columns and joins the history table. Nothing tests this: the integration suite
+  always provisions a fresh schema.
+
 - **The envelope lands in `messaging.wolverine_incoming_envelopes`, not the
   outgoing table.** `EnvelopeTransactionExtensions.PersistAsync` routes any
   envelope whose destination scheme is `local` to the inbox, and every message
@@ -464,7 +477,7 @@ claims about library internals that no test exercises.
   message under test, too: the same table also carries Wolverine's own
   control-queue envelopes, whose bodies are not valid UTF-8 — `convert_from`
   raises `22021` on the first one, so match bytes with `convert_to` instead.
-- **`UseWolverine` is an `IHostApplicationBuilder` extension in 6.30.0**, so
+- **`UseWolverine` is an `IHostApplicationBuilder` extension in 6.59.0**, so
   registration sits with the other `builder.AddFakturenn*` calls rather than on
   `builder.Host`. The configuration lambda runs before any logger exists, which
   is why `NonDurableMessagingWarning` is a hosted service instead of a log call
@@ -488,12 +501,17 @@ claims about library internals that no test exercises.
   The practical consequence: **conventional discovery finds no module handler by
   default.** With nothing named, `WolverineOptions.Assemblies` is
   `{Wolverine.RuntimeCompilation, Fakturenn.Infrastructure.Messaging}` — measured
-  by emptying the list and reading the assertion failure. Every module whose
+  by emptying the list and reading the assertion failure. Re-measured on 6.59.0
+  without editing anything: a scratch host built through
+  `FakturennWebApplication.Build` reports that application assembly and
+  `{Wolverine.RuntimeCompilation, Fakturenn.Modules.Invoices,
+  Fakturenn.Infrastructure.Messaging}` — the same default plus the one module
+  named. Every module whose
   handlers this host runs is passed to `AddFakturennMessaging` explicitly, and
   the integration fixture calls `Discovery.IncludeAssembly` for its own assembly
   for the same reason.
 - **The discovery list is `WolverineOptions.Assemblies`, not
-  `Discovery.Assemblies`.** 6.30.0 keeps that collection internal to
+  `Discovery.Assemblies`.** 6.59.0 keeps that collection internal to
   `HandlerDiscovery` and exposes it one level up; `IncludeAssembly` is what feeds
   it. A guard asserting on `Discovery.Assemblies` does not compile.
 - **Keeping startup out of the schema takes two settings, not one.** Omitting
@@ -507,9 +525,11 @@ claims about library internals that no test exercises.
   The explicit `AutoCreate.None` is **not** redundant with the Production
   profile, and the entry above is why: `ReadJasperFxOptions` fills
   `AutoBuildMessageStorageOnStartup` from `ActiveProfile.ResourceAutoCreate`
-  whenever it was not set explicitly, and *both* JasperFx 2.55.0 profiles carry
+  whenever it was not set explicitly, and *both* JasperFx 2.96.1 profiles carry
   `ResourceAutoCreate = CreateOrUpdate`. Deleting the line does not fall back to
-  a safe default — it falls back to boot-time DDL.
+  a safe default — it falls back to boot-time DDL. Measured on 2.96.1: a
+  Production host built with no connection string, which returns before the
+  explicit line, reports `CreateOrUpdate`.
 - **A second in-process host silently kills the collection fixture's logging.**
   `UseSerilog` reconfigures the bootstrap logger that
   `FakturennWebApplication.Build` installs, and the already-running fixture host
@@ -523,7 +543,8 @@ claims about library internals that no test exercises.
   two nested `finally` blocks so a throwing `DisposeAsync` cannot skip the
   restore.
 - **`TypeLoadMode.Auto` is not a reflection fallback**, and core WolverineFx
-  6.30.0 no longer ships Roslyn, so the default `Dynamic` throws at startup.
+  has shipped no Roslyn since 6.30.0 (still so in 6.59.0), so the default
+  `Dynamic` throws at startup.
   `Auto` means "load pre-generated types from the application assembly, generate
   them if there are none", and generation needs an assembly generator that only
   `WolverineFx.RuntimeCompilation`'s `UseRuntimeCompilation()` registers. Without
@@ -554,7 +575,7 @@ claims about library internals that no test exercises.
   `options.ReadJasperFxOptions(...)`, and `JasperFxOptions.ReadHostEnvironment`,
   wired through `PostConfigure`, sets `ActiveProfile = Production` on a host
   whose `EnvironmentName` is `Production`. The setting still reads `True`
-  because **JasperFx 2.55.0's Production profile itself initialises
+  because **JasperFx 2.96.1's Production profile itself initialises
   `SourceCodeWritingEnabled = true`** — `_development` and `_production` are
   byte-identical (`ResourceAutoCreate = CreateOrUpdate`,
   `GeneratedCodeMode = Dynamic`, `SourceCodeWritingEnabled = true`). It is
