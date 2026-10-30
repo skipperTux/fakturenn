@@ -20,6 +20,7 @@ public static class FakturennArchitecture
     public static readonly Architecture Loaded = new ArchLoader()
         .LoadAssemblies(
             typeof(SharedKernel.Money).Assembly,
+            typeof(SharedKernel.Persistence.AuditColumnConfiguration).Assembly,
             typeof(Infrastructure.Storage.FilesystemBlobWriter).Assembly,
             typeof(Modules.Invoices.Contracts.InvoiceId).Assembly,
             typeof(Modules.Invoices.InvoicesModule).Assembly,

@@ -305,6 +305,9 @@ edit sites, not assumed:**
    `typeof(...)` line will not compile. (This one *is* forced, but by the
    compiler, not a dedicated test.)
 2. If the module owns an EF Core `DbContext`:
+   - Its `OnModelCreating` calls `modelBuilder.ConfigureAuditColumns()` from
+     `Fakturenn.SharedKernel.Persistence` (add the `<ProjectReference>`). Do not copy the
+     audit-column loop into the context.
    - `src/Fakturenn.Web/Fakturenn.Web.csproj` — add a `<ProjectReference>`.
    - Register the context in DI **with `AuditSaveChangesInterceptor`**. For a
      module context that publishes nothing, that is a call to

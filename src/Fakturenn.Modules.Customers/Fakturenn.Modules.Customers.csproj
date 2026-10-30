@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Fakturenn.Modules.Customers.Contracts\Fakturenn.Modules.Customers.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.SharedKernel\Fakturenn.SharedKernel.csproj" />
+    <ProjectReference Include="..\Fakturenn.SharedKernel.Persistence\Fakturenn.SharedKernel.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

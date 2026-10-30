@@ -1,6 +1,6 @@
 using Fakturenn.SharedKernel;
+using Fakturenn.SharedKernel.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace Fakturenn.Modules.Customers.Persistence;
 
@@ -34,25 +34,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             reference.HasOne<Customer>().WithMany().HasForeignKey(r => r.CustomerId).OnDelete(DeleteBehavior.Cascade);
         });
 
-        ConfigureAuditColumns(modelBuilder);
+        modelBuilder.ConfigureAuditColumns();
         base.OnModelCreating(modelBuilder);
-    }
-
-    // private static Methods
-    private static void ConfigureAuditColumns(ModelBuilder modelBuilder)
-    {
-        List<IMutableEntityType> auditable = [.. modelBuilder.Model.GetEntityTypes()
-            .Where(type => typeof(IAuditable).IsAssignableFrom(type.ClrType))];
-
-        foreach (IMutableEntityType entityType in auditable)
-        {
-            modelBuilder.Entity(entityType.ClrType, entity =>
-            {
-                entity.Property(nameof(IAuditable.CreatedBy)).HasMaxLength(256).IsRequired();
-                entity.Property(nameof(IAuditable.ModifiedBy)).HasMaxLength(256).IsRequired();
-                entity.Property(nameof(IAuditable.CreatedAt)).IsRequired();
-                entity.Property(nameof(IAuditable.ModifiedAt)).IsRequired();
-            });
-        }
     }
 }

@@ -18,6 +18,7 @@
     <Project Path="src/Fakturenn.Modules.Projects.Contracts/Fakturenn.Modules.Projects.Contracts.csproj" />
     <Project Path="src/Fakturenn.Modules.Projects/Fakturenn.Modules.Projects.csproj" />
     <Project Path="src/Fakturenn.SharedKernel/Fakturenn.SharedKernel.csproj" />
+    <Project Path="src/Fakturenn.SharedKernel.Persistence/Fakturenn.SharedKernel.Persistence.csproj" />
     <Project Path="src/Fakturenn.Web/Fakturenn.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">

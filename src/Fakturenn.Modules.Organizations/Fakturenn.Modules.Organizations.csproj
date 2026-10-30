@@ -4,6 +4,7 @@
     <ProjectReference Include="..\Fakturenn.Modules.Invoices.Contracts\Fakturenn.Modules.Invoices.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.Modules.Organizations.Contracts\Fakturenn.Modules.Organizations.Contracts.csproj" />
     <ProjectReference Include="..\Fakturenn.SharedKernel\Fakturenn.SharedKernel.csproj" />
+    <ProjectReference Include="..\Fakturenn.SharedKernel.Persistence\Fakturenn.SharedKernel.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

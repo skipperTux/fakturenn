@@ -1,11 +1,10 @@
 using Fakturenn.Modules.Identity.Domain;
-using Fakturenn.SharedKernel;
+using Fakturenn.SharedKernel.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Fakturenn.Modules.Identity.Persistence;
@@ -134,22 +133,6 @@ public sealed class IdentityDbContext(
             .Property(token => token.Value)
             .HasConversion(converter);
 
-        // One place configures the audit columns for every auditable entity, so a
-        // later entity cannot arrive with a different column width by accident.
-        // Materialised first: builder.Entity(...) mutates the model that
-        // GetEntityTypes() enumerates.
-        List<IMutableEntityType> auditableEntityTypes = [.. builder.Model.GetEntityTypes()
-            .Where(type => typeof(IAuditable).IsAssignableFrom(type.ClrType))];
-
-        foreach (IMutableEntityType entityType in auditableEntityTypes)
-        {
-            builder.Entity(entityType.ClrType, entity =>
-            {
-                entity.Property(nameof(IAuditable.CreatedBy)).HasMaxLength(256).IsRequired();
-                entity.Property(nameof(IAuditable.ModifiedBy)).HasMaxLength(256).IsRequired();
-                entity.Property(nameof(IAuditable.CreatedAt)).IsRequired();
-                entity.Property(nameof(IAuditable.ModifiedAt)).IsRequired();
-            });
-        }
+        builder.ConfigureAuditColumns();
     }
 }
