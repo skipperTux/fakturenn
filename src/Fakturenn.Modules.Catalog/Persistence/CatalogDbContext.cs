@@ -24,7 +24,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             item.Property(i => i.Name).HasMaxLength(CatalogRules.MaxNameLength);
             item.Property(i => i.Unit).HasMaxLength(3);
             item.Property(i => i.Currency).HasMaxLength(3);
-            item.Property(i => i.UnitPrice).HasPrecision(18, 4);
+            item.Property(i => i.UnitPrice).HasPrecision(20, 6);
             item.Property(i => i.VatRate).HasPrecision(5, 2);
         });
 

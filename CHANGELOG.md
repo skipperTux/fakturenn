@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Catalog prices can have up to six decimal places** (previously four), for
+  metered or per-unit prices such as 0.012345 per kWh. Line totals are still
+  rounded to cents.
 - **Signed-out visitors reach only the sign-in pages.** Every other page now
   requires signing in, including any added later without an explicit exception.
 - **PostgreSQL 18.** The reference Compose deployment and every test container

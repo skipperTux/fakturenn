@@ -337,7 +337,7 @@
     <value>Der Einzelpreis darf nicht negativ sein.</value>
   </data>
   <data name="Catalog_Error_PriceOutOfRange" xml:space="preserve">
-    <value>Der Einzelpreis darf höchstens vier Nachkommastellen haben und muss kleiner als 100.000.000.000.000 sein.</value>
+    <value>Der Einzelpreis darf höchstens sechs Nachkommastellen haben und muss kleiner als 100.000.000.000.000 sein.</value>
   </data>
   <data name="Catalog_Error_UnitInvalid" xml:space="preserve">
     <value>Die Einheit muss ein Code nach UN/ECE-Empfehlung 20 aus bis zu drei Buchstaben oder Ziffern sein, zum Beispiel HUR für eine Stunde.</value>
