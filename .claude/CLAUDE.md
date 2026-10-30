@@ -148,14 +148,23 @@ workflows under `.github/` have run there; one has not.
   exists yet. It is still unproven, including the multi-arch container publish
   that has no local equivalent. Do not describe it as known-working.
 
-**E02a has now been through CI, and every check passed on the first run.** That
-run is the evidence for the numbers below; they were measured on
-`ubuntu-latest`, not estimated. Build and the five in-process suites: 50s.
-Integration: 1m39s, and it started **eleven concurrent PostgreSQL containers** at
-peak — measured at E02a. Stage 1 added fixture classes since (15 test files use
-`IClassFixture<PostgresFixture>` now), so that figure is stale and must be
-re-measured on the next CI run. Worth knowing before adding another fixture,
-because a runner has two cores. UI: 2m31s including the browser install. CodeQL: 2m45s.
+**M1 Stage 1 (#60) passed every check on its first CI run.** These numbers were
+measured on `ubuntu-latest`, not estimated. They come from the push to `main`
+that merged it, with the pull-request run in brackets.
+
+- Build and the five in-process suites: 84s (61s).
+- Integration: 2m05s (1m52s). At E02a it took 1m39s.
+- UI: 3m47s (3m52s), including the browser install. At E02a it took 2m31s.
+- Format: 51s.
+- Compose smoke test: 64s (116s).
+- CodeQL: 45s, from a scheduled run on the same commit.
+
+At E02a the integration suite started **eleven concurrent PostgreSQL containers**
+at peak. Stage 1 added fixture classes since: 15 test files use
+`IClassFixture<PostgresFixture>` now. The new peak is **unmeasured**, because the
+CI log records no container starts or stops at its default verbosity. Measure it
+locally, with `podman events` (or `docker events`) running beside the suite,
+before you add another fixture: a runner has two cores.
 
 `DOTNET_USE_POLLING_FILE_WATCHER=1` is set on **all three** test jobs
 (`build-test`, `integration`, `ui`). It is insurance, not a known requirement:

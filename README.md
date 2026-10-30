@@ -69,3 +69,6 @@ of Done, then [docs/planning/PLAN-v0.1.md](docs/planning/PLAN-v0.1.md).
 ## Licence
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+The name and the logo are not covered by the code's licence; see
+[TRADEMARKS.md](TRADEMARKS.md).
