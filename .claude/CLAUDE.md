@@ -417,6 +417,10 @@ edit sites, not assumed:**
    `dbContext.Model.FindAnnotation("WolverineEnabled")`, asserted present for an
    enrolled context and absent for an unenrolled one.
 
+   Every Wolverine internal in this item was last verified by decompiling
+   WolverineFx 6.59.0. Re-check them on the next upgrade, as
+   `IMPLEMENTATION-NOTES.md` asks.
+
 ## Definition of Done
 
 From `docs/planning/PLAN-v0.1.md`. Check before opening a pull request:
